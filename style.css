@@ -19,7 +19,6 @@ body {
   height: 100vh;
   outline: none;
   touch-action: none;
-  image-rendering: pixelated;
 }
 #text-input {
   position: fixed;

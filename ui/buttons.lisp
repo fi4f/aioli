@@ -20,8 +20,23 @@
     (fill (if (or (hit? origin size) (focused? id)) "#344339" (get :ui-panel)))
     (rect origin size)
     (fill (get :ui-accent))
-    (line [(+ x 5) (+ y 6)] [(+ x 5) (+ y 17)] 1)
-    (line [(+ x 5) (+ y 6)] [(+ x 13) (+ y 12)] 1)
-    (line [(+ x 13) (+ y 12)] [(+ x 5) (+ y 17)] 1)
+    (if (icon-available? "assets/editor-icons/play.png")
+      (icon "assets/editor-icons/play.png" [(+ x 2) (+ y 4)] [16 16])
+      (text [(+ x 6) (+ y 4)] "?"))
     (region id label origin size)
     (or (activated? id) (and (pointer-pressed?) (hit? origin size)))))
+
+; A visible pane folds into a rail without changing its visibility or content.
+(defn ui-pane-toggle [id key caption x y width right]
+  (let [collapsed (get key) origin [x y] size [width 36]
+        points-right (if collapsed (not right) right)
+        tip (+ x (if points-right 22 16)) tail (+ x (if points-right 16 22))]
+    (fill (if (or (hit? origin size) (focused? id)) "#252e29" (get :ui-panel)))
+    (rect origin size)
+    (fill (get :ui-text))
+    (line [tail (+ y 12)] [tip (+ y 18)] 2)
+    (line [tip (+ y 18)] [tail (+ y 24)] 2)
+    (when (> width 80) (text [(+ x 36) (+ y 12)] caption))
+    (region id (str (if collapsed "Expand " "Collapse ") caption) origin size)
+    (when (or (activated? id) (and (pointer-pressed?) (hit? origin size)))
+      (set! key (not collapsed)))))

@@ -1,3 +1,5 @@
+import { sourceRole } from './source-roles.js';
+
 /** Project directories are derived from filenames, never separate resources.
  * This module supplies tree data only; Lisp owns indentation, disclosure marks,
  * selection and painting. Expansion fits in one persisted shared-state string.
@@ -22,10 +24,11 @@ export function toggleFolder(value, path) {
  */
 export function assetKind(path, kind, mime = '') {
   mime = typeof mime === 'string' ? mime : '';
-  if (kind === 'lisp' && path === 'main.lisp') return 'main-entry';
-  if (kind === 'lisp' && path === 'editor.lisp') return 'editor-entry';
+  if (kind === 'lisp' && path === 'main.lisp') return 'editor-entry';
+  if (kind === 'lisp' && path === 'game.lisp') return 'main-entry';
   if (kind === 'lisp' && /\.scene(?:\.lisp)?$/.test(path)) return 'scene';
-  if (kind === 'lisp') return 'code';
+  if (kind === 'lisp')
+    return { command: 'command', generator: 'generator' }[sourceRole(path)] ?? 'code';
   if (mime.startsWith('image/')) return 'image';
   if (mime.startsWith('audio/')) return 'audio';
   if (/\.(lisp|json|js|ts|wgsl|txt|md)$/i.test(path)) return 'code';
@@ -66,7 +69,7 @@ export function projectTree(files, value) {
   return rows;
 }
 
-/** Commands are editable Lisp sources under commands/, including subfolders. */
+/** Commands are explicit source roles, independent of folder placement. */
 export function isCommandFile(path, kind = 'lisp') {
-  return kind === 'lisp' && typeof path === 'string' && /^commands\/.+\.lisp$/.test(path);
+  return kind === 'lisp' && typeof path === 'string' && sourceRole(path) === 'command';
 }

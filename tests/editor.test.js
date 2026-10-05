@@ -12,12 +12,12 @@ const uiSource = readFileSync(new URL('../ui/components.lisp', import.meta.url),
   '\"./',
   '\"./ui/',
 );
-const editorSource = readFileSync(new URL('../editor.lisp', import.meta.url), 'utf8');
+const editorSource = readFileSync(new URL('../main.lisp', import.meta.url), 'utf8');
 const sources = {
   ...defaults,
   ...generatorSources,
   ui: uiSource,
-  editor: editorSource,
+  main: editorSource,
   ...Object.fromEntries(
     editorSourcePaths.map((path) => [
       path,
@@ -36,8 +36,32 @@ function editor(width = 1440, height = 900) {
     endScope: () => draw.restore(),
     primitives: {
       ...draw.primitives(),
+      'game-get': (key) =>
+        state[key] ??
+        {
+          moon: 18,
+          wind: 3,
+          glow: 0.4,
+          speed: 80,
+          accent: '#c4ef9b',
+          wave: 'sine',
+          pitch: 440,
+          'end-pitch': 220,
+          duration: 0.3,
+          volume: 0.2,
+          overtone: false,
+        }[key],
+      'game-set!': (key, value) => (state[key] = value),
+      'preview-path': () => 'game.lisp',
+      'scene-fields': () => [],
+      'scroll-region': (id, origin, size, key, limit) =>
+        Math.max(0, Math.min(limit, state[key] ?? 0)),
       'screen-width': () => width,
       'screen-height': () => height,
+      'icon-available?': () => false,
+      'file-drag-path': () => '',
+      'file-drop-target?': () => false,
+      'save-file?': () => true,
       'hit?': () => false,
       'focused?': () => false,
       'activated?': () => false,
@@ -63,6 +87,7 @@ function editor(width = 1440, height = 900) {
       'path-input': () => 'lib/new.lisp',
       'can-edit-buffer?': () => false,
       'selected-file?': () => true,
+      'selected-file-renamable?': () => true,
       'selected-file-removable?': () => false,
       'menu-region': (id, label, origin, size, enabled, checked) =>
         regions.push({ id, label, origin, size, disabled: !enabled, checked }),
@@ -70,7 +95,7 @@ function editor(width = 1440, height = 900) {
     },
   });
   r.load(cpuForms(parse(defaults['scenes/garden.scene.lisp'])));
-  resolveModules(sources, ['ui', 'editor']).forEach((module) => r.load(cpuForms(module.forms)));
+  resolveModules(sources, ['ui', 'main']).forEach((module) => r.load(cpuForms(module.forms)));
   return { r, state, draw, regions };
 }
 test('fullscreen editor app draws pixels and defines its controls in Lisp', () => {
@@ -79,7 +104,7 @@ test('fullscreen editor app draws pixels and defines its controls in Lisp', () =
   assert.deepEqual(draw.commands[0].bounds, [0, 0, 1440, 900]);
   assert.ok(draw.commands.some((c) => c.meta[0] === 4));
   assert.ok(draw.commands.some((c) => c.meta[0] === 3));
-  assert.ok(regions.some((r) => r.id === 'tab-editor'));
+  assert.ok(regions.some((r) => r.id === 'tab-main'));
   assert.equal(state['show-tools'], false);
   assert.equal(typeof r.global['ui-button'], 'function');
   assert.equal(typeof r.global['code-editor'], 'function');

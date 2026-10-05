@@ -311,14 +311,6 @@
               <td><code>(code-editor origin size tab)</code></td>
               <td>Paint source text, syntax colors, selection, and caret from buffer data.</td>
             </tr>
-            <tr>
-              <td><code>(graphics-tools x y width)</code></td>
-              <td>The stock graphics parameter controls.</td>
-            </tr>
-            <tr>
-              <td><code>(sound-tools x y width)</code></td>
-              <td>The stock audio patch controls and waveform preview.</td>
-            </tr>
           </tbody>
         </table>
       </div>
@@ -487,12 +479,42 @@
               <td>Save/open project JSON, including sources and state.</td>
             </tr>
             <tr>
-              <td><code>(export-png)</code></td>
-              <td>Download the game image, excluding editor chrome.</td>
+              <td><code>(play-file path)</code>, <code>(playable-file? path)</code></td>
+              <td>
+                Play a scene, or restart game.lisp with fresh application state; available only to
+                the editor.
+              </td>
             </tr>
             <tr>
-              <td><code>(next-scene)</code></td>
-              <td>Cycle supplied scene presets.</td>
+              <td>
+                <code>(scene-fields)</code>, <code>(scene-field-value key)</code>,
+                <code>(set-scene-field key value)</code>
+              </td>
+              <td>Inspect live state using the shared generator/scene annotation schema.</td>
+            </tr>
+            <tr>
+              <td><code>(export-html)</code></td>
+              <td>
+                Validate and download an offline HTML application, with game files and assets.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>(game-state)</code>, <code>(game-get key)</code>,
+                <code>(game-set! key value)</code>
+              </td>
+              <td>Inspect or modify embedded application state. Available only to the editor.</td>
+            </tr>
+            <tr>
+              <td>
+                <code>(game-code path)</code>, <code>(game-definitions)</code>,
+                <code>(game-call name ...args)</code>
+              </td>
+              <td>Inspect source and definitions, or call a game function using data arguments.</td>
+            </tr>
+            <tr>
+              <td><code>(export-png)</code></td>
+              <td>Download the game image, excluding editor chrome.</td>
             </tr>
             <tr>
               <td><code>(open-docs)</code></td>

@@ -25,7 +25,7 @@
       <h2>The workspace</h2>
       <p>
         <strong>View → Code pane</strong> shows or hides source.
-        <strong>View → Parameter tools</strong> opens graphics/sound controls.
+        <strong>View → Scene inspector</strong> opens graphics/sound controls.
         <strong>Project → Run / Evaluate</strong> evaluates the current project. On a narrow screen,
         hide Code to see the game at a useful size.
       </p>
@@ -44,7 +44,7 @@
         <a href="projects.html#previews">asset previews</a>.
       </p>
       <p>
-        The root <code>editor.lisp</code> and <code>ui/components.lisp</code> import the editor
+        The root <code>main.lisp</code> and <code>ui/components.lisp</code> import the editor
         modules. <code>ui/</code> holds reusable controls; <code>editor/</code> holds complete panes
         and widgets. Open these files from the explorer and edit them live. Browser edits belong to
         the saved project rather than changing the repository on disk.
@@ -65,7 +65,7 @@
           the latest editor while in recovery.
         </li>
         <li>
-          <strong>View:</strong> code/files panes, parameter tools, image/audio generators, command
+          <strong>View:</strong> code/files panes, scene inspector, image/audio generators, command
           palette, compiled WGSL, recovery shell; return to the project editor while recovering.
         </li>
         <li>
@@ -111,25 +111,42 @@
         drives game input.
       </p>
       <p>
-        <strong>Project → Next scene</strong> cycles the midnight garden, electric bloom, and liquid
-        pixels examples. It replaces the current scene source; export your project first if you want
-        to retain an edited scene. Gameplay and shared parameters continue across a scene change.
-      </p>
-      <h2>Procedural tools</h2>
-      <p>
-        <strong>Graphics</strong> offers moon radius, wind, glow, movement speed, palette cycling,
-        and centering the player. The sliders write shared state, which the scene reads as shader
-        parameters. Modify the recipe in scene code to add new effects.
+        The preview fills the available pane while preserving its aspect ratio. Click
+        <strong>Focus / F4</strong> or press F4 to hide the other panes and focus gameplay. Toggle
+        again or press Escape to restore the previous layout, tabs and inspector position. The same
+        toggle is available under View / Focus preview.
       </p>
       <p>
-        <strong>Sound</strong> lets you choose an oscillator, sweep frequencies, adjust
-        duration/gain, and mix an overtone. Play auditions the patch; Save WAV exports it. Edit the
-        <code>sound</code> function in the audio tab to change or add voices. These controls are
-        Lisp functions you can customize in <code>ui</code>.
+        File / New project starts the default application in examples/garden.scene.lisp. Open file
+        adds an individual source or asset to the project; Save file downloads the current source
+        draft or asset. Project open/save remain separate. Drag files onto folders in Files to move
+        them; drop on the Project files header to move to the root. Moves update relative imports
+        and literal paths, preserve tabs, and reject occupied destinations.
+      </p>
+      <h2>Scene inspector and playback</h2>
+      <p>
+        View → Scene inspector displays live state from the active scene and its application. It
+        supports sliders, choices, booleans, colors and editable text. Optional
+        <code>init!</code> annotations supply labels, limits, steps, or choices:
+      </p>
+      <pre><code>(init! :radius 20 ["Radius" 5 80 0.5])
+(init! :mode "round" ["Mode" ["round" "square"]])
+(init! :enabled true ["Enabled"])</code></pre>
+      <p>
+        Values update the running application immediately. Editor state remains separate.
+        Unannotated fields receive inferred controls; fields created by hooks appear too. Use the
+        mouse wheel or draggable scrollbar for more fields. Arrows at the top and bottom indicate
+        hidden content. Text edits use Apply; colors open a picker.
+      </p>
+      <p>
+        A controller marks game.lisp, gears mark generators, and movie clappers mark scenes. Click a
+        scene's play button to switch the preview; click game.lisp's play button to restart with
+        fresh state. Failed scenes keep the last working preview. Browse the editable scenes in
+        examples/; playback never rewrites source.
       </p>
       <h2>Extending the editor</h2>
       <p>
-        Start with a small edit in <code>editor</code>. Add this inside its existing
+        Start with a small edit in <code>editor/workspace.lisp</code>. Add this inside its existing
         <code>editor</code> function:
       </p>
       <pre><code>(scope
@@ -138,7 +155,7 @@
   (text [416 16] "My workshop"))</code></pre>
       <p>For an action, use a function from the widget library:</p>
       <pre><code>(when (ui-button :reset-moon "Reset moon" [24 100] [140 32] false)
-  (set! :moon 20))</code></pre>
+  (game-set! :moon 20))</code></pre>
       <p>
         Use unique IDs and screen-space bounds. Place controls after the pane/background they should
         appear above: drawing order is painter order. Change <code>ui-button</code> in
@@ -172,6 +189,12 @@
             </tr>
           </thead>
           <tbody>
+            <tr>
+              <td>File → Export application HTML</td>
+              <td>
+                Download one offline HTML file containing the runtime, game sources and assets.
+              </td>
+            </tr>
             <tr>
               <td>File → Save project</td>
               <td>Download editable JSON containing source drafts and state.</td>

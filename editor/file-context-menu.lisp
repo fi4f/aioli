@@ -17,7 +17,7 @@
       (menu-divider x (+ y 69) width)
       (when (menu-action :context-open "Open" "" x (+ y 74) width true nil) (open-file (get :context-path)))
       (when (menu-action :context-download "Download" "" x (+ y 104) width true nil) (download-resource (get :context-path)))
-      (when (menu-action :context-rename "Rename..." "" x (+ y 134) width (selected-file-removable?) nil) (prepare-file-path true))
+      (when (menu-action :context-rename "Rename..." "" x (+ y 134) width (selected-file-renamable?) nil) (prepare-file-path true))
       (when (menu-action :context-delete "Delete" "" x (+ y 164) width (selected-file-removable?) nil) (delete-file (get :context-path)))
       (when command
         (when (menu-action :context-run "Run command" "" x (+ y 194) width true nil) (run-command (get :context-path)))))))

@@ -1,7 +1,17 @@
-import { resolvePath, resolveModules, cpuForms, pixelHook } from './project.js';
+import { pixelHook } from './render-hooks.js';
+import { resolvePath, resolveModules, cpuForms } from './module-loader.js';
 
 export const isScenePath = (path) => typeof path === 'string' && /\.scene(?:\.lisp)?$/.test(path);
 const sceneHooks = ['init', 'enter', 'exit', 'reload', 'update', 'sound'];
+
+/** Entry requests select startup scenes and react to edits. Unrelated reloads
+ * preserve transitions requested by gameplay or commands. */
+export function selectScene({ explicit, requested, previousRequest, active, activating = false }) {
+  if (explicit !== undefined) return explicit;
+  if (activating && previousRequest === undefined) return requested ?? active ?? '';
+  if ((requested ?? '') !== (previousRequest ?? '')) return requested ?? '';
+  return active ?? requested ?? '';
+}
 
 /** A scene owns its functions, while project state and browser services remain
  * shared. Never overwrite the application/editor environment with scene hooks.
@@ -9,7 +19,6 @@ const sceneHooks = ['init', 'enter', 'exit', 'reload', 'update', 'sound'];
  */
 export function stageScene(sources, path, application, makeRuntime) {
   path = resolvePath(path);
-  if (!isScenePath(path)) throw new Error('Scenes must end in .scene.lisp or .scene');
   const modules = resolveModules(sources, [path]);
   const runtime = makeRuntime();
   for (const [name, value] of Object.entries(application.global))

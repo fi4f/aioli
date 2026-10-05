@@ -1,6 +1,51 @@
 import { rgba, pixelCoverageWGSL } from './shader.js';
 import { binCommands, GLYPH_WIDTH, GLYPH_HEIGHT } from './drawing.js';
 
+// Lisp layout and input stay in CSS pixels; only the renderer uses device pixels.
+export function displayMetrics(width, height, ratio = 1, limit = 8192) {
+  const density = Math.min(
+    Number.isFinite(ratio) && ratio > 0 ? ratio : 1,
+    limit / Math.max(1, width, height),
+  );
+  const physicalWidth = Math.max(1, Math.round(width * density));
+  const physicalHeight = Math.max(1, Math.round(height * density));
+  return {
+    width: physicalWidth,
+    height: physicalHeight,
+    scaleX: physicalWidth / Math.max(1, width),
+    scaleY: physicalHeight / Math.max(1, height),
+    density,
+    glyphWidth: Math.ceil(GLYPH_WIDTH * density),
+    glyphHeight: Math.ceil(GLYPH_HEIGHT * density),
+  };
+}
+
+export function deviceCommands(commands, metrics) {
+  const { scaleX: sx, scaleY: sy, glyphWidth, glyphHeight } = metrics;
+  const bounds = (b) => [b[0] * sx, b[1] * sy, b[2] * sx, b[3] * sy];
+  return commands.map((c) => {
+    const kind = c.meta[0];
+    const detail =
+      kind === 3
+        ? [
+            (c.detail[0] / GLYPH_WIDTH) * glyphWidth,
+            (c.detail[1] / GLYPH_HEIGHT) * glyphHeight,
+            GLYPH_WIDTH * metrics.density,
+            GLYPH_HEIGHT * metrics.density,
+          ]
+        : kind === 2
+          ? bounds(c.detail)
+          : c.detail;
+    return {
+      ...c,
+      bounds: bounds(c.bounds),
+      clip: bounds(c.clip),
+      detail,
+      meta: kind === 2 ? [kind, c.meta[1] * Math.min(sx, sy), ...c.meta.slice(2)] : c.meta,
+    };
+  });
+}
+
 const quad = `@vertex fn vs(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
   let corners = array<vec2f, 6>(
     vec2f(-1, -1), vec2f(1, -1), vec2f(-1, 1),
@@ -19,10 +64,12 @@ struct Command { bounds: vec4f, color: vec4f, detail: vec4f, flags: vec4f, clip:
 @group(0) @binding(4) var scene: texture_2d<f32>;
 @group(0) @binding(5) var image: texture_2d<f32>;
 @group(0) @binding(6) var asset: texture_2d<f32>;
+@group(0) @binding(7) var icons: texture_2d<f32>;
+@group(0) @binding(8) var iconSampler: sampler;
 ${quad}
 ${pixelCoverageWGSL}
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let p = floor(pos.xy);
+  let p = pos.xy;
   let tile = vec2u(p / 32.0);
   let bin = (tile.y * u32(screen.z) + tile.x) * 2u;
   let offset = bins[bin];
@@ -60,6 +107,14 @@ ${pixelCoverageWGSL}
       let dimensions = textureDimensions(asset);
       let coordinate = clamp(vec2u(relative / command.bounds.zw * vec2f(dimensions)), vec2u(0), dimensions - vec2u(1));
       paint = textureLoad(asset, vec2i(coordinate), 0);
+    }
+
+    if (kind == 7u) {
+      let dimensions = vec2f(textureDimensions(icons));
+      let cell = screen.w;
+      let slot = u32(command.detail.x);
+      let atlasPosition = vec2f(f32(slot % 16u) * cell + 1.0, f32(slot / 16u) * cell + 1.0) + relative / command.bounds.zw * (cell - 2.0);
+      paint.a *= textureSampleLevel(icons, iconSampler, atlasPosition / dimensions, 0.0).a;
     }
 
     let alpha = clamp(paint.a, 0.0, 1.0);
@@ -142,32 +197,9 @@ export class GPUHost {
       size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    // Rasterization is a host font service. Visible text is evaluated by WebGPU.
-    const atlas = document.createElement('canvas');
-    atlas.width = 16 * GLYPH_WIDTH;
-    atlas.height = 6 * GLYPH_HEIGHT;
-    const ctx = atlas.getContext('2d');
-    ctx.font = '13px Consolas, monospace';
-    ctx.textBaseline = 'top';
-    ctx.fillStyle = 'white';
-    for (let i = 0; i < 95; i++)
-      ctx.fillText(
-        String.fromCharCode(i + 32),
-        (i % 16) * GLYPH_WIDTH,
-        Math.floor(i / 16) * GLYPH_HEIGHT + 1,
-      );
-    r.atlas = device.createTexture({
-      size: [atlas.width, atlas.height],
-      format: 'rgba8unorm',
-      usage:
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.COPY_DST |
-        GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-    device.queue.copyExternalImageToTexture({ source: atlas }, { texture: r.atlas }, [
-      atlas.width,
-      atlas.height,
-    ]);
+    r.iconSampler = device.createSampler({ minFilter: 'linear', magFilter: 'linear' });
+    r.updateAtlas(displayMetrics(1, 1, globalThis.devicePixelRatio));
+    r.updateIconAtlas(displayMetrics(1, 1, globalThis.devicePixelRatio));
     const module = device.createShaderModule({ code: uiShader });
     const info = await module.getCompilationInfo();
     const errors = info.messages.filter((m) => m.type === 'error');
@@ -181,6 +213,8 @@ export class GPUHost {
         { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: {} },
         { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: {} },
         { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 8, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
       ],
     });
     r.uiPipeline = await device.createRenderPipelineAsync({
@@ -189,6 +223,80 @@ export class GPUHost {
       fragment: { module, entryPoint: 'fs', targets: [{ format: r.format }] },
     });
     return r;
+  }
+  updateAtlas(metrics) {
+    if (this.atlasDensity === metrics.density) return;
+    const { density, glyphWidth, glyphHeight } = metrics;
+    const atlas = document.createElement('canvas');
+    atlas.width = 16 * glyphWidth;
+    atlas.height = 6 * glyphHeight;
+    const ctx = atlas.getContext('2d');
+    ctx.font = `${13 * density}px Consolas, monospace`;
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = 'white';
+    for (let i = 0; i < 95; i++)
+      ctx.fillText(
+        String.fromCharCode(i + 32),
+        (i % 16) * glyphWidth,
+        Math.floor(i / 16) * glyphHeight + density,
+      );
+    const texture = this.device.createTexture({
+      size: [atlas.width, atlas.height],
+      format: 'rgba8unorm',
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    this.device.queue.copyExternalImageToTexture({ source: atlas }, { texture }, [
+      atlas.width,
+      atlas.height,
+    ]);
+    this.atlas?.destroy();
+    this.atlas = texture;
+    this.atlasDensity = density;
+    this.bindDirty = true;
+  }
+  setIcons(images) {
+    this.iconImages = images;
+    this.iconDensity = null;
+    this.bindDirty = true;
+  }
+  updateIconAtlas(metrics) {
+    if (this.iconDensity === metrics.density) return;
+    const cell = Math.ceil(16 * metrics.density) + 2;
+    const atlas = document.createElement('canvas');
+    atlas.width = cell * 16;
+    atlas.height = cell * Math.max(1, Math.ceil((this.iconImages?.length ?? 0) / 16));
+    this.iconCell = cell;
+    const context = atlas.getContext('2d');
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    for (const [index, image] of (this.iconImages ?? []).entries())
+      if (image)
+        context.drawImage(
+          image,
+          (index % 16) * cell + 1,
+          Math.floor(index / 16) * cell + 1,
+          cell - 2,
+          cell - 2,
+        );
+    const texture = this.device.createTexture({
+      size: [atlas.width, atlas.height],
+      format: 'rgba8unorm',
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    this.device.queue.copyExternalImageToTexture({ source: atlas }, { texture }, [
+      atlas.width,
+      atlas.height,
+    ]);
+    this.iconAtlas?.destroy();
+    this.iconAtlas = texture;
+    this.iconDensity = metrics.density;
+    this.bindDirty = true;
   }
   uploadAssetImage(bitmap) {
     const limit = this.device.limits.maxTextureDimension2D;
@@ -248,21 +356,33 @@ export class GPUHost {
     }
     return this[name];
   }
-  draw(drawList, time, state) {
+  draw(drawList, time, state, imageState = state) {
     // Pass 1 renders the game texture. Pass 2 samples it among editor commands.
     const device = this.device,
-      width = drawList.width,
-      height = drawList.height;
+      metrics = displayMetrics(
+        drawList.width,
+        drawList.height,
+        globalThis.devicePixelRatio,
+        device.limits.maxTextureDimension2D,
+      ),
+      { width, height } = metrics;
+    this.updateAtlas(metrics);
+    this.updateIconAtlas(metrics);
+    const commands = deviceCommands(drawList.commands, metrics);
     if (this.canvas.width !== width) this.canvas.width = width;
     if (this.canvas.height !== height) this.canvas.height = height;
-    const floats = new Float32Array(Math.max(20, drawList.commands.length * 20));
-    drawList.commands.forEach((c, i) =>
+    const floats = new Float32Array(Math.max(20, commands.length * 20));
+    commands.forEach((c, i) =>
       floats.set([...c.bounds, ...c.color, ...c.detail, ...c.meta, ...c.clip], i * 20),
     );
-    const binned = binCommands(drawList.commands, width, height);
+    const binned = binCommands(commands, width, height);
     device.queue.writeBuffer(this.buffer('commandBuffer', floats.byteLength), 0, floats);
     device.queue.writeBuffer(this.buffer('binBuffer', binned.data.byteLength), 0, binned.data);
-    device.queue.writeBuffer(this.screen, 0, new Float32Array([width, height, binned.columns, 0]));
+    device.queue.writeBuffer(
+      this.screen,
+      0,
+      new Float32Array([width, height, binned.columns, this.iconCell]),
+    );
     if (this.bindDirty) {
       this.uiBind = device.createBindGroup({
         layout: this.uiLayout,
@@ -274,6 +394,8 @@ export class GPUHost {
           { binding: 4, resource: this.sceneTexture.createView() },
           { binding: 5, resource: this.imageTexture.createView() },
           { binding: 6, resource: this.assetTexture.createView() },
+          { binding: 7, resource: this.iconAtlas.createView() },
+          { binding: 8, resource: this.iconSampler },
         ],
       });
       this.bindDirty = false;
@@ -281,8 +403,16 @@ export class GPUHost {
     const encoder = device.createCommandEncoder();
     // Independent uniforms/textures prevent an image recipe from replacing the
     // game shader. Both previews are evaluated by their own fullscreen quad.
-    for (const [pipeline, shader, texture, uniform, bind, clock] of [
-      [this.scenePipeline, this.shader, this.sceneTexture, this.uniform, this.sceneBind, time],
+    for (const [pipeline, shader, texture, uniform, bind, clock, parameters] of [
+      [
+        this.scenePipeline,
+        this.shader,
+        this.sceneTexture,
+        this.uniform,
+        this.sceneBind,
+        time,
+        state,
+      ],
       [
         this.imagePipeline,
         this.imageShader,
@@ -290,15 +420,16 @@ export class GPUHost {
         this.imageUniform,
         this.imageBind,
         0,
+        imageState,
       ],
     ]) {
       if (!pipeline) continue;
       const uniforms = new Float32Array(256);
       uniforms.set([clock, 320, 240, 0]);
       shader.params.forEach(({ key, kind }, i) => {
-        if (kind === 'color') uniforms.set(rgba(state[key]), (i + 1) * 4);
+        if (kind === 'color') uniforms.set(rgba(parameters[key]), (i + 1) * 4);
         else {
-          const v = Number(state[key]);
+          const v = Number(parameters[key]);
           if (!Number.isFinite(v)) throw new Error(`Invalid shader parameter :${key}`);
           uniforms[(i + 1) * 4] = v;
         }

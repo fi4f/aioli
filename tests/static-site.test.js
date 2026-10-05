@@ -51,7 +51,7 @@ test('documentation directory and every local link work at root and project subp
       }
       assert.doesNotMatch(html, /<script/, 'Documentation should not require JavaScript');
     }
-    const source = await fetch(base + 'editor.lisp');
+    const source = await fetch(base + 'main.lisp');
     assert.equal(source.status, 200);
     assert.match(await source.text(), /import.*editor\/workspace.lisp/);
     for (const path of (await import('../editor-sources.js')).editorSourcePaths)

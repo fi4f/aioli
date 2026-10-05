@@ -39,3 +39,28 @@
       (when (= (get key) (nth choices i))
         (set! :choice-next (nth choices (mod (+ i 1) (count choices))))))
     (set! key (get :choice-next))))
+
+
+; A pixel-scrolled inspector viewport with a draggable scrollbar and overflow arrows.
+(defn ui-inspector-scroll [id key x y width height total]
+  (let [limit (max 0 (- total height))
+        offset (scroll-region id [x y] [width height] key limit)
+        sx (+ x width -8) thumb (max 20 (* height (/ height (max height total))))
+        travel (- height thumb) origin [(+ sx -4) y] size [12 height]]
+    (when (> limit 0)
+      (region (str id "-scrollbar") "Inspector scrollbar" origin size)
+      (when (and (pointer-pressed?) (hit? origin size)) (capture! (str id "-scrollbar")))
+      (when (and (pointer-down?) (captured? (str id "-scrollbar")))
+        (set! key (* limit (clamp (/ (- (pointer-y) y (/ thumb 2)) (max 1 travel)) 0 1))))
+      (fill (get :ui-muted))
+      (rect [sx y] [2 height])
+      (fill (get :ui-accent))
+      (rect [(+ sx -2) (+ y (* travel (/ offset limit)))] [6 thumb]))
+    (fill (get :ui-accent))
+    (when (> offset 0)
+      (line [(+ x (/ width 2) -5) (- y 4)] [(+ x (/ width 2)) (- y 9)] 2)
+      (line [(+ x (/ width 2)) (- y 9)] [(+ x (/ width 2) 5) (- y 4)] 2))
+    (when (< offset limit)
+      (line [(+ x (/ width 2) -5) (+ y height 4)] [(+ x (/ width 2)) (+ y height 9)] 2)
+      (line [(+ x (/ width 2)) (+ y height 9)] [(+ x (/ width 2) 5) (+ y height 4)] 2))
+    offset))

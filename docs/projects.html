@@ -43,11 +43,13 @@
         program continues while you repair the draft.
       </p>
       <p>
-        Only <code>main.lisp</code> and <code>editor.lisp</code> are entry files. New projects open
-        these two tabs. These two filenames are protected; all other source files are ordinary
-        modules that can be renamed or deleted after updating their imports. The generator widget
-        imports its recipes like any other component. Older projects retain scene, audio and UI
-        files through explicit imports, preserving their code without requiring those filenames.
+        The workbench's <code>main.lisp</code> launches the editor; <code>game.lisp</code>
+        launches the embedded application. Each receives its own module store, globals, state, input
+        and lifecycle hooks. The editor can inspect game code and state through host APIs; the game
+        has no access to editor state or capabilities. There is no separate editor entry.
+        <code>.command.lisp</code>, <code>.generator.lisp</code> and <code>.scene.lisp</code>
+        are editor conventions. The runtime loads modules by explicit path, regardless of extension.
+        Folders only organize files.
       </p>
       <h2 id="previews">Asset previews</h2>
       <p>
@@ -65,8 +67,25 @@
         asset playback. Preview playback is independent of procedural generator controls. A decode
         error appears inside the window and leaves the editor usable.
       </p>
+      <h2 id="application-export">Standalone HTML export</h2>
+      <p>
+        File → Export application HTML validates the project and downloads a single HTML file. It
+        embeds the runtime, all game source files (including dynamically selected scenes), and all
+        assets. The editor package and editor session state are excluded. A generated
+        <code>main.lisp</code> imports <code>game.lisp</code>, preserving project paths. Startup
+        initializes fresh game state. Open the file directly in a WebGPU-capable browser; the
+        exported application makes no network requests.
+      </p>
+      <h2 id="inspection">Inspecting the embedded application</h2>
+      <p>
+        Editor code can use <code>(game-code "game.lisp")</code>, <code>(game-state)</code>,
+        <code>(game-get :x)</code>, <code>(game-set! :x 160)</code>,
+        <code>(game-definitions)</code>, and <code>(game-call "function-name" argument)</code>.
+        These capabilities exist only in the editor. Commands run in the editor environment;
+        <code>get</code> and <code>set!</code> refer to editor state.
+      </p>
       <h2 id="imports">Import resolution</h2>
-      <pre><code>; main.lisp
+      <pre><code>; game.lisp
 (import "./lib/movement.lisp")
 (defn update [dt]
   (move-player dt))</code></pre>
@@ -86,12 +105,12 @@
       <p>
         Dependencies load first, once per evaluation, in import order. Missing files and cycles
         report the affected paths. Imported CPU definitions share one global environment; there are
-        no namespaces or automatic exports, so choose distinct function names. Only files reachable
-        from an entry are loaded automatically. An unused library or command file is retained in the
-        project without being executed.
+        no namespaces or automatic exports, so choose distinct function names. Entry import graphs
+        and discovered generators are validated on evaluation. An unused library or command file is
+        retained in the project without being executed.
       </p>
       <h2 id="scenes">Application lifecycle hooks</h2>
-      <pre><code>; main.lisp: CPU and GPU code can share a file.
+      <pre><code>; game.lisp: CPU and GPU code can share a file.
 (init! :radius 20)
 
 ; Optional CPU update hook, in seconds, while unpaused.
@@ -118,18 +137,23 @@
         unpaused frame. Use top-level <code>init!</code> for state that should survive live edits.
         Optional <code>(defn sound [] ...)</code> produces gameplay audio; without it, audio is
         silent. These functions can be defined anywhere reachable from the entry points. The
-        editor's CPU drawing hook remains <code>(defn editor [] ...)</code>.
+        application CPU drawing hook is <code>(defn draw [] ...)</code>.
       </p>
       <p>
-        Version 5 saves require only the two entry files. Older projects automatically gain explicit
-        imports for their previous scene/audio/UI modules. Legacy scene updates are called from an
-        update wrapper; the existing pixel hook becomes <code>render</code>. Version 4 projects
-        rename their application entry from <code>game.lisp</code> to <code>main.lisp</code>.
-        Customized legacy modules are kept. Unreferenced files do not execute, and version 5 loading
-        does not recreate deleted modules.
+        Version 9 saves keep editor and application state separately. Earlier application entries
+        move into <code>game.lisp</code>; old editor entries are folded into <code>main.lisp</code>,
+        preserving custom code. Workspace selections follow the renamed files. Unreferenced files
+        remain in the project without executing.
+      </p>
+      <p>
+        A top-level <code>(start-scene "examples/bloom.scene.lisp")</code> in
+        <code>game.lisp</code> selects the startup scene. Changing that request during live editing
+        switches scenes after validation, even if a different scene is saved in state. Unchanged
+        requests preserve transitions made by gameplay or commands during unrelated edits. A missing
+        scene or failed shader keeps the last working scene active.
       </p>
       <h2 id="scene-resources">Swappable scene resources</h2>
-      <pre><code>; main.lisp: application entry point
+      <pre><code>; game.lisp: application entry point
 (start-scene "scenes/menu.scene.lisp")
 
 ; Later, from an update function or command:
@@ -170,38 +194,55 @@
         main's render hook. <code>(active-scene)</code> returns the active path or an empty string.
         The editor continues running across scene changes.
       </p>
-      <h2 id="generators">Image and audio generators</h2>
+      <h2 id="generators">Generator inspectors</h2>
       <p>
-        Open either generator from <strong>View → Image generator / Audio generator</strong>. Each
-        window combines its own editable source, preview, and GUI controls. Changes evaluate live
-        with the project. The image generator uses <code>generators/image.lisp</code>, with its own
-        WebGPU texture and exactly one <code>defpixel</code>. Its preview is 320 × 240 at time zero
-        and does not replace the game shader. The stock recipe draws a circle, square or line;
-        change position, radius and color with the GUI, or rewrite the hook for a more elaborate
-        image. GUI parameters matter only when your recipe reads them.
+        Open <strong>View / Generator inspector</strong> or click a
+        <code>.generator.lisp</code> file anywhere in the tree. The editor discovers generators by
+        suffix and builds controls from their state declarations. Click the selector's Next button
+        to switch recipes. Large inspectors scroll with the mouse wheel or draggable scrollbar. Top
+        and bottom arrows indicate hidden content.
+      </p>
+      <pre><code>; tools/shapes.generator.lisp
+(generator :image "Shapes")
+(init! :shape-radius 48 ["Radius" 1 120 1])
+(init! :shape-color "#bbd6a6" ["Color"])
+(init! :shape-enabled true ["Enabled"])
+(init! :shape-mode "circle" ["Mode" ["circle" "square"]])
+(defpixel image [p time]
+  (background "#101613")
+  (fill (param :shape-color))
+  (circle [160 120] (param :shape-radius)))</code></pre>
+      <p>
+        Numeric annotations use <code>["Label" min max step]</code>; the step is optional. Bounds
+        must be finite and increasing, the step positive, and the default within bounds. Choice
+        annotations use <code>["Label" [choices...]]</code>, with a matching default. Booleans
+        become toggles; six-digit hex colors open a color picker; other strings expose a text editor
+        with Apply. Without annotations, literal <code>init!</code> values get inferred labels and
+        controls. Computed defaults remain ordinary code and are not inferred.
       </p>
       <p>
-        The audio generator uses <code>generators/audio.lisp</code> and
-        <code>(defn generate-sound [] ...)</code>. It mixes <code>voice</code> calls like the
-        gameplay audio patch, with independent waveform, start/end frequency, duration and gain
-        controls. Play auditions the current buffer. Waveform previews and exports use that same
-        generated buffer. Its <code>:sound-*</code> parameters are separate from gameplay sound
-        settings.
+        Image generators declare <code>(generator :image "Title")</code> and provide exactly one
+        <code>defpixel image</code> hook in their import graph. Their independent preview renders at
+        320 by 240 and time zero. Audio generators declare
+        <code>(generator :audio "Title")</code> and implement
+        <code>(defn generate-sound [] ...)</code> with <code>voice</code> calls. They expose
+        waveform previews and a Play action. Generators can import relative or root helpers; output
+        hooks are isolated between recipes. State is shared and persisted with the project, so use
+        distinct state keys for independent recipes.
       </p>
       <p>
-        <strong>Keep</strong> stores an image or audio asset in the project. <strong>PNG</strong> or
-        <strong>WAV</strong> stores it and downloads it. Default paths are
-        <code>assets/generated.png</code> and <code>assets/generated.wav</code>; repeated generation
-        replaces those assets. Custom paths are available through the Lisp APIs below. Existing
-        imported assets are stored and downloadable; direct gameplay sampling of arbitrary imported
-        images/audio is not yet exposed.
+        Keep stores PNG/WAV data in project resources. PNG/WAV also downloads it. Existing
+        <code>export-image</code> and <code>export-sound</code> commands use the last selected
+        generator of the matching output type. Legacy image/audio recipes migrate to
+        <code>.generator.lisp</code>, with imports and workspace selections updated.
       </p>
       <h2 id="commands">Command palette</h2>
       <p>
         Open Commands, Project → Command palette, or <strong>Ctrl/Cmd+Shift+P</strong>. Type part of
-        a path to filter saved commands under <code>commands/</code>, then click a result to execute
-        it. Or type a Lisp program and press Run Lisp or Ctrl/Cmd+Enter. Palette text is transient:
-        it is not saved as a project file and is never evaluated just because you type it.
+        a path to filter saved <code>.command.lisp</code> files in any folder, then click a result
+        to execute it. Or type a Lisp program and press Run Lisp or Ctrl/Cmd+Enter. Palette text is
+        transient: it is not saved as a project file and is never evaluated just because you type
+        it.
       </p>
       <pre><code>; A command can automate state changes and exports.
 (set! :x 160)
@@ -210,11 +251,11 @@
 (export-image "assets/portrait.png")
 (export-sound "assets/chime.wav")</code></pre>
       <p>
-        Create a file such as <code>commands/reset-player.lisp</code> to add your own saved command.
-        Click the small play button beside its explorer icon to run it without opening a code tab,
-        or choose Run command from its right-click menu. Nested command folders work too. These
-        programs run explicitly rather than during normal live evaluation. Commands share the active
-        CPU functions and state and can import helpers relative to <code>commands/</code>. Typed
+        Create a file such as <code>tools/reset-player.command.lisp</code> to add your own saved
+        command. Click the small play button beside its explorer icon to run it without opening a
+        code tab, or choose Run command from its right-click menu. Nested command folders work too.
+        These programs run explicitly rather than during normal live evaluation. Commands share the
+        active CPU functions and state and can import helpers relative to their own directory. Typed
         programs resolve imports as though they are in that directory too. Use <code>set!</code> for
         immediate state edits, or <code>reset-project</code> to rebuild all state from defaults.
       </p>
@@ -309,9 +350,7 @@
             </tr>
             <tr>
               <td><code>(command-file? path)</code></td>
-              <td>
-                Whether a source exists under <code>commands/</code>, including nested folders.
-              </td>
+              <td>Whether a source has the <code>.command.lisp</code> suffix, in any folder.</td>
             </tr>
             <tr>
               <td><code>(path-input)</code></td>
@@ -331,7 +370,7 @@
       <p>
         F2 opens the latest recovery shell without replacing your project’s editor source. Creating
         or renaming files, editing gameplay or generators, and resetting state keep that shell
-        active, including after reload. Accepting an edit to <code>editor.lisp</code> or
+        active, including after reload. Accepting an edit to <code>main.lisp</code> or
         <code>ui/components.lisp</code> returns to the project editor.
       </p>
       <p>

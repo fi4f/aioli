@@ -15,13 +15,23 @@ export class AssetPreview {
   }
 
   async open(path, resource, kind) {
-    if (this.path === path && this.data === resource?.data) return;
+    if (
+      this.path === path &&
+      this.data === resource?.data &&
+      this.sourceMissing === !!resource?.sourceMissing
+    )
+      return;
     this.close();
     const revision = this.revision;
     this.path = path;
     this.data = resource?.data;
+    this.sourceMissing = !!resource?.sourceMissing;
     this.kind = kind;
     this.status = 'Loading asset...';
+    if (this.sourceMissing) {
+      this.status = `Missing asset source: ${resource.source}`;
+      return;
+    }
     try {
       const blob = await (await fetch(resource.data)).blob();
       if (revision !== this.revision) return;

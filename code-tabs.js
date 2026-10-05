@@ -1,6 +1,7 @@
-import { sourcePath } from './project.js';
+import { sourcePath, sourceKey } from './project.js';
 
-const entries = ['main', 'editor'];
+const entries = ['main', 'game'];
+const entryTabs = (sources) => entries.filter((key) => key in sources);
 const readOnly = ['wgsl', 'guide', 'diagnostic'];
 const valid = (key, sources) =>
   typeof key === 'string' &&
@@ -14,9 +15,9 @@ export function openTabs(state, sources) {
   try {
     tabs = JSON.parse(state['open-tabs']);
   } catch {
-    tabs = entries;
+    tabs = entryTabs(sources);
   }
-  if (!Array.isArray(tabs)) tabs = entries;
+  if (!Array.isArray(tabs)) tabs = entryTabs(sources);
   tabs = [...new Set(tabs.filter((key) => typeof key === 'string' && valid(key, sources)))];
   // Also honor Lisp programs that select a source with (set! :tab ...).
   if (valid(state.tab, sources) && !tabs.includes(state.tab)) tabs.push(state.tab);
@@ -47,9 +48,9 @@ export function renameTab(state, sources, oldKey, newKey) {
   try {
     tabs = JSON.parse(state['open-tabs']);
   } catch {
-    tabs = entries;
+    tabs = entryTabs(sources);
   }
-  if (!Array.isArray(tabs)) tabs = entries;
+  if (!Array.isArray(tabs)) tabs = entryTabs(sources);
   state['open-tabs'] = JSON.stringify(tabs.map((key) => (key === oldKey ? newKey : key)));
   if (state.tab === oldKey) state.tab = newKey;
   openTabs(state, sources);

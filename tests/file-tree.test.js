@@ -59,9 +59,9 @@ test('asset types recognize MIME and filename extensions', () => {
   assert.equal(assetKind('notes.bin', 'asset'), 'asset');
 });
 
-test('only Lisp files under commands receive execution controls', () => {
-  assert.equal(isCommandFile('commands/reset.lisp'), true);
-  assert.equal(isCommandFile('commands/tools/export.lisp'), true);
+test('only command suffixes receive execution controls', () => {
+  assert.equal(isCommandFile('reset.command.lisp'), true);
+  assert.equal(isCommandFile('tools/export.command.lisp'), true);
   assert.equal(isCommandFile('lib/reset.lisp'), false);
   assert.equal(isCommandFile('commands/sound.wav'), false);
   assert.equal(isCommandFile('commands/reset.lisp', 'asset'), false);

@@ -13,7 +13,8 @@ const vector = (v, n = 2) => {
  * Commands are five vec4 fields (80 bytes) mirrored by Command in gpu.js:
  * bounds=[x,y,w,h], color=RGBA, detail=shape/glyph data,
  * meta=[kind, extra, blendMode, reserved], clip=[x,y,w,h].
- * Kinds: 0 rectangle, 1 circle, 2 line, 3 glyph, 4 game, 5 generated image.
+ * Kinds: 0 rectangle, 1 circle, 2 line, 3 glyph, 4 game, 5 generated image,
+ * 6 asset preview, 7 theme-tinted icon mask.
  */
 export class DrawList {
   constructor(width, height) {
@@ -140,6 +141,40 @@ export class DrawList {
     const p = this.point(origin);
     vector(size);
     this.emit(kind, [...p, ...size]);
+  }
+  /** Place an application's private command stream inside a host surface. */
+  composite(list, origin, size) {
+    const scale = Math.min(size[0] / list.width, size[1] / list.height);
+    const point = (x, y) => [origin[0] + x * scale, origin[1] + y * scale];
+    for (const command of list.commands) {
+      const [x, y, w, h] = command.bounds;
+      const [cx, cy, cw, ch] = command.clip;
+      const left = Math.max(origin[0], origin[0] + cx * scale, this.state.clip[0]);
+      const top = Math.max(origin[1], origin[1] + cy * scale, this.state.clip[1]);
+      const right = Math.min(
+        origin[0] + size[0],
+        origin[0] + (cx + cw) * scale,
+        this.state.clip[0] + this.state.clip[2],
+      );
+      const bottom = Math.min(
+        origin[1] + size[1],
+        origin[1] + (cy + ch) * scale,
+        this.state.clip[1] + this.state.clip[3],
+      );
+      this.commands.push({
+        ...command,
+        bounds: [...point(x, y), w * scale, h * scale],
+        meta:
+          command.meta[0] === 2
+            ? [2, command.meta[1] * scale, ...command.meta.slice(2)]
+            : [...command.meta],
+        detail:
+          command.meta[0] === 2
+            ? [...point(...command.detail.slice(0, 2)), ...point(...command.detail.slice(2))]
+            : [...command.detail],
+        clip: [left, top, Math.max(0, right - left), Math.max(0, bottom - top)],
+      });
+    }
   }
   primitives() {
     return {

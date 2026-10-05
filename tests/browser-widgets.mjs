@@ -5,7 +5,7 @@ import { createStaticServer } from '../server.js';
 const require = createRequire(import.meta.url);
 const { chromium } = require(
   process.env.PLAYWRIGHT_MODULE ||
-    'C:/Users/smcge/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright',
+    `${process.env.USERPROFILE}/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright`,
 );
 const server = createStaticServer({ basePath: '/aioli/' });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -31,8 +31,7 @@ const menuRoutes = {
   preset: 'project',
   reset: 'project',
   evaluate: 'project',
-  'image-generator': 'view',
-  'audio-generator': 'view',
+  generators: 'view',
   'upgrade-editor': 'project',
   code: 'view',
   files: 'view',
@@ -41,6 +40,31 @@ const menuRoutes = {
   wgsl: 'view',
 };
 async function click(id) {
+  if (['image-generator', 'audio-generator'].includes(id)) {
+    const output = id.split('-')[0];
+    await click('generators');
+    for (let i = 0; i < 8; i++) {
+      if (
+        (await page.evaluate(() => window.aioli.state['active-generator'])).includes(
+          `/${output}.generator.lisp`,
+        )
+      )
+        break;
+      await click('generator-select');
+      await page.waitForFunction(() => !window.aioli.pending);
+    }
+    return;
+  }
+  if (id === 'image-color-control') {
+    await click('generator-field-image-color');
+    await page.locator('#generator-color').evaluate((input) => {
+      input.value = '#e9bca9';
+      input.dispatchEvent(new Event('input'));
+      input.dispatchEvent(new Event('change'));
+    });
+    return;
+  }
+
   if (id.startsWith('tab-')) {
     // Bring offscreen tabs into view through the actual overflow controls.
     for (let i = 0; i < 256; i++) {
@@ -109,7 +133,7 @@ try {
   await page.waitForFunction(() => window.aioli?.running);
   assert.deepEqual(await page.evaluate(() => JSON.parse(window.aioli.state['open-tabs'])), [
     'main',
-    'editor',
+    'game',
   ]);
   assert.equal(
     await page.evaluate(() => 'scene' in window.aioli.sources || 'audio' in window.aioli.sources),
@@ -123,6 +147,7 @@ try {
   );
   await page.keyboard.press('Alt+v');
   await page.waitForFunction(() => window.aioli.state.menu === 'view');
+  await page.locator('button[data-region="code"]').waitFor({ state: 'attached' });
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => !window.aioli.state['show-code'] && !window.aioli.state.menu);
@@ -155,7 +180,7 @@ try {
       JSON.parse(window.aioli.state['open-tabs']).includes('lib/math.lisp'),
     ),
   );
-  await click('tab-main');
+  await click('tab-game');
   await click('tab-lib/math.lisp');
   const mathSource = await page.evaluate(() => window.aioli.sources['lib/math.lisp']);
   await click('edit');
@@ -190,6 +215,41 @@ try {
     window.aioli.regions.find((region) => region.id === 'source'),
   );
   assert.ok(codeRegion.origin[0] >= 280);
+  const beforeCollapse = await page.evaluate(() => ({
+    tab: window.aioli.state.tab,
+    folders: window.aioli.state['open-folders'],
+    offset: window.aioli.state['file-offset'],
+  }));
+  await click('collapse-files');
+  await page.waitForFunction(
+    () =>
+      window.aioli.state['files-collapsed'] &&
+      !window.aioli.regions.some((r) => r.id === 'files-tree'),
+  );
+  assert.equal(await page.evaluate(() => window.aioli.state['show-files']), true);
+  assert.equal(
+    await page.evaluate(() => window.aioli.regions.find((r) => r.id === 'source').origin[0]),
+    56,
+  );
+  assert.equal(
+    await page.evaluate(() => window.aioli.regions.some((r) => r.id === 'hide-files')),
+    false,
+  );
+  await click('collapse-files');
+  await page.waitForFunction(
+    () =>
+      !window.aioli.state['files-collapsed'] &&
+      window.aioli.regions.some((r) => r.id === 'files-tree'),
+  );
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      tab: window.aioli.state.tab,
+      folders: window.aioli.state['open-folders'],
+      offset: window.aioli.state['file-offset'],
+    })),
+    beforeCollapse,
+  );
+
   await click('folder-lib');
   await click('file-lib/math.lisp');
   assert.equal(await page.evaluate(() => window.aioli.state['show-files']), true);
@@ -277,6 +337,9 @@ try {
       button: 'right',
     });
     await page.waitForFunction(() => window.aioli.state['file-context']);
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
   }
   await context('folder-lib');
   assert.equal(
@@ -311,13 +374,14 @@ try {
   );
   // Import a large project fixture to exercise wheel scrolling and the scrollbar.
   const treeProject = await page.evaluate(() => ({
-    version: 5,
+    version: 8,
     files: Object.fromEntries(
       Object.entries(window.aioli.sources)
         .filter(([key]) => !key.startsWith('__'))
         .map(([key, text]) => [key.includes('/') ? key : key + '.lisp', text]),
     ),
-    state: window.aioli.state,
+    state: window.aioli.editorState,
+    applicationState: window.aioli.applicationState,
     resources: window.aioli.resources,
     recovery: false,
   }));
@@ -357,11 +421,13 @@ try {
   await page.waitForFunction(
     () => !window.aioli.pending && !window.aioli.sources['scroll-00.lisp'],
   );
-  await click('tab-main');
+  await click('tab-game');
   await openFiles();
-  await click('folder-scenes');
-  await click('file-scenes/garden.scene.lisp');
-  const originalScene = await page.evaluate(() => window.aioli.sources['scenes/garden.scene.lisp']);
+  await click('folder-examples');
+  await click('file-examples/garden.scene.lisp');
+  const originalScene = await page.evaluate(
+    () => window.aioli.sources['examples/garden.scene.lisp'],
+  );
   await type(
     '(import "../lib/math.lisp")\n(init! :scene-tick 0)\n' +
       originalScene.replace(
@@ -372,11 +438,11 @@ try {
   await page.keyboard.press('Control+Enter');
   await ready();
   await page.waitForFunction(() => window.aioli.state['scene-tick'] > 0);
-  await palette('(set! :x 60) (set! :paused true)');
+  await palette('(game-set! :x 60) (set! :paused true)');
   await page.waitForFunction(() => window.aioli.state.x === 60 && window.aioli.state.paused);
   await page.screenshot({ path: 'artifacts/command-palette.png' });
   await type('center-player');
-  await click('command-commands/center-player.lisp');
+  await click('command-commands/center-player.command.lisp');
   await page.waitForFunction(() => window.aioli.state.x === 160);
   await page.keyboard.press('Escape');
   await openFiles();
@@ -389,11 +455,11 @@ try {
   await ready();
   const beforeScene = await page.evaluate(() => window.aioli.shader);
   await click('image-color-control');
-  await click('image-store');
+  await click('generator-keep');
   await page.waitForFunction(() => !!window.aioli.resources['assets/generated.png']);
   await page.screenshot({ path: 'artifacts/image-generator.png' });
   let download = page.waitForEvent('download');
-  await click('image-export');
+  await click('generator-export');
   await (await download).saveAs('artifacts/generated.png');
   const png = await readFile('artifacts/generated.png');
   assert.equal(png.readUInt32BE(16), 320);
@@ -420,12 +486,12 @@ try {
   );
   await page.keyboard.press('Control+Enter');
   await ready();
-  await click('sound-store');
+  await click('generator-keep');
   await page.waitForFunction(() => !!window.aioli.resources['assets/generated.wav']);
-  await click('sound-preview');
+  await click('generator-play');
   await page.screenshot({ path: 'artifacts/audio-generator.png' });
   download = page.waitForEvent('download');
-  await click('sound-export');
+  await click('generator-export');
   await (await download).saveAs('artifacts/generated.wav');
   const wav = await readFile('artifacts/generated.wav');
   assert.equal(wav.toString('ascii', 0, 4), 'RIFF');
@@ -502,10 +568,10 @@ try {
 
   await click('close-window');
   await palette(
-    '(create-file "commands/custom.lisp" "(set! :x 23) (init! :command-runs 0) (set! :command-runs (+ (get :command-runs) 1))")',
+    '(create-file "commands/custom.command.lisp" "(set! :x 23) (init! :command-runs 0) (set! :command-runs (+ (get :command-runs) 1))")',
   );
   await page.waitForFunction(
-    () => window.aioli.sources['commands/custom.lisp'] && !window.aioli.pending,
+    () => window.aioli.sources['commands/custom.command.lisp'] && !window.aioli.pending,
   );
   await page.keyboard.press('Escape');
   await openFiles();
@@ -515,30 +581,32 @@ try {
     ))
   )
     await click('folder-commands');
-  await click('tab-main');
+  await click('tab-game');
   const activeBeforeRun = await page.evaluate(() => window.aioli.state.tab);
-  await click('run-commands/custom.lisp');
+  await click('run-commands/custom.command.lisp');
   await page.waitForFunction(
     () => window.aioli.state.x === 23 && window.aioli.status.includes('Executed'),
   );
   assert.equal(await page.evaluate(() => window.aioli.state.tab), activeBeforeRun);
   assert.equal(await page.evaluate(() => window.aioli.state.window), '');
   await page.screenshot({ path: 'artifacts/file-commands.png' });
-  await context('run-commands/custom.lisp');
-  await page.waitForFunction(() => window.aioli.state['context-path'] === 'commands/custom.lisp');
+  await context('run-commands/custom.command.lisp');
+  await page.waitForFunction(
+    () => window.aioli.state['context-path'] === 'commands/custom.command.lisp',
+  );
   await page.screenshot({ path: 'artifacts/command-context.png' });
   await click('context-run');
   await page.waitForFunction(
     () => !window.aioli.state['file-context'] && window.aioli.state['command-runs'] === 2,
   );
   assert.equal(await page.evaluate(() => window.aioli.state.tab), activeBeforeRun);
-  await page.locator('[data-region="run-commands/custom.lisp"]').focus();
+  await page.locator('[data-region="run-commands/custom.command.lisp"]').focus();
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => window.aioli.state['command-runs'] === 3);
   assert.equal(await page.evaluate(() => window.aioli.state.tab), activeBeforeRun);
   await palette('');
   await type('custom');
-  await click('command-commands/custom.lisp');
+  await click('command-commands/custom.command.lisp');
   await page.waitForFunction(() => window.aioli.state.x === 23);
   await type('(rename-file "lib/math.lisp" "lib/arithmetic.lisp")');
   await page.keyboard.press('Control+Enter');
@@ -555,14 +623,14 @@ try {
   await click('export');
   await (await download).saveAs('artifacts/project-v3.json');
   const project = JSON.parse(await readFile('artifacts/project-v3.json', 'utf8'));
-  assert.equal(project.version, 5);
+  assert.equal(project.version, 12);
   assert.ok(project.files['lib/math.lisp']);
   assert.ok(project.resources['assets/generated.png']);
   assert.ok(project.resources['assets/generated.wav']);
   assert.equal(project.files.__palette, undefined);
   await page.reload();
   await page.waitForFunction(() => window.aioli?.running);
-  assert.ok(await page.evaluate(() => window.aioli.sources['commands/custom.lisp']));
+  assert.ok(await page.evaluate(() => window.aioli.sources['commands/custom.command.lisp']));
   assert.ok(await page.evaluate(() => window.aioli.resources['assets/generated.png']));
   await page.locator('#file-input').setInputFiles('artifacts/project-v3.json');
   await page.waitForFunction(
@@ -576,23 +644,23 @@ try {
   await page.waitForFunction(() => !!window.aioli.resources['assets/imported-tone.wav']);
   // An older/custom saved shell remains the project source in recovery. File
   // operations must not silently switch back to that shell after evaluation.
-  const oldEditor = '(defn editor [] (background "#101613"))\n; custom old editor';
+  const oldEditor = '(defn draw [] (background "#101613"))\n; custom old editor';
   const oldUI = project.files['ui/components.lisp'] + '\n; custom old library';
   const oldProject = {
     ...project,
     recovery: false,
-    files: { ...project.files, 'editor.lisp': oldEditor, 'ui/components.lisp': oldUI },
+    files: { ...project.files, 'main.lisp': oldEditor, 'ui/components.lisp': oldUI },
   };
-  oldProject.files['generators/audio.lisp'] =
+  oldProject.files['generators/audio.generator.lisp'] =
     '(init! :sound-wave "sine") (init! :sound-pitch 440) (init! :sound-end 880) (init! :sound-duration 0.3) (init! :sound-gain 0.35)\n' +
-    oldProject.files['generators/audio.lisp'];
+    oldProject.files['generators/audio.generator.lisp'];
   await page.locator('#file-input').setInputFiles({
     name: 'old-project.json',
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(oldProject)),
   });
   await page.waitForFunction(
-    (oldEditor) => !window.aioli.pending && window.aioli.sources.editor === oldEditor,
+    (oldEditor) => !window.aioli.pending && window.aioli.sources.main === oldEditor,
     oldEditor,
   );
   await page.keyboard.press('F2');
@@ -604,9 +672,9 @@ try {
     () => !window.aioli.pending && !!window.aioli.sources['lib/recovery.lisp'],
   );
   assert.equal(await page.evaluate(() => window.aioli.recovery), true);
-  assert.equal(await page.evaluate(() => window.aioli.sources.editor), oldEditor);
+  assert.equal(await page.evaluate(() => window.aioli.sources.main), oldEditor);
   await openFiles();
-  await click('hide-files');
+  await click('files');
   await page.reload();
   await page.waitForFunction(() => window.aioli?.running && window.aioli.recovery);
   await palette('(rename-file "lib/recovery.lisp" "lib/recovered.lisp")');
@@ -623,20 +691,20 @@ try {
   await click('upgrade-editor');
   await page.waitForFunction(
     (oldEditor) =>
-      !window.aioli.pending && !window.aioli.recovery && window.aioli.sources.editor !== oldEditor,
+      !window.aioli.pending && !window.aioli.recovery && window.aioli.sources.main !== oldEditor,
     oldEditor,
   );
-  assert.equal(await page.evaluate(() => window.aioli.sources['editor-backup-1.lisp']), oldEditor);
+  assert.equal(await page.evaluate(() => window.aioli.sources['main-backup-1.lisp']), oldEditor);
   assert.equal(
     await page.evaluate(() => window.aioli.sources['ui/components-backup-1.lisp']),
     oldUI,
   );
   await openFiles();
-  await click('hide-files');
+  await click('files');
   await page.reload();
   await page.waitForFunction(() => window.aioli?.running && !window.aioli.recovery);
   await openFiles();
-  await click('hide-files');
+  await click('files');
   await page.setViewportSize({ width: 390, height: 844 });
   await click('about');
   assert.ok(
@@ -653,6 +721,20 @@ try {
   await openFiles();
   await click('folder-lib');
   await page.screenshot({ path: 'artifacts/file-pane-mobile.png' });
+  await click('collapse-files');
+  await page.waitForFunction(
+    () =>
+      window.aioli.state['files-collapsed'] && window.aioli.regions.some((r) => r.id === 'source'),
+  );
+  assert.ok(
+    await page.evaluate(() => {
+      const r = window.aioli.regions.find((r) => r.id === 'source');
+      return r.origin[0] >= 40 && r.origin[0] + r.size[0] <= 390;
+    }),
+  );
+  await click('collapse-files');
+  await page.waitForFunction(() => !window.aioli.state['files-collapsed']);
+
   await click('file-lib/math.lisp');
   await page.waitForFunction(
     () =>
@@ -668,7 +750,7 @@ try {
   await page.waitForFunction(() =>
     window.aioli.regions.some(
       (region) =>
-        region.id === 'image-export' &&
+        region.id === 'generator-export' &&
         region.origin[0] + region.size[0] <= 390 &&
         region.origin[1] + region.size[1] <= 844,
     ),
@@ -686,16 +768,18 @@ try {
   const lifecycleProject = {
     ...project,
     recovery: false,
+    applicationState: {},
     files: {
       ...project.files,
-      'generators/audio.lisp': oldProject.files['generators/audio.lisp'],
-      'main.lisp': lifecycleGame,
+      'generators/audio.generator.lisp': oldProject.files['generators/audio.generator.lisp'],
+      'game.lisp': lifecycleGame,
+      'main.lisp': project.files['main.lisp'],
       'scene.lisp': '(unused-error)',
       'audio.lisp': '(',
     },
     state: {
-      tab: 'main',
-      'open-tabs': '["main","editor"]',
+      tab: 'game',
+      'open-tabs': '["main","game"]',
       'show-code': true,
       'show-files': false,
       paused: false,
@@ -750,15 +834,16 @@ try {
 (defpixel render [p time] (background "#101613") (fill "#bbd6a6") (circle [160 120] 20) ${extra})`;
   const sceneProject = {
     ...lifecycleProject,
+    applicationState: {},
     files: {
       ...lifecycleProject.files,
-      'main.lisp':
+      'game.lisp':
         '(init! :scene-enters 0) (init! :scene-exits 0) (init! :scene-clock 0) (start-scene "scenes/a.scene.lisp")',
       'scenes/a.scene.lisp': makeScene('A'),
       'scenes/b.scene': makeScene('B', '(rect [10 10] [20 20])'),
       'scenes/bad.scene.lisp': '(defpixel render [p time] (circle 3 2))',
     },
-    state: { tab: 'main', 'show-code': true },
+    state: { tab: 'game', 'show-code': true },
   };
   await page.locator('#file-input').setInputFiles({
     name: 'scenes.json',
@@ -791,20 +876,20 @@ try {
   await openFiles();
   assert.equal(
     await page.evaluate(
-      () => window.aioli.regions.find((r) => r.id === 'file-main.lisp').assetKind,
+      () => window.aioli.regions.find((r) => r.id === 'file-game.lisp').assetKind,
     ),
     'main-entry',
   );
   assert.equal(
     await page.evaluate(
-      () => window.aioli.regions.find((r) => r.id === 'file-editor.lisp').assetKind,
+      () => window.aioli.regions.find((r) => r.id === 'file-main.lisp').assetKind,
     ),
     'editor-entry',
   );
   await page.screenshot({ path: 'artifacts/scene-entry-icons.png' });
   await page.waitForFunction(
     () =>
-      JSON.parse(localStorage.getItem('aioli.project.v3')).state['active-scene'] ===
+      JSON.parse(localStorage.getItem('aioli.project.v3')).applicationState['active-scene'] ===
       'scenes/b.scene',
   );
   await page.reload();
@@ -819,7 +904,7 @@ try {
     await page.evaluate(() => ({
       status: window.aioli?.status,
       state: window.aioli?.state,
-      command: window.aioli?.sources['commands/custom.lisp'],
+      command: window.aioli?.sources['commands/custom.command.lisp'],
       input: document.querySelector('#text-input').value,
     })),
   );

@@ -2,7 +2,7 @@
 (defn project-window []
   (let [kind (get :window)
         w (min (if (= kind "palette") 720 960) (- (screen-width) 32))
-        h (min (if (= kind "palette") 480 (if (> w 760) 580 690)) (- (screen-height) 100))
+        h (min (if (= kind "palette") 480 720) (- (screen-height) 100))
         x (/ (- (screen-width) w) 2) y 64]
     ; This region intercepts background clicks without consuming child controls.
     (region :window "Project tool window" [x y] [w h])
@@ -11,7 +11,7 @@
     (fill (get :ui-text))
     (text [(+ x 16) (+ y 12)]
       (if (= kind "palette") "Commands / Ctrl+Shift+P"
-        (if (= kind "image") "Image generator / 320 x 240" "Audio generator")))
+        (generator-title)))
     (when (ui-button :close-window "Close" [(+ x w -84) (+ y 4)] [76 32] false)
       (set! :window ""))
     (scope

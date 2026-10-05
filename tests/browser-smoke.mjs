@@ -5,7 +5,7 @@ import { createStaticServer } from '../server.js';
 const require = createRequire(import.meta.url);
 const { chromium } = require(
   process.env.PLAYWRIGHT_MODULE ||
-    'C:/Users/smcge/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright',
+    `${process.env.USERPROFILE}/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright`,
 );
 const browser = await chromium.launch({
   headless: true,
@@ -148,10 +148,10 @@ try {
     'Game is sampled into the editor canvas',
   );
 
-  const original = await page.evaluate(() => window.aioli.sources['scenes/garden.scene.lisp']);
+  const original = await page.evaluate(() => window.aioli.sources['examples/garden.scene.lisp']);
   // An unfinished quote must reach the canvas immediately, even though the
   // strict reader rejects it. Verify the quote glyph in the source region.
-  await source('scenes/garden.scene.lisp', '"');
+  await source('examples/garden.scene.lisp', '"');
   await page.waitForFunction(() => window.aioli.error);
   const sourceBox = await region('source');
   await page.waitForFunction(
@@ -171,19 +171,21 @@ try {
     clip: { x: sourceBox.origin[0], y: sourceBox.origin[1], width: 220, height: 42 },
   });
   await page.keyboard.insertText('hello\\');
-  await page.waitForFunction(() => window.aioli.sources['scenes/garden.scene.lisp'] === '"hello\\');
-  await source('scenes/garden.scene.lisp', original);
+  await page.waitForFunction(
+    () => window.aioli.sources['examples/garden.scene.lisp'] === '"hello\\',
+  );
+  await source('examples/garden.scene.lisp', original);
   await evaluated();
-  await source('scenes/garden.scene.lisp', original + '\n(');
+  await source('examples/garden.scene.lisp', original + '\n(');
   await page.waitForFunction(() => window.aioli.error);
   assert.ok(await page.evaluate(() => window.aioli.running));
   await source(
-    'scenes/garden.scene.lisp',
+    'examples/garden.scene.lisp',
     '(defpixel render [p time] (background (pow [0.1 0.2 0.3] 2)))',
   );
   await page.waitForFunction(() => window.aioli.error && !window.aioli.pending);
   assert.match(await page.evaluate(() => window.aioli.status), /WGSL/);
-  await source('scenes/garden.scene.lisp', original);
+  await source('examples/garden.scene.lisp', original);
   await evaluated();
 
   // Imported CRLF, Unicode fallbacks and tabs share the textarea's true offsets.
@@ -247,8 +249,8 @@ try {
 
   // Use the pixel slider by dragging, not an HTML input.
   await click('tools');
-  await region('moon');
-  const slider = await region('moon');
+  await region('scene-field-moon');
+  const slider = await region('scene-field-moon');
   await page.mouse.move(slider.origin[0] + 2, slider.origin[1] + 8);
   await page.mouse.down();
   await page.mouse.move(slider.origin[0] + slider.size[0] * 0.75, slider.origin[1] + 8, {
@@ -263,7 +265,7 @@ try {
   await click('tools');
 
   // Editing imported component files changes the actual fullscreen pixel UI.
-  const editor = await page.evaluate(() => window.aioli.sources.editor);
+  const editor = await page.evaluate(() => window.aioli.sources.main);
   const workspace = await page.evaluate(() => window.aioli.sources['editor/workspace.lisp']);
   await source(
     'editor/workspace.lisp',
@@ -294,35 +296,44 @@ try {
   if (await page.evaluate(() => window.aioli.state['show-files'])) await click('files');
 
   // Recovery remains available even if a valid editor program hides all UI.
-  await source('editor', '(defn editor [] (background "#101613"))');
+  await source('main', '(defn draw [] (background "#101613"))');
   await evaluated();
   await page.waitForFunction(() => window.aioli.regions.length === 0);
   await page.keyboard.press('F2');
   await region('source');
   assert.ok(await page.evaluate(() => window.aioli.recovery));
-  await source('editor', editor);
+  await source('main', editor);
   await evaluated();
   await click('tab-main');
-  for (const expected of [18, 9, 93]) {
-    await click('project');
-    await click('preset');
+  if (!(await page.evaluate(() => window.aioli.state['show-files']))) await click('files');
+  if (
+    !(await page.evaluate(() =>
+      JSON.parse(window.aioli.state['open-folders']).includes('examples'),
+    ))
+  )
+    await click('folder-examples');
+  for (const [name, expected] of [
+    ['bloom', 18],
+    ['plasma', 9],
+    ['garden', 93],
+  ]) {
+    await click('play-examples/' + name + '.scene.lisp');
     await evaluated();
     assert.equal(await page.evaluate(() => window.aioli.primitives), expected);
   }
-
+  await click('files');
   await click('world');
   const x = await page.evaluate(() => window.aioli.state.x);
   await page.keyboard.down('ArrowRight');
   await page.waitForFunction((x) => window.aioli.state.x > x, x);
   await page.keyboard.up('ArrowRight');
-  await click('tools');
-  await click('sound');
-  await region('wav');
-  let event = page.waitForEvent('download');
-  await click('wav');
-  assert.equal((await event).suggestedFilename(), 'aioli-patch.wav');
-  await click('audition');
-  await click('tools');
+  // Gameplay sound remains an engine capability; output tools use the generator inspector.
+  await click('commands');
+  const commandInput = await region('source');
+  await page.mouse.click(commandInput.origin[0] + 20, commandInput.origin[1] + 10);
+  await page.keyboard.insertText('(game-call "sound")');
+  await page.keyboard.press('Escape');
+  let event;
   await click('project');
   event = page.waitForEvent('download');
   await click('png');
@@ -354,14 +365,14 @@ try {
           .filter(([key]) => !key.startsWith('__'))
           .map(([key, value]) => [key.includes('/') ? key : key + '.lisp', value]),
       ),
+      'main.lisp': window.aioli.sources.game,
       'editor.lisp':
-        window.aioli.sources.editor.replace(
-          '(text [24 18] "aioli")',
-          '(text [24 18] "pixel lisp")',
-        ) + '\n(defn legacy-brand [] (text [24 18] "pixel lisp"))\n; custom editor retained',
+        window.aioli.sources.main.replace('(text [24 18] "aioli")', '(text [24 18] "pixel lisp")') +
+        '\n(defn legacy-brand [] (text [24 18] "pixel lisp"))\n; custom editor retained',
     },
     state: { ...window.aioli.state, moon: 17 },
   }));
+  delete legacy.files['game.lisp'];
   const migration = await browser.newPage();
   await migration.addInitScript(
     (project) => localStorage.setItem('pixel-lisp.project.v2', JSON.stringify(project)),
@@ -370,12 +381,9 @@ try {
   await migration.goto('http://127.0.0.1:4173');
   await migration.waitForFunction(() => window.aioli?.running);
   assert.equal(await migration.evaluate(() => window.aioli.state.moon), 17);
+  assert.match(await migration.evaluate(() => window.aioli.sources.main), /custom editor retained/);
   assert.match(
-    await migration.evaluate(() => window.aioli.sources.editor),
-    /custom editor retained/,
-  );
-  assert.match(
-    await migration.evaluate(() => window.aioli.sources.editor),
+    await migration.evaluate(() => window.aioli.sources.main),
     /\(text \[24 18\] "aioli"\)/,
   );
   assert.ok(await migration.evaluate(() => localStorage.getItem('aioli.project.v3')));

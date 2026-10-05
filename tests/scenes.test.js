@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRuntime } from '../lisp.js';
-import { stageScene, callHook, isScenePath } from '../scenes.js';
+import { stageScene, callHook, isScenePath, selectScene } from '../scenes.js';
 import { compileShader } from '../shader.js';
 import { defaults } from '../examples.js';
 import { assetKind } from '../file-tree.js';
@@ -43,14 +43,14 @@ test('scenes isolate lifecycle functions and share application state/helpers', (
   assert.match(compileShader(b.render, state).code, /@fragment/);
 });
 
-test('scene resources require a render hook and a supported suffix', () => {
+test('scene resources require a render hook; suffix conventions belong to the editor', () => {
   assert.equal(isScenePath('menu.scene.lisp'), true);
   assert.equal(isScenePath('menu.scene'), true);
   assert.equal(isScenePath('menu.lisp'), false);
   const application = createRuntime({});
   assert.throws(
     () => stageScene({ 'menu.lisp': '' }, 'menu.lisp', application, () => createRuntime({})),
-    /Scenes must end/,
+    /defpixel render/,
   );
   assert.throws(
     () =>
@@ -65,7 +65,22 @@ test('examples contain named scenes without legacy magic files; entry icons are 
   assert.ok(defaults.main.includes('start-scene'));
   for (const path of ['game', 'audio', 'scene', 'ui']) assert.equal(path in defaults, false);
   assert.ok(defaults['scenes/garden.scene.lisp'].includes('defpixel render'));
-  assert.equal(assetKind('main.lisp', 'lisp'), 'main-entry');
-  assert.equal(assetKind('editor.lisp', 'lisp'), 'editor-entry');
+  assert.equal(assetKind('main.lisp', 'lisp'), 'editor-entry');
+  assert.equal(assetKind('editor.lisp', 'lisp'), 'code');
   assert.equal(assetKind('levels/menu.scene', 'lisp'), 'scene');
+});
+
+test('entry scene changes override saved state while unrelated reloads preserve runtime transitions', () => {
+  const garden = 'scenes/garden.scene.lisp',
+    bloom = 'scenes/bloom.scene.lisp';
+  assert.equal(selectScene({ requested: bloom, previousRequest: garden, active: garden }), bloom);
+  assert.equal(selectScene({ requested: garden, previousRequest: garden, active: bloom }), bloom);
+  assert.equal(selectScene({ requested: bloom, active: garden, activating: true }), bloom);
+  assert.equal(
+    selectScene({ requested: garden, previousRequest: garden, active: bloom, activating: true }),
+    bloom,
+  );
+  assert.equal(selectScene({ explicit: garden, requested: bloom, active: bloom }), garden);
+  assert.equal(selectScene({ explicit: '', requested: bloom, active: bloom }), '');
+  assert.equal(selectScene({ requested: undefined, previousRequest: garden, active: garden }), '');
 });

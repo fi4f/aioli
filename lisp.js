@@ -223,7 +223,12 @@ export function createRuntime(state, host = {}) {
     }
     // State must stay JSON-compatible for project export and local persistence.
     if (name === 'set!' || name === 'init!') {
-      if (args.length !== 2) throw new Error('set! expects a state key and value');
+      // An init! annotation describes inspector controls without evaluating it.
+      if (
+        args.length !== 2 &&
+        !(name === 'init!' && args.length === 3 && args[2]?.type === 'vector')
+      )
+        throw new Error(`${name} expects a state key and value`);
       const key = ev(args[0]);
       if (name === 'init!' && key in state) return state[key];
       const value = ev(args[1]);

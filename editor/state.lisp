@@ -5,7 +5,7 @@
 (init! :ui-text "#d0dbd2")
 (init! :ui-muted "#77867b")
 (init! :ui-accent "#bbd6a6")
-(init! :tab "main")
+(init! :tab "game")
 (init! :show-code true)
 (init! :show-tools false)
 (init! :tool "graphics")
@@ -20,7 +20,7 @@
 (init! :paused false)
 (init! :window "")
 (init! :file-offset 0)
-(init! :selected-file "main.lisp")
+(init! :selected-file "game.lisp")
 (init! :show-files false)
 (init! :file-path-editing false)
 (init! :open-folders "[]")
@@ -37,3 +37,17 @@
 (init! :preview-drag-y 0)
 (init! :preview-drag-pan-x 0)
 (init! :preview-drag-pan-y 0)
+
+(init! :inspector-offset 0)
+(init! :inspector-edit-key "")
+
+(init! :scene-inspector-offset 0)
+(init! :scene-edit-key "")
+
+; Focus mode hides panes without changing their saved visibility or buffers.
+(init! :preview-focused false)
+
+(init! :files-collapsed false)
+
+(init! :code-collapsed false)
+(init! :inspector-collapsed false)

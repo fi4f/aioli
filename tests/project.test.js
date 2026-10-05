@@ -29,7 +29,7 @@ const defaults = {
     '\"./',
     '\"./ui/',
   ),
-  editor: readFileSync(new URL('../editor.lisp', import.meta.url), 'utf8'),
+  editor: readFileSync(new URL('../main.lisp', import.meta.url), 'utf8'),
   ...generatorSources,
   ...Object.fromEntries(
     editorSourcePaths.map((path) => [
@@ -107,7 +107,7 @@ test('v3 saves preserve extra source files and binary assets while excluding tra
     'assets/example.png': { mime: 'image/png', data: 'data:image/png;base64,AAAA' },
   };
   const snapshot = projectSnapshot(sources, { x: 7 }, resources);
-  assert.equal(snapshot.version, 5);
+  assert.equal(snapshot.version, 12);
   assert.equal(snapshot.files.__palette, undefined);
   const imported = readProject(JSON.parse(JSON.stringify(snapshot)), defaults);
   assert.equal(imported.sources['lib/helper.lisp'], sources['lib/helper.lisp']);
@@ -129,11 +129,13 @@ test('v2 migration retains custom source and state and installs generator files'
   const source = { ...examples, editor: defaults.editor + '\n; customized', ui: defaults.ui };
   const migrated = readProject({ version: 2, sources: source, state: { x: 17 } }, defaults);
   assert.equal(
-    migrated.sources.editor,
-    '(import "./ui/components.lisp")\n' + normalizeSource(source.editor),
+    migrated.sources.main,
+    '(import "./ui/components.lisp")\n' +
+      normalizeSource(source.editor) +
+      '\n(defn draw [] (editor))',
   );
   assert.equal(migrated.state.x, 17);
-  assert.ok(migrated.sources['generators/image.lisp']);
+  assert.ok(migrated.sources['generators/image.generator.lisp']);
   assert.throws(
     () =>
       readProject(
@@ -171,7 +173,7 @@ test('stock component upgrades preserve custom editor changes', () => {
 });
 
 test('v4 has only two entry roots and never recreates ordinary modules', () => {
-  assert.deepEqual(entryPaths, { main: 'main.lisp', editor: 'editor.lisp' });
+  assert.deepEqual(entryPaths, { main: 'main.lisp', game: 'game.lisp' });
   const main = '(defpixel render [p time] (background "#000000"))';
   const editor = '(defn editor [] (background "#000000"))';
   const loaded = readProject(projectSnapshot({ main, editor }, {}), defaults);
@@ -199,10 +201,10 @@ test('v3 migrates implicit scene/audio loading into imports and a CPU update wra
   };
   const saved = { ...projectSnapshot(old, {}), version: 3 };
   const loaded = readProject(saved, defaults);
-  const modules = resolveModules(loaded.sources, ['main']);
+  const modules = resolveModules(loaded.sources, ['game']);
   assert.deepEqual(
     modules.map((module) => module.path),
-    ['audio.lisp', 'scene.lisp', 'main.lisp'],
+    ['audio.lisp', 'scene.lisp', 'game.lisp'],
   );
   const state = {},
     runtime = createRuntime(state);
@@ -243,11 +245,11 @@ test('v4 game entry migrates to main while customized modules stay intact', () =
     state: { tab: 'game', 'open-tabs': '["game","editor"]' },
   };
   const loaded = readProject(saved, defaults);
-  assert.equal(loaded.sources.main, source);
-  assert.equal('game' in loaded.sources, false);
+  assert.equal(loaded.sources.game, source);
+  assert.equal('game' in loaded.sources, true);
   assert.equal(loaded.sources.ui, '; custom ui');
-  assert.equal(loaded.state.tab, 'main');
-  assert.equal(loaded.state['open-tabs'], '["main","editor"]');
+  assert.equal(loaded.state.tab, 'game');
+  assert.equal(loaded.state['open-tabs'], '["game","main"]');
 });
 
 test('v4 stock UI facade is retired while its imports move into ui/', () => {
@@ -262,8 +264,8 @@ test('v4 stock UI facade is retired while its imports move into ui/', () => {
   };
   const loaded = readProject(saved, defaults);
   assert.equal('ui' in loaded.sources, false);
-  assert.match(loaded.sources.editor, /ui\/components\.lisp/);
-  resolveModules(loaded.sources, ['main', 'editor']);
+  assert.match(loaded.sources.main, /ui\/components\.lisp/);
+  resolveModules(loaded.sources, ['main', 'game']);
 });
 
 test('unchanged legacy bundled examples migrate to named scene resources', () => {
@@ -280,7 +282,7 @@ test('unchanged legacy bundled examples migrate to named scene resources', () =>
   const loaded = readProject(saved, defaults);
   assert.equal('scene' in loaded.sources, false);
   assert.equal('audio' in loaded.sources, false);
-  assert.ok(loaded.sources.main.includes('start-scene'));
+  assert.ok(loaded.sources.game.includes('start-scene'));
   assert.equal(loaded.state['active-scene'], 'scenes/garden.scene.lisp');
   assert.ok(loaded.sources['scenes/garden.scene.lisp'].includes('defpixel render'));
 });

@@ -4,8 +4,6 @@
 (import "./code-pane.lisp")
 (import "./game-pane.lisp")
 (import "./parameter-pane.lisp")
-(import "./graphics-tools.lisp")
-(import "./sound-tools.lisp")
 (import "./tool-window.lisp")
 (import "./files-pane.lisp")
 (import "./filename-dialog.lisp")
@@ -20,12 +18,17 @@
   ; Keep older command programs that used the modal explorer key working.
   (when (= (get :window) "files") (set! :show-files true) (set! :window ""))
   (let [w (screen-width) h (screen-height)
+        focused (get :preview-focused)
         narrow (< w 850)
-        files-width (if (get :show-files) (if narrow w 280) 0)
-        code-visible (and (get :show-code) (or (not narrow) (not (get :show-files))))
+        files-expanded (and (get :show-files) (not (get :files-collapsed)))
+        files-width (if (and (not focused) (get :show-files)) (if (get :files-collapsed) 40 (if narrow w 280)) 0)
+        code-visible (and (not focused) (get :show-code) (or (not narrow) (not files-expanded)))
+        tools-width (if (and (not focused) (get :show-tools))
+                        (if (get :inspector-collapsed) 40 (if narrow 0 264)) 0)
         code-width (if code-visible
-                       (if narrow w (floor (* (- w files-width) 0.42))) 0)
-        tools-width (if (and (get :show-tools) (not narrow)) 264 0)
+                       (if (get :code-collapsed) 40
+                         (if narrow (- w files-width tools-width) (floor (* (- w files-width) 0.42)))) 0)
+        code-expanded (and code-visible (not (get :code-collapsed)))
         world-x (+ files-width code-width)
         world-width (- w files-width code-width tools-width)]
     (background (get :ui-bg))
@@ -36,24 +39,29 @@
     (editor-menu-bar)
     (fill "#27312a") (rect [0 50] [w 1])
 
-    (when (get :show-files) (file-explorer 0 51 files-width (- h 81)))
+    (when (and (not focused) (get :show-files)) (file-explorer 0 51 files-width (- h 81)))
 
     (when code-visible (code-pane files-width code-width h))
 
-    (when (and (> world-width 0) (or (not narrow) (and (not (get :show-code)) (not (get :show-files)))))
+    (when (and (> world-width 0) (or focused (not narrow) (and (not code-expanded) (not files-expanded))))
       (game-pane world-x world-width h))
 
-    (when (get :show-tools) (parameter-pane w h narrow tools-width))
+    (when (and (not focused) (get :show-tools)) (parameter-pane w h narrow tools-width))
 
     ; Overlay widgets paint last, giving their regions pointer priority.
-    (when (not (= (get :window) ""))
+    (when (and (not focused) (not (= (get :window) "")))
       (if (= (get :window) "about") (about-aioli)
         (if (= (get :window) "file-path") (file-path-dialog)
           (if (or (= (get :window) "image-asset") (= (get :window) "audio-asset"))
             (asset-preview-window) (project-window)))))
+    (when (not (= (file-drag-path) ""))
+      (scope
+        (fill "#344339") (rect [(+ (pointer-x) 12) (+ (pointer-y) 12)] [240 30])
+        (fill (get :ui-text))
+        (text [(+ (pointer-x) 20) (+ (pointer-y) 18)] (file-drag-path))))
     ; Dropdowns paint last so their input regions cover panes and tool windows.
     (when (get :menu) (editor-menu (screen-width) (screen-height)))
-    (when (get :file-context) (file-context-menu w h))
+    (when (and (not focused) (get :file-context)) (file-context-menu w h))
 
     (fill (get :ui-bg)) (rect [0 (- h 30)] [w 30])
     (fill (if (error?) "#e8ac94" (get :ui-muted)))
