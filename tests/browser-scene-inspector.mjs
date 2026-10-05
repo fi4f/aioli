@@ -54,7 +54,7 @@ try {
       !window.aioli.pending &&
       window.aioli.applicationState['active-scene'] === 'examples/garden.scene.lisp',
   );
-  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project.v3')));
+  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
   project.files['game.lisp'] =
     '(init! :boots 0) (defn init [] (set! :boots (+ (get :boots) 1))) (start-scene "levels/custom.scene.lisp")';
   project.files['levels/custom.scene.lisp'] = `(init! :radius 20 ["Radius" 5 80 0.5])
@@ -63,15 +63,15 @@ try {
 (init! :tint "#aabbcc" ["Tint"])
 (init! :caption "Hello" ["Caption"])
 ${Array.from({ length: 20 }, (_, i) => `(init! :extra-${i} ${i} ["Extra ${i}" 0 30])`).join('\n')}
-(defpixel render [p time] (background "#000000") (fill (param :tint)) (circle [160 120] (param :radius)))`;
+(defdraw render [] (pixels [p time] (background "#000000") (fill (get :tint)) (circle [160 120] (get :radius))))`;
   project.files['levels/tiny.scene.lisp'] =
-    '(init! :only-current 1 ["Only current" 0 10 1]) (defpixel render [p time] (background "#000000"))';
-  project.files['levels/bad.scene.lisp'] = '(defpixel render [p time] (circle 3 2))';
+    '(init! :only-current 1 ["Only current" 0 10 1])\n(defdraw render [] (pixels [p time] (background "#000000")))';
+  project.files['levels/bad.scene.lisp'] = '(defdraw render [] (pixels [p time] (circle 3 2)))';
   project.applicationState = {};
   project.state = {
     'show-tools': true,
     'show-files': true,
-    'open-folders': '["levels","examples"]',
+    'open-folders': ['levels', 'examples'],
     tab: 'levels/custom.scene.lisp',
     paused: true,
   };

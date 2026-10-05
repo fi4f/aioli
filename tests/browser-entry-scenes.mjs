@@ -65,7 +65,7 @@ try {
   assert.notEqual(await page.evaluate(() => window.aioli.shader), gardenShader);
   await page.waitForFunction(
     () =>
-      JSON.parse(localStorage.getItem('aioli.project.v3')).files['game.lisp'] ===
+      JSON.parse(localStorage.getItem('aioli.project')).files['game.lisp'] ===
       '(start-scene "examples/bloom.scene.lisp")',
   );
   // Failed requests keep the last working scene and renderer.
@@ -96,7 +96,7 @@ try {
   );
   // Saved runtime transitions survive startup when the entry request is unchanged.
   await page.waitForFunction(() =>
-    JSON.parse(localStorage.getItem('aioli.project.v3')).files['game.lisp'].startsWith(
+    JSON.parse(localStorage.getItem('aioli.project')).files['game.lisp'].startsWith(
       '; An unrelated edit',
     ),
   );
@@ -108,9 +108,9 @@ try {
   );
   // A changed startup request still takes precedence over stale saved scene state.
   await page.evaluate(() => {
-    const saved = JSON.parse(localStorage.getItem('aioli.project.v3'));
+    const saved = JSON.parse(localStorage.getItem('aioli.project'));
     saved.applicationState['entry-scene-request'] = 'examples/garden.scene.lisp';
-    localStorage.setItem('aioli.project.v3', JSON.stringify(saved));
+    localStorage.setItem('aioli.project', JSON.stringify(saved));
   });
   await page.reload();
   await page.waitForFunction(() => window.aioli?.running);

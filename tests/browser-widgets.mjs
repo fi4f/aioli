@@ -131,10 +131,7 @@ try {
   const url = `http://127.0.0.1:${server.address().port}/aioli/`;
   await page.goto(url);
   await page.waitForFunction(() => window.aioli?.running);
-  assert.deepEqual(await page.evaluate(() => JSON.parse(window.aioli.state['open-tabs'])), [
-    'main',
-    'game',
-  ]);
+  assert.deepEqual(await page.evaluate(() => window.aioli.state['open-tabs']), ['main', 'game']);
   assert.equal(
     await page.evaluate(() => 'scene' in window.aioli.sources || 'audio' in window.aioli.sources),
     false,
@@ -175,11 +172,7 @@ try {
   await type('(defn twice [value] (* value 2))');
   await page.keyboard.press('Control+Enter');
   await ready();
-  assert.ok(
-    await page.evaluate(() =>
-      JSON.parse(window.aioli.state['open-tabs']).includes('lib/math.lisp'),
-    ),
-  );
+  assert.ok(await page.evaluate(() => window.aioli.state['open-tabs'].includes('lib/math.lisp')));
   await click('tab-game');
   await click('tab-lib/math.lisp');
   const mathSource = await page.evaluate(() => window.aioli.sources['lib/math.lisp']);
@@ -271,26 +264,24 @@ try {
   assert.equal(await page.evaluate(() => window.aioli.state.tab), 'lib/actors/player.lisp');
   await click('close-tab-lib/actors/player.lisp');
   await page.waitForFunction(
-    () => !JSON.parse(window.aioli.state['open-tabs']).includes('lib/actors/player.lisp'),
+    () => !window.aioli.state['open-tabs'].includes('lib/actors/player.lisp'),
   );
   assert.ok(await page.evaluate(() => window.aioli.sources['lib/actors/player.lisp']));
   await click('file-lib/actors/player.lisp');
   await click('file-lib/actors/player.lisp');
   assert.equal(
     await page.evaluate(
-      () =>
-        JSON.parse(window.aioli.state['open-tabs']).filter((k) => k === 'lib/actors/player.lisp')
-          .length,
+      () => window.aioli.state['open-tabs'].filter((k) => k === 'lib/actors/player.lisp').length,
     ),
     1,
   );
 
   await page.waitForFunction(
     () =>
-      JSON.parse(localStorage.getItem('aioli.project.v3')).state['open-folders'].includes(
+      JSON.parse(localStorage.getItem('aioli.project')).state['open-folders'].includes(
         'lib/actors',
       ) &&
-      JSON.parse(localStorage.getItem('aioli.project.v3')).state['open-tabs'].includes(
+      JSON.parse(localStorage.getItem('aioli.project')).state['open-tabs'].includes(
         'lib/actors/player.lisp',
       ),
   );
@@ -300,9 +291,7 @@ try {
     window.aioli.regions.some((region) => region.id === 'file-lib/actors/player.lisp'),
   );
   assert.ok(
-    await page.evaluate(() =>
-      JSON.parse(window.aioli.state['open-tabs']).includes('lib/actors/player.lisp'),
-    ),
+    await page.evaluate(() => window.aioli.state['open-tabs'].includes('lib/actors/player.lisp')),
   );
   await page.screenshot({ path: 'artifacts/file-pane.png' });
   // The explorer is navigation only, with pixel icons and contextual file actions.
@@ -374,7 +363,7 @@ try {
   );
   // Import a large project fixture to exercise wheel scrolling and the scrollbar.
   const treeProject = await page.evaluate(() => ({
-    version: 8,
+    version: 1,
     files: Object.fromEntries(
       Object.entries(window.aioli.sources)
         .filter(([key]) => !key.startsWith('__'))
@@ -400,7 +389,7 @@ try {
   await page.waitForFunction(
     () =>
       window.aioli.state.tab === 'scroll-49.lisp' &&
-      JSON.parse(window.aioli.state['open-tabs']).includes('scroll-49.lisp'),
+      window.aioli.state['open-tabs'].includes('scroll-49.lisp'),
   );
   await page.mouse.move(100, 250);
   await page.mouse.wheel(0, 500);
@@ -448,9 +437,9 @@ try {
   await page.keyboard.press('Escape');
   await openFiles();
   await click('image-generator');
-  await page.waitForFunction(() => window.aioli.commands.some((command) => command.meta[0] === 5));
+  await page.waitForFunction(() => window.aioli.commands.some((command) => command.meta[0] === 8));
   await type(
-    '(init! :image-radius 48) (init! :image-x 160) (init! :image-y 120) (init! :image-color "#bbd6a6")\n(defpixel image [p time] (background "#ff0000") (fill (param :image-color)) (circle [(param :image-x) (param :image-y)] (param :image-radius)))',
+    '(init! :image-radius 48)\n(init! :image-x 160)\n(init! :image-y 120)\n(init! :image-color "#bbd6a6")\n(defdraw render [] (pixels [p time] (background "#ff0000") (fill (get :image-color)) (circle [(get :image-x) (get :image-y)] (get :image-radius))))',
   );
   await page.keyboard.press('Control+Enter');
   await ready();
@@ -576,11 +565,7 @@ try {
   );
   await page.keyboard.press('Escape');
   await openFiles();
-  if (
-    !(await page.evaluate(() =>
-      JSON.parse(window.aioli.state['open-folders']).includes('commands'),
-    ))
-  )
+  if (!(await page.evaluate(() => window.aioli.state['open-folders'].includes('commands'))))
     await click('folder-commands');
   await click('tab-game');
   const activeBeforeRun = await page.evaluate(() => window.aioli.state.tab);
@@ -628,7 +613,7 @@ try {
   await click('export');
   await (await download).saveAs('artifacts/project-v3.json');
   const project = JSON.parse(await readFile('artifacts/project-v3.json', 'utf8'));
-  assert.equal(project.version, 21);
+  assert.equal(project.version, 1);
   assert.ok(project.files['lib/math.lisp']);
   assert.ok(project.resources['assets/generated.png']);
   assert.ok(project.resources['assets/generated.wav']);
@@ -649,7 +634,7 @@ try {
   await page.waitForFunction(() => !!window.aioli.resources['assets/imported-tone.wav']);
   // An older/custom saved shell remains the project source in recovery. File
   // operations must not silently switch back to that shell after evaluation.
-  const oldEditor = '(defn draw [] (background "#101613"))\n; custom old editor';
+  const oldEditor = '(defdraw render [] (background "#101613"))';
   const oldUI = project.files['editor/ui/components.lisp'] + '\n; custom old library';
   const oldProject = {
     ...project,
@@ -762,14 +747,8 @@ try {
   );
   // Lifecycle hooks are independent of filenames, and unused former roots are inert.
   await page.setViewportSize({ width: 1440, height: 900 });
-  const lifecycleGame = `(init! :hook-inits 0)
-(init! :hook-reloads 0)
-(init! :hook-ticks 0)
-(init! :radius 20)
-(defn init [] (set! :hook-inits (+ (get :hook-inits) 1)))
-(defn reload [] (set! :hook-reloads (+ (get :hook-reloads) 1)))
-(defn update [dt] (set! :hook-ticks (+ (get :hook-ticks) dt)))
-(defpixel render [p time] (background "#101613") (fill "#bbd6a6") (circle [160 120] (param :radius)))`;
+  const lifecycleGame =
+    '(init! :hook-inits 0)\n(init! :hook-reloads 0)\n(init! :hook-ticks 0)\n(init! :radius 20)\n(defn init [] (set! :hook-inits (+ (get :hook-inits) 1)))\n(defn reload [] (set! :hook-reloads (+ (get :hook-reloads) 1)))\n(defn update [dt] (set! :hook-ticks (+ (get :hook-ticks) dt)))\n(defdraw render [] (pixels [p time] (background "#101613") (fill "#bbd6a6") (circle [160 120] (get :radius))))';
   const lifecycleProject = {
     ...project,
     recovery: false,
@@ -785,7 +764,7 @@ try {
     },
     state: {
       tab: 'game',
-      'open-tabs': '["main","game"]',
+      'open-tabs': ['main', 'game'],
       'show-code': true,
       'show-files': false,
       paused: false,
@@ -837,7 +816,7 @@ try {
   ) => `(defn enter [] (set! :exit-before-enter (get :scene-exits)) (set! :scene-label "${tag}") (set! :scene-enters (+ (get :scene-enters) 1)))
 (defn exit [] (set! :scene-exits (+ (get :scene-exits) 1)))
 (defn update [dt] (set! :scene-clock (+ (get :scene-clock) dt)))
-(defpixel render [p time] (background "#101613") (fill "#bbd6a6") (circle [160 120] 20) ${extra})`;
+(defdraw render [] (pixels [p time] (background "#101613") (fill "#bbd6a6") (circle [160 120] 20) ${extra}))`;
   const sceneProject = {
     ...lifecycleProject,
     applicationState: {},
@@ -846,8 +825,8 @@ try {
       'game.lisp':
         '(init! :scene-enters 0) (init! :scene-exits 0) (init! :scene-clock 0) (start-scene "scenes/a.scene.lisp")',
       'scenes/a.scene.lisp': makeScene('A'),
-      'scenes/b.scene': makeScene('B', '(rect [10 10] [20 20])'),
-      'scenes/bad.scene.lisp': '(defpixel render [p time] (circle 3 2))',
+      'scenes/b.scene.lisp': makeScene('B', '(rect [10 10] [20 20])'),
+      'scenes/bad.scene.lisp': '(defdraw render [] (pixels [p time] (circle 3 2)))',
     },
     state: { tab: 'game', 'show-code': true },
   };
@@ -869,7 +848,7 @@ try {
   assert.equal(await page.evaluate(() => window.aioli.state['scene-exits']), 0);
   assert.equal(await page.evaluate(() => window.aioli.running), true);
   await page.keyboard.press('Escape');
-  await palette('(start-scene "scenes/b.scene")');
+  await palette('(start-scene "scenes/b.scene.lisp")');
   await page.waitForFunction(
     () => !window.aioli.pending && window.aioli.state['scene-label'] === 'B',
   );
@@ -895,12 +874,15 @@ try {
   await page.screenshot({ path: 'artifacts/scene-entry-icons.png' });
   await page.waitForFunction(
     () =>
-      JSON.parse(localStorage.getItem('aioli.project.v3')).applicationState['active-scene'] ===
-      'scenes/b.scene',
+      JSON.parse(localStorage.getItem('aioli.project')).applicationState['active-scene'] ===
+      'scenes/b.scene.lisp',
   );
   await page.reload();
   await page.waitForFunction(() => window.aioli?.running);
-  assert.equal(await page.evaluate(() => window.aioli.state['active-scene']), 'scenes/b.scene');
+  assert.equal(
+    await page.evaluate(() => window.aioli.state['active-scene']),
+    'scenes/b.scene.lisp',
+  );
   assert.deepEqual(errors, []);
   console.log(
     'PASS: source tabs, live component modules, image pan/zoom, audio waveform/playback/seek, named files, imports, commands, generators, persistence and narrow widgets.',

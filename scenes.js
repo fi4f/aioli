@@ -1,7 +1,5 @@
-import { applicationRender } from './render-hooks.js';
-import { resolvePath, resolveModules, cpuForms } from './module-loader.js';
+import { resolvePath, resolveModules } from './module-loader.js';
 
-export const isScenePath = (path) => typeof path === 'string' && /\.scene(?:\.lisp)?$/.test(path);
 const sceneHooks = ['init', 'enter', 'exit', 'reload', 'update', 'sound', 'render', 'draw'];
 
 /** Entry requests select startup scenes and react to edits. Unrelated reloads
@@ -23,8 +21,11 @@ export function stageScene(sources, path, application, makeRuntime) {
   const runtime = makeRuntime();
   for (const [name, value] of Object.entries(application.global))
     if (!sceneHooks.includes(name) && !(name in runtime.global)) runtime.global[name] = value;
-  for (const module of modules) runtime.load(cpuForms(module.forms));
-  return { path, runtime, render: applicationRender(modules, 'render') };
+  runtime.modules = modules;
+  for (const module of modules) runtime.load(module.forms, module.path);
+  if (runtime.global.render?.hook?.kind !== 'draw')
+    throw new Error(`${path}: missing (defdraw render [] ...)`);
+  return { path, runtime };
 }
 
 export function callHook(runtime, name, ...args) {

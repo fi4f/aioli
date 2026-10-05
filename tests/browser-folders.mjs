@@ -57,16 +57,16 @@ try {
   await click('context-new-folder');
   await pathAction('packs/empty');
   await page.waitForFunction(() =>
-    JSON.parse(localStorage.getItem('aioli.project.v3')).state['project-folders']?.includes(
+    JSON.parse(localStorage.getItem('aioli.project')).state['project-folders']?.includes(
       'packs/empty',
     ),
   );
-  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project.v3')));
+  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
   project.files['game.lisp'] =
     '(import "./packs/helper.lisp") (start-scene "packs/sub/level.scene.lisp")';
   project.files['packs/helper.lisp'] = '(defn helper [] 7)';
   project.files['packs/sub/level.scene.lisp'] =
-    '(import "../helper.lisp") (defpixel render [p time] (background "#000000"))';
+    '(import "../helper.lisp")\n(defdraw render [] (pixels [p time] (background "#000000")))';
   project.resources['packs/asset.png'] = {
     mime: 'image/png',
     data: project.resources['editor/icon/code.png'].data,
@@ -159,7 +159,7 @@ try {
   await click('context-new-folder');
   await pathAction('keep/empty');
   await page.waitForFunction(() =>
-    JSON.parse(localStorage.getItem('aioli.project.v3')).state['project-folders']?.includes(
+    JSON.parse(localStorage.getItem('aioli.project')).state['project-folders']?.includes(
       'keep/empty',
     ),
   );

@@ -16,6 +16,7 @@
         <a href="editor.html">Editor</a>
         <a href="projects.html">Projects</a>
         <a href="contributing.html">Contribute</a>
+        <a href="architecture.html">Architecture</a>
       </nav>
     </header>
     <main>
@@ -42,9 +43,9 @@
         In game scripts and scenes, <code>(canvas-width)</code> and <code>(canvas-height)</code>
         return the logical project canvas size from any lifecycle or drawing hook.
         <code>(screen-width)</code> and <code>(screen-height)</code> return the same size in games,
-        but return the browser workspace size in the editor. In <code>defpixel</code>, use the
-        built-in symbols <code>width</code> and <code>height</code>, or the canvas size calls; these
-        values are live GPU uniforms, independent of browser scaling.
+        but return the browser workspace size in the editor. Inside <code>pixels [p time]</code>,
+        use the built-in symbols <code>width</code> and <code>height</code>, or the canvas size
+        calls; these values are live GPU uniforms, independent of browser scaling.
       </p>
       <h2 id="drawing">Drawing primitives</h2>
       <p>
@@ -159,7 +160,7 @@
           </tbody>
         </table>
       </div>
-      <pre><code>; Inside a scene's defpixel body:
+      <pre><code>; Inside a drawable's pixels body:
 (scope
   (translate [160 120])
   (rotate (* time 0.2))
@@ -171,6 +172,19 @@
         Shader drawing updates local state for each pixel invocation. CPU editor drawing emits
         ordered primitives that are also evaluated per pixel. Neither submits geometry for each
         shape. CPU state mutations such as <code>set!</code> are not undone by a drawing scope.
+      </p>
+      <h2 id="pixels">Nested GPU pixels</h2>
+      <p>
+        <code>(pixels [p time] color-expression-or-drawing-body...)</code> emits a procedural GPU
+        material in the current draw stream. It inherits outer transforms, clipping, opacity and
+        blending, and composes in painter order. Drawable parameters, lexical numbers/colors, and
+        state reads become per-invocation uniforms. <code>p</code> is local pixel position;
+        <code>width</code>/<code>height</code> are logical canvas dimensions. Each block permits at
+        most 63 uniform slots and 4096 expanded statements; a frame permits 32 distinct programs.
+        Identical programs with different argument values share compiled code and retain separate
+        uniforms. See <a href="language.html#shaders">the unified drawing guide</a> for syntax,
+        capture rules and GPU restrictions. Inline drawable previews render both shapes and pixels
+        on the annotated canvas without changing live state.
       </p>
       <h2 id="shader-math">Shader math</h2>
       <div class="table-scroll">
@@ -191,7 +205,7 @@
               <td>Seconds and logical scene dimensions.</td>
             </tr>
             <tr>
-              <td><code>(param :key)</code></td>
+              <td><code>(get :key)</code></td>
               <td>Read an initialized state value as a uniform.</td>
             </tr>
             <tr>
@@ -248,11 +262,12 @@
           </tbody>
         </table>
       </div>
-      <pre><code>(defpixel grain [p time]
+      <pre><code>(defdraw grain []
+  (pixels [p time]
   (background "#101613")
   (fill (mix [0.1 0.2 0.15] [0.7 0.8 0.6]
              (noise (* p 0.1))))
-  (rect [0 0] [width height]))</code></pre>
+  (rect [0 0] [width height])))</code></pre>
       <p>
         The compiler supports a maximum of 63 state parameters and bounded shader expansion.
         Expressions must satisfy WGSL type rules; errors keep the previous shader active.
@@ -472,16 +487,18 @@
   ["Jump" [300]]
   (voice :sine pitch (* pitch 3) 0.15 0.3))
 
-(defn draw [] (badge 160 120))
+(defdraw render [] (badge 160 120))
 ; Call this from gameplay:
 ; (play-sound :jump 300)</code></pre>
       <p>
-        <code>defdraw</code> and <code>defsound</code> define ordinary CPU Lisp functions. Drawing
-        hooks can call other drawing hooks; sound hooks can mix recipes by calling other sound
-        hooks. Use <code>scope</code> to restore drawing settings around a component. The optional
-        annotation is <code>["Title" [argument defaults] [canvas width height]]</code>. Omitted
-        argument defaults are zero; the default preview canvas is 320 by 240. Explicit defaults must
-        match the function's argument count. Canvas dimensions are 1–4096.
+        <code>defdraw</code> and <code>defsound</code> define ordinary callable Lisp functions.
+        Drawing hooks may contain nested GPU <code>pixels</code> blocks;
+        <code>defdraw render []</code> is the primary render entry point. Drawing hooks can call
+        other drawing hooks; sound hooks can mix recipes by calling other sound hooks. Use
+        <code>scope</code> to restore drawing settings around a component. The optional annotation
+        is <code>["Title" [argument defaults] [canvas width height]]</code>. Omitted argument
+        defaults are zero; the default preview canvas is 320 by 240. Explicit defaults must match
+        the function's argument count. Canvas dimensions are 1–4096.
       </p>
       <p>
         Open the source and click <strong>Preview draw</strong> or
@@ -609,7 +626,7 @@
         <code>""</code> to close it.
       </p>
       <p>
-        Image generators use <code>defpixel image</code>; audio generators use
+        Image generators use <code>defdraw render</code>; audio generators use
         <code>generate-sound</code>; text generators declare
         <code>(generator :text "Title" "output.txt")</code> and return a string from
         <code>generate-text</code>. All use annotated <code>init!</code>
@@ -638,8 +655,8 @@
       <p>
         <code>(open-code-tab key)</code> selects or adds a buffer;
         <code>(close-code-tab key)</code> closes its tab without deleting its source. Use short keys
-        for the main/editor entry files (legacy scene/audio/UI aliases remain compatible), or a full
-        project path for other sources. <code>(code-tabs width)</code> returns visible rows
+        for the main/game entry files, or a full project path for other sources.
+        <code>(code-tabs width)</code> returns visible rows
         <code>[key label x-offset width draft?]</code> and updates overflow metadata.
         <code>(code-tabs-before?)</code> / <code>(code-tabs-after?)</code> query that metadata;
         <code>(scroll-code-tabs delta)</code> browses overflow.

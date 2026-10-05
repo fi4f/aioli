@@ -64,7 +64,7 @@ try {
   }
   assert.equal(await create('notes.txt', 'none', 'notes.txt'), '');
   assert.match(await create('helper', 'script', 'helper.lisp'), /Ordinary Lisp/);
-  assert.match(await create('test.lisp', 'scene', 'test.scene.lisp'), /defpixel render/);
+  assert.match(await create('test.lisp', 'scene', 'test.scene.lisp'), /defdraw render/);
   assert.match(await create('reset.scene.lisp', 'command', 'reset.command.lisp'), /game-get/);
   assert.match(
     await create('picture', 'generator', 'picture.generator.lisp', 'image'),

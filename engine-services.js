@@ -14,7 +14,7 @@ export function engineServices({
   draw = () => null,
 } = {}) {
   let patch = [],
-    frameDraw, runtimeState;
+    frameDraw;
   const currentDraw = () => frameDraw ?? draw();
   const services = {
     budget: 100000,
@@ -27,7 +27,7 @@ export function engineServices({
     pixels: (args, env, evaluate) => {
       const list = currentDraw();
       if (!list) throw new Error('pixels requires a draw hook');
-      list.pixels(pixelBlock(args, env, evaluate, runtimeState));
+      list.pixels(pixelBlock(args, env, evaluate));
     },
     beginScope: () => currentDraw()?.scope(),
     endScope: () => currentDraw()?.restore(),
@@ -37,10 +37,10 @@ export function engineServices({
       'pointer-y': () => pointer().y,
       'pointer-down?': () => pointer().down,
       'pointer-pressed?': () => pointer().pressed,
-      'canvas-width': () => size()[0],
-      'canvas-height': () => size()[1],
-      'screen-width': () => size()[0],
-      'screen-height': () => size()[1],
+      'canvas-width': () => frameDraw?.width ?? size()[0],
+      'canvas-height': () => frameDraw?.height ?? size()[1],
+      'screen-width': () => frameDraw?.width ?? size()[0],
+      'screen-height': () => frameDraw?.height ?? size()[1],
       'resource-url': resource,
       ...Object.fromEntries(
         [
@@ -67,10 +67,9 @@ export function engineServices({
     },
   };
   services.attach = (runtime) => {
-    runtimeState = runtime.state;
     runtime.global['active-scene'] = () => runtime.state['active-scene'] ?? '';
-    runtime.drawFrame = (width = 320, height = 240, name = null, args = []) => {
-      name ??= runtime.global.render?.hook?.kind === 'draw' ? 'render' : 'draw';
+    runtime.drawFrame = (width = size()[0], height = size()[1], name = null, args = []) => {
+      name ??= 'render';
       frameDraw = new DrawList(width, height);
       try {
         if (typeof runtime.global[name] === 'function') runtime.call(name, ...args);

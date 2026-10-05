@@ -20,6 +20,7 @@
         <a href="editor.html">Editor</a>
         <a href="projects.html">Projects</a>
         <a href="contributing.html">Contribute</a>
+        <a href="architecture.html">Architecture</a>
       </nav>
     </header>
     <main>
@@ -54,10 +55,12 @@
         >
       </div>
       <h2>Start with a small pixel program</h2>
-      <pre><code>(defpixel render [p time]
-  (background "#101613")
-  (fill "#bbd6a6")
-  (circle [160 120] (+ 24 (* 4 (sin time)))))</code></pre>
+      <pre><code>(defdraw render []
+  (pixels [p time]
+    (background "#272822")
+    (fill "#66d9ef")
+    (circle [(/ width 2) (/ height 2)]
+            (+ 24 (* 4 (sin time))))))</code></pre>
       <p>
         <a href="../">Open the workshop</a>, open <strong>View → Files pane</strong>, expand
         <code>examples/</code>, and select <code>garden.scene.lisp</code>, replace its source with

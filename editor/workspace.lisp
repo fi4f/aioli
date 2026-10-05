@@ -2,6 +2,8 @@
 (import "./theme.lisp")
 (import "./ui/components.lisp")
 (import "./state.lisp")
+(import "./policy/files.lisp")
+(import "./policy/inspector.lisp")
 (import "./code-pane.lisp")
 (import "./game-pane.lisp")
 (import "./parameter-pane.lisp")

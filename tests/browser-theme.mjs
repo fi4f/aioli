@@ -27,7 +27,7 @@ try {
     const r = await page.evaluate((id) => window.aioli.regions.find((r) => r.id === id), id);
     await page.mouse.click(r.origin[0] + r.size[0] / 2, r.origin[1] + r.size[1] / 2);
   }
-  const old = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project.v3')));
+  const old = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
   old.version = 18;
   delete old.files['editor/theme.lisp'];
   old.state['ui-bg'] = '#101613';
@@ -77,7 +77,7 @@ try {
     'recovery construction preserves theme',
   );
   await page.waitForFunction(() =>
-    JSON.parse(localStorage.getItem('aioli.project.v3')).files['editor/theme.lisp'].includes(
+    JSON.parse(localStorage.getItem('aioli.project')).files['editor/theme.lisp'].includes(
       '#fd971f',
     ),
   );
@@ -87,7 +87,7 @@ try {
   assert.equal(await page.evaluate(() => window.aioli.error), false);
   assert.deepEqual(errors, []);
   console.log(
-    'Theme migration, editor/game isolation, live palette and spacing, recovery and reload passed',
+    'Theme defaults, editor/game isolation, live palette and spacing, recovery and reload passed',
   );
 } finally {
   await browser.close();

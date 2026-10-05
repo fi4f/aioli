@@ -3,10 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { normalizeSource } from '../source-text.js';
 import { parse } from '../lisp.js';
-import { cpuForms } from '../module-loader.js';
 import { engineServices } from '../engine-services.js';
 import { stageScene } from '../scenes.js';
-import { compileShader } from '../shader.js';
 import { projectSnapshot, readProject } from '../project.js';
 
 const path = 'examples/doom.scene.lisp';
@@ -20,7 +18,7 @@ function game() {
     playSound: (name) => sounds.push(name),
   });
   const runtime = services.create(state);
-  runtime.load(cpuForms(parse(source)));
+  runtime.load(parse(source));
   runtime.call('enter');
   return { state, keys, sounds, runtime };
 }
@@ -92,7 +90,7 @@ test('Tiny Crypt render stays within the standard budget across the walkable maz
   const scene = stageScene({ [path]: source }, path, application, () =>
     engineServices().create(state),
   );
-  assert.match(compileShader(scene.render, state).code, /@fragment/);
+  assert.equal(scene.runtime.global.render.hook.kind, 'draw');
   const before = { ...state };
   for (let y = 1; y < 9; y++)
     for (let x = 1; x < 9; x++) {
@@ -108,16 +106,4 @@ test('Tiny Crypt render stays within the standard budget across the walkable maz
   Object.assign(state, before);
   runtime.drawFrame();
   assert.deepEqual(state, before, 'drawing does not mutate inspector state');
-});
-
-test('older projects receive Tiny Crypt once, preserving custom copies and subsequent deletions', () => {
-  const defaults = { main: '', game: '', [path]: source };
-  const old = { version: 17, files: { 'main.lisp': '', 'game.lisp': '' }, state: {} };
-  const loaded = readProject(old, defaults);
-  assert.equal(loaded.sources[path], normalizeSource(source));
-  const custom = readProject({ ...old, files: { ...old.files, [path]: '; custom' } }, defaults);
-  assert.equal(custom.sources[path], '; custom');
-  delete loaded.sources[path];
-  const saved = projectSnapshot(loaded.sources, loaded.state);
-  assert.equal(path in readProject(saved, defaults).sources, false);
 });

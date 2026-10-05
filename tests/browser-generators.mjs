@@ -30,24 +30,15 @@ try {
   sources.main += '\n; custom editor entry';
   sources['reset.command.lisp'] = '(set! :command-counter 3)';
   sources['commands/helper.lisp'] = '(defn helper [] 1)';
-  sources['textures/stripe.generator.lisp'] = `
-    (generator :image "Custom shape")
-    (init! :custom-size 3 ["Size" 0 10 0.5])
-    (init! :custom-enabled true ["Enabled"])
-    (init! :custom-color "#bbd6a6" ["Tint"])
-    (init! :custom-name "Example" ["Name"])
-    (init! :custom-choice "one" ["Mode" ["one" "two"]])
-    (defpixel image [p time]
-      (background "#101613")
-      (fill (param :custom-color))
-      (circle [160 120] (* 10 (param :custom-size))))`;
+  sources['textures/stripe.generator.lisp'] =
+    '(generator :image "Custom shape")\n(init! :custom-size 3 ["Size" 0 10 0.5])\n(init! :custom-enabled true ["Enabled"])\n(init! :custom-color "#bbd6a6" ["Tint"])\n(init! :custom-name "Example" ["Name"])\n(init! :custom-choice "one" ["Mode" ["one" "two"]])\n(defdraw render [] (pixels [p time] (background "#101613") (fill (get :custom-color)) (circle [160 120] (* 10 (get :custom-size)))))';
   const project = projectSnapshot(sources, {
     paused: true,
     window: 'generator',
     'active-generator': 'textures/stripe.generator.lisp',
   });
   await page.evaluate(
-    (project) => localStorage.setItem('aioli.project.v3', JSON.stringify(project)),
+    (project) => localStorage.setItem('aioli.project', JSON.stringify(project)),
     project,
   );
   await page.reload();

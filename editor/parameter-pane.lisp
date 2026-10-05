@@ -11,7 +11,7 @@
         (ui-choice id caption binding (nth field 6) x y width)
         (if (= kind "boolean")
           (ui-toggle id caption binding x y width)
-          (when (ui-button id (str caption " / " before) [x y] [width 32] false)
+          (when (ui-button id (str caption " / " (if (= kind "data") (slice (json-write before) 0 60) before)) [x y] [width 32] false)
             (edit-scene-field key)))))
     (when (not (= before (get binding))) (set-scene-field key (get binding)))))
 

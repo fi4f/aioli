@@ -1,5 +1,5 @@
 import { sourceHookLines } from './hook-definitions.js';
-import { sourcePath } from './project.js';
+import { sourcePath } from './project-paths.js';
 import { GLYPH_WIDTH } from './drawing.js';
 import { tokenizeSourceLine } from './source-tokens.js';
 import { normalizeSource, displaySource, sourceLine } from './source-text.js';

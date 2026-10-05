@@ -30,7 +30,7 @@ try {
       () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
     );
   }
-  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project.v3')));
+  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
   project.files['main.lisp'] =
     `(init! :editor-runs 0) (set! :editor-runs (+ (get :editor-runs) 1))
 ` + project.files['main.lisp'];

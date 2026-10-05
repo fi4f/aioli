@@ -1,64 +1,21 @@
-import { sourcePath, sourceKey } from './project.js';
-
+import { sourcePath } from './project-paths.js';
+import { policy } from './editor-policy.js';
 const entries = ['main', 'game'];
-const entryTabs = (sources) => entries.filter((key) => key in sources);
-const readOnly = ['wgsl', 'guide', 'diagnostic'];
-const valid = (key, sources) =>
-  typeof key === 'string' &&
-  key &&
-  !key.startsWith('__') &&
-  (key in sources || readOnly.includes(key));
-
-/** Tabs are workspace state; source, selection, undo and scroll stay in buffers. */
-export function openTabs(state, sources) {
-  let tabs;
-  try {
-    tabs = JSON.parse(state['open-tabs']);
-  } catch {
-    tabs = entryTabs(sources);
-  }
-  if (!Array.isArray(tabs)) tabs = entryTabs(sources);
-  tabs = [...new Set(tabs.filter((key) => typeof key === 'string' && valid(key, sources)))];
-  // Also honor Lisp programs that select a source with (set! :tab ...).
-  if (valid(state.tab, sources) && !tabs.includes(state.tab)) tabs.push(state.tab);
-  state['open-tabs'] = JSON.stringify(tabs);
-  return tabs;
+export function openTabs(state, sources, editor) {
+  return (state['open-tabs'] = policy('editor-open-tabs', [state, sources], editor));
 }
-
-export function openTab(state, sources, key) {
-  if (!valid(key, sources)) throw new Error(`Unknown source buffer ${key}`);
-  const tabs = openTabs(state, sources);
-  if (!tabs.includes(key)) tabs.push(key);
-  state['open-tabs'] = JSON.stringify(tabs);
-  state.tab = key;
-  state['tab-last'] = '';
+export function openTab(state, sources, key, editor) {
+  Object.assign(state, policy('editor-open-tab', [state, sources, key], editor));
 }
-
-export function closeTab(state, sources, key) {
-  const tabs = openTabs(state, sources),
-    index = tabs.indexOf(key);
-  const next = tabs.filter((tab) => tab !== key);
-  if (state.tab === key) state.tab = next[Math.min(index, next.length - 1)] ?? '';
-  state['open-tabs'] = JSON.stringify(next);
+export function closeTab(state, sources, key, editor) {
+  Object.assign(state, policy('editor-close-tab', [state, sources, key], editor));
 }
-
-export function renameTab(state, sources, oldKey, newKey) {
-  // Read before validating: the old source has already moved in the file store.
-  let tabs;
-  try {
-    tabs = JSON.parse(state['open-tabs']);
-  } catch {
-    tabs = entryTabs(sources);
-  }
-  if (!Array.isArray(tabs)) tabs = entryTabs(sources);
-  state['open-tabs'] = JSON.stringify(tabs.map((key) => (key === oldKey ? newKey : key)));
-  if (state.tab === oldKey) state.tab = newKey;
-  openTabs(state, sources);
+export function renameTab(state, sources, oldKey, newKey, editor) {
+  Object.assign(state, policy('editor-rename-tab', [state, sources, oldKey, newKey], editor));
 }
-
 /** Fit whole tabs, with working overflow navigation and active-tab visibility. */
-export function tabLayout(state, sources, committed, width) {
-  const tabs = openTabs(state, sources);
+export function tabLayout(state, sources, committed, width, editor) {
+  const tabs = openTabs(state, sources, editor);
   const widths = tabs.map((key) =>
     Math.min(
       192,

@@ -16,6 +16,7 @@
         <a href="editor.html">Editor</a>
         <a href="projects.html" aria-current="page">Projects</a>
         <a href="contributing.html">Contribute</a>
+        <a href="architecture.html">Architecture</a>
       </nav>
     </header>
     <main>
@@ -126,25 +127,25 @@
         retained in the project without being executed.
       </p>
       <h2 id="scenes">Application lifecycle hooks</h2>
-      <pre><code>; game.lisp: CPU and GPU code can share a file.
+      <pre><code>; game.lisp: one render hook composes all drawing.
 (init! :radius 20)
 
 ; Optional CPU update hook, in seconds, while unpaused.
 (defn update [dt]
   (set! :radius (clamp (+ (get :radius) dt) 20 60)))
 
-; Required render hook: compiled into a WebGPU fragment program.
-(defpixel render [p time]
+; Primary render hook: ordered shapes and nested GPU pixel effects.
+(defdraw render []
   (background "#101613")
   (fill "#bbd6a6")
-  (circle [160 120] (param :radius)))</code></pre>
+  (circle [160 120] (get :radius)))</code></pre>
       <p>
-        Without an active scene, the main import graph must define exactly one
-        <code>defpixel render</code>. It can live in an imported file; the filename has no special
-        meaning. Only this hook compiles to the scene shader. CPU forms run normally.
-        <code>p</code> is the pixel position and <code>time</code> is elapsed game time. Pass shared
-        state to the GPU through <code>param</code>. The
-        <a href="language.html#shaders">shader subset</a> applies inside the render hook.
+        Define <code>defdraw render []</code> in the application or its imported modules. The
+        application render hook runs first; an active scene's own render hook draws above it. A
+        scene must provide its own render hook. Drawing functions can import and call other
+        drawables, including ones containing <code>pixels [p time]</code>. The
+        <a href="language.html#shaders">shader subset</a> applies only inside those blocks. A
+        script-only application may omit rendering. All rendering uses <code>defdraw render</code>.
       </p>
       <p>
         Optional <code>(defn init [] ...)</code> runs on initial project activation, import and
@@ -152,15 +153,10 @@
         <code>update [dt]</code> receives a zero-duration validation call and then a call each
         unpaused frame. Use top-level <code>init!</code> for state that should survive live edits.
         Optional <code>(defn sound [] ...)</code> produces gameplay audio; without it, audio is
-        silent. These functions can be defined anywhere reachable from the entry points. The
-        application CPU drawing hook is <code>(defn draw [] ...)</code>.
+        silent. These functions can be defined anywhere reachable from the entry points. The primary
+        rendering hook is <code>(defdraw render [] ...)</code>.
       </p>
-      <p>
-        Version 9 saves keep editor and application state separately. Earlier application entries
-        move into <code>game.lisp</code>; old editor entries are folded into <code>main.lisp</code>,
-        preserving custom code. Workspace selections follow the renamed files. Unreferenced files
-        remain in the project without executing.
-      </p>
+
       <p>
         A top-level <code>(start-scene "examples/bloom.scene.lisp")</code> in
         <code>game.lisp</code> selects the startup scene. Changing that request during live editing
@@ -180,10 +176,11 @@
 (defn update [dt]
   (set! :menu-time (+ (get :menu-time) dt)))
 (defn exit [] (set! :menu-time 0))
-(defpixel render [p time]
-  (background "#101613")
-  (fill "#bbd6a6")
-  (circle [160 120] (+ 20 (* 4 (sin time)))))</code></pre>
+(defdraw render []
+  (pixels [p time]
+    (background "#101613")
+    (fill "#bbd6a6")
+    (circle [160 120] (+ 20 (* 4 (sin time))))))</code></pre>
       <p>
         Scenes use <code>.scene.lisp</code> (recommended) or <code>.scene</code>. Paths passed to
         <code>start-scene</code> resolve from the project root. Each scene has its own function
@@ -197,7 +194,7 @@
         The outgoing scene's <code>exit []</code> precedes the incoming scene's
         <code>init []</code> and <code>enter []</code>. An active scene's
         <code>update [dt]</code> runs after the application update, and its required
-        <code>defpixel render</code> becomes the preview's WebGPU pipeline. Live edits call
+        <code>defdraw render</code> adds its ordered drawing to the preview. Live edits call
         <code>reload []</code> while retaining state. Optional scene <code>sound []</code> supplies
         audio; otherwise application audio is used. Shader time starts at zero on scene entry. The
         selected scene is saved with the project.
@@ -224,22 +221,25 @@
 (init! :shape-color "#bbd6a6" ["Color"])
 (init! :shape-enabled true ["Enabled"])
 (init! :shape-mode "circle" ["Mode" ["circle" "square"]])
-(defpixel image [p time]
+(defdraw render []
   (background "#101613")
-  (fill (param :shape-color))
-  (circle [160 120] (param :shape-radius)))</code></pre>
+  (fill (get :shape-color))
+  (circle [160 120] (get :shape-radius)))</code></pre>
       <p>
         Numeric annotations use <code>["Label" min max step]</code>; the step is optional. Bounds
         must be finite and increasing, the step positive, and the default within bounds. Choice
         annotations use <code>["Label" [choices...]]</code>, with a matching default. Booleans
         become toggles; six-digit hex colors open a color picker; other strings expose a text editor
         with Apply. Without annotations, literal <code>init!</code> values get inferred labels and
-        controls. Computed defaults remain ordinary code and are not inferred.
+        controls. Computed defaults with explicit annotations expose their evaluated value;
+        unannotated computed defaults are not inferred. Vectors, maps and null use editable JSON
+        fields.
       </p>
       <p>
-        Image generators declare <code>(generator :image "Title")</code> and provide exactly one
-        <code>defpixel image</code> hook in their import graph. Their independent preview renders at
-        320 by 240 and time zero. Audio generators declare
+        Image generators declare <code>(generator :image "Title")</code> and provide a
+        <code>defdraw render []</code> hook in their import graph. It can mix shapes, text and
+        nested pixel effects. Their independent preview renders at 320 by 240. PNG generation uses
+        time zero; the live preview uses the host clock. Audio generators declare
         <code>(generator :audio "Title")</code> and implement
         <code>(defn generate-sound [] ...)</code> with <code>voice</code> calls. They expose
         waveform previews and a Play action. Generators can import relative or root helpers; output
@@ -249,8 +249,8 @@
       <p>
         Keep stores PNG/WAV data in project resources. PNG/WAV also downloads it. Existing
         <code>export-image</code> and <code>export-sound</code> commands use the last selected
-        generator of the matching output type. Legacy image/audio recipes migrate to
-        <code>.generator.lisp</code>, with imports and workspace selections updated.
+        generator of the matching output type. Generator files are ordinary Lisp source with editor
+        declarations.
       </p>
       <h2 id="text-generators">Text generators</h2>
       <pre><code>; tools/level.generator.lisp
@@ -468,7 +468,7 @@
         extensions identify imported assets. <code>(project-tree-count)</code> counts visible rows
         and <code>(project-tree-offset)</code> returns the viewport-clamped offset.
         <code>(toggle-folder path)</code> changes expansion and resets scrolling; expansion is a
-        JSON string in <code>:open-folders</code>. Set <code>:show-files</code> to toggle the pane.
+        vector in <code>:open-folders</code>. Set <code>:show-files</code> to toggle the pane.
       </p>
       <p>
         <code>(resource-region path kind asset-kind origin size)</code> registers a tree row for
@@ -479,13 +479,13 @@
       </p>
       <h2 id="storage">Project format and persistence</h2>
       <p>
-        Version 21 JSON has <code>files</code> (named source strings), <code>resources</code> (MIME
+        Version 1 JSON has <code>files</code> (named source strings), <code>resources</code> (MIME
         type and base64 data URL per asset), editor <code>state</code>, separate
         <code>applicationState</code>, and an optional recovery flag. Source drafts are included in
         a manual Save project; automatic browser persistence retains accepted source. Resource
-        changes are saved with the project. v1/v2 saves migrate without losing custom source or
-        state; stock editor/widget definitions receive the new tools. F2 opens the latest recovery
-        shell if a custom editor has no controls for them.
+        changes are saved with the project. Only current-format projects are loaded; bundled editor
+        files are freshly included in new projects. F2 opens the latest recovery shell if a custom
+        editor has no controls for them.
       </p>
       <p>
         Limits are 256 source files, 100,000 characters per source, 256 assets, and 6 MB per

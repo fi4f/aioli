@@ -64,11 +64,11 @@
   (scope
     (translate [160 120])
     (rotate (* time 0.2))
-    (fill (param :accent))
-    (opacity (param :glow))
+    (fill (get :accent))
+    (opacity (get :glow))
     (repeat 8 i
       (scope
         (rotate (* i 0.7854))
         (rect [30 -1] [55 2]))))
   (fill "#ecedc3")
-  (circle [(param :x) (param :y)] 4)))
+  (circle [(get :x) (get :y)] 4)))

@@ -34,7 +34,7 @@ test('application instances isolate modules, state, definitions and capabilities
 test('scene loading has no filename suffix restrictions', () => {
   const state = {};
   const scene = stageScene(
-    { 'level.lisp': '(init! :value 7) (defpixel render [p time] (background "#123456"))' },
+    { 'level.lisp': '(init! :value 7) (defdraw render [] (background "#123456"))' },
     'level.lisp',
     launchApplication({ files: { 'main.lisp': '' }, state }),
     () => engineServices().create(state),
@@ -65,7 +65,13 @@ test('HTML export embeds the engine and all project files without editor depende
   assert.ok(html.includes('unused.lisp'));
   assert.ok(html.includes('game.lisp'));
   assert.ok(html.includes('standalone.js'));
-  assert.equal(html.includes('editor/workspace.lisp'), false);
+  for (const path of [
+    'editor/workspace.lisp',
+    'editor-policy.js',
+    'hook-definitions.js',
+    'inspector-fields.js',
+  ])
+    assert.equal(html.includes(path), false, path);
   assert.equal((html.match(/<\/script>/g) ?? []).length, 1);
   assert.equal(html.includes('src="'), false);
 });
@@ -77,7 +83,7 @@ test('explicit editor ownership keeps backup sources out of exported game stores
       game: '',
       'main-backup-1.lisp': '(defn private-editor-function [] nil)',
     },
-    '["main-backup-1.lisp"]',
+    ['main-backup-1.lisp'],
   );
   assert.ok('main-backup-1.lisp' in stores.editor);
   assert.equal(stores.game['main-backup-1.lisp'], undefined);

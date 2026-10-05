@@ -31,7 +31,7 @@ try {
     );
   }
 
-  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project.v3')));
+  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
   const prefix = Array.from({ length: 40 }, (_, i) => `row-${i},é 🌱\n`).join('');
   project.files['level.generator.lisp'] = `(generator :text "Level data" "levels/generated.csv")
 (init! :level-value 10 ["Value" 1 64 1])

@@ -111,7 +111,7 @@ try {
     'examples/garden.scene.lisp',
   );
   assert.equal(
-    await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project.v3')).version),
+    await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')).version),
     17,
   );
   assert.deepEqual(errors, []);

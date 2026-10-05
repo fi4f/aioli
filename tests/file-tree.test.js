@@ -9,14 +9,14 @@ const files = [
 ];
 test('project tree groups directories before files and hides collapsed descendants', () => {
   assert.deepEqual(
-    projectTree(files, '[]').map((row) => [row[0], row[1], row[4]]),
+    projectTree(files, []).map((row) => [row[0], row[1], row[4]]),
     [
       ['assets', 'folder', 0],
       ['lib', 'folder', 0],
       ['scene.lisp', 'lisp', 0],
     ],
   );
-  const open = toggleFolder('[]', 'lib');
+  const open = toggleFolder([], 'lib');
   assert.deepEqual(
     projectTree(files, open).map((row) => row[0]),
     ['assets', 'lib', 'lib/actors', 'lib/math.lisp', 'scene.lisp'],
@@ -45,11 +45,11 @@ test('project tree groups directories before files and hides collapsed descendan
 });
 test('asset leaves and empty/stale expansion are safe', () => {
   assert.equal(
-    projectTree(files, '["assets"]').find((row) => row[0] === 'assets/sprite.png')[1],
+    projectTree(files, ['assets']).find((row) => row[0] === 'assets/sprite.png')[1],
     'asset',
   );
-  assert.deepEqual(projectTree([], '["missing"]'), []);
-  assert.deepEqual(projectTree(files, 'invalid'), projectTree(files, '[]'));
+  assert.deepEqual(projectTree([], ['missing']), []);
+  assert.deepEqual(projectTree(files, 'invalid'), projectTree(files, []));
 });
 
 test('asset types recognize MIME and filename extensions', () => {

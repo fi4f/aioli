@@ -1,0 +1,41 @@
+AIOLI / all in one Lisp
+
+main.lisp runs the editor. game.lisp runs the embedded app.
+Each application has private definitions, state and capabilities.
+
+DRAWING
+(defdraw render []
+  (background "#272822")
+  (fill "#66d9ef")
+  (circle [160 120] 24)
+  (pixels [p time]
+    (rgba (/ p.x width) 0.2 0.6 0.25)))
+
+STATE AND COLLECTIONS
+(init! :player (map :x 160 :y 120))
+(set! :player (assoc (get :player) :x 200))
+(init! :items ["key" "lamp"])
+(set! :items (conj (get :items) "coin"))
+lookup, keys, values, contains?, slice, concat, distinct,
+mapv, filter, reduce and sort work on ordinary data.
+fn defines an anonymous function. Collections are persistent.
+
+ENGINE
+update receives elapsed seconds. defdraw render draws each frame.
+defsound defines reusable audio. start-scene selects a scene.
+canvas-width/canvas-height return logical canvas dimensions.
+Nested pixels compile GPU math, capturing arguments and state.
+Keep mutation, browser calls and audio outside pixel blocks.
+
+EDITOR
+Edit editor/theme.lisp for colors and sizes.
+Edit editor/policy/ for tabs, roles, inspectors and templates.
+Editor icons, examples and templates are ordinary project files.
+init! annotations expose field labels, limits and choices.
+The inspector can edit structured values as JSON.
+
+SHORTCUTS
+Ctrl/Cmd+Enter evaluates. F2 opens recovery. F4 focuses preview.
+Escape closes tools. Wheel scrolls, Shift+wheel scrolls sideways.
+
+About > Documentation has the full language and engine reference.

@@ -1,5 +1,5 @@
 import { resolvePath } from './module-loader.js';
-import { sourceKey, sourcePath } from './project.js';
+import { sourceKey, sourcePath } from './project-paths.js';
 const relative = (from, to) => {
   const base = from.split('/').slice(0, -1),
     target = to.split('/');

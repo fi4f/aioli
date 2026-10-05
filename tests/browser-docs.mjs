@@ -41,6 +41,7 @@ try {
       'projects.html',
       'api.html',
       'language.html',
+      'architecture.html',
       'contributing.html',
     ]) {
       await page.goto(url + file);

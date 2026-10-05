@@ -12,16 +12,13 @@
 (init! :context-path "")
 (init! :file-operation "create")
 (init! :menu false)
-(when (= (get :menu) true) (set! :menu false))
 (init! :paused false)
 (init! :window "")
 (init! :file-offset 0)
 (init! :selected-file "game.lisp")
 (init! :show-files false)
 (init! :file-path-editing false)
-(init! :open-folders "[]")
-; Upgrade a saved modal explorer into the docked pane.
-(when (= (get :window) "files") (set! :show-files true) (set! :window ""))
+(init! :open-folders [])
 
 
 ; Pan is in screen pixels; zoom multiplies the fitted image size.
@@ -48,7 +45,7 @@
 (init! :code-collapsed false)
 (init! :inspector-collapsed false)
 
-(init! :project-folders "[]")
+(init! :project-folders [])
 (init! :auto-evaluate true)
 
 (init! :new-file-type "script")

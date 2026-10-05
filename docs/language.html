@@ -16,6 +16,7 @@
         <a href="editor.html">Editor</a>
         <a href="projects.html">Projects</a>
         <a href="contributing.html">Contribute</a>
+        <a href="architecture.html">Architecture</a>
       </nav>
     </header>
     <main>
@@ -87,15 +88,16 @@ true false nil           ; CPU booleans and null</code></pre>
 (set! :accent "#bbd6a6")</code></pre>
       <p>
         Shared state connects gameplay, procedural controls, and shaders. It stores finite numbers,
-        strings, and booleans, rather than vectors or functions. <code>init!</code> avoids resetting
-        existing values on a hot edit. Editing an initialization value will therefore affect a fresh
-        state, not an already initialized one: use <code>set!</code> or
-        <strong>Project → Reset state</strong> to change that value immediately.
+        strings, booleans, null, vectors and maps. Functions cannot be persisted.
+        <code>init!</code> avoids resetting existing values on a hot edit. Editing an initialization
+        value will therefore affect a fresh state, not an already initialized one: use
+        <code>set!</code> or <strong>Project → Reset state</strong> to change that value
+        immediately.
       </p>
       <p>
-        A shader reads shared state with <code>(param :key)</code>. Its parameters must already
-        exist when the scene compiles. Numeric values and booleans become scalar uniforms; color
-        strings become RGBA uniforms. Other strings are not shader parameters.
+        A pixel block reads state with <code>(get :key)</code>, capturing the value as a uniform.
+        Finite numbers, numeric vectors and hex colors are supported; convert booleans to numbers
+        outside the block.
       </p>
       <h2 id="control">Control flow and repetition</h2>
       <pre><code>(if (&gt; (get :x) 300)
@@ -210,22 +212,85 @@ true false nil           ; CPU booleans and null</code></pre>
         CPU arithmetic checks finite numbers and rejects non-finite results, including division by
         zero. Vector arithmetic is supported in shaders, not in these CPU numeric functions.
       </p>
-      <h2 id="shaders">The shader subset</h2>
-      <pre><code>(defpixel example [p time]
-  (background "#101613")
-  (let [pulse (+ 20 (* 5 (sin time)))]
-    (fill (rgb 0.7 0.8 0.6))
-    (circle [160 120] pulse)))</code></pre>
+      <h2 id="collections">Structured state and collections</h2>
+      <pre><code>(init! :player (map :x 160 :y 120) ["Player"])
+(set! :player (assoc (get :player) :x 200))
+(init! :items ["key" "lamp"] ["Items"])
+(set! :items (conj (get :items) "coin"))
+(mapv (fn [x] (* x 2)) [1 2 3])
+(filter (fn [x] (&gt; x 1)) [1 2 3])
+(reduce (fn [sum x] (+ sum x)) 0 [1 2 3])</code></pre>
       <p>
-        A scene and its imports contain exactly one <code>defpixel</code> hook with arguments
-        <code>[p time]</code>. The compiler translates only that hook to WGSL. Ordinary CPU Lisp
-        forms may live alongside it; see
-        <a href="projects.html#imports">imports and scene hooks</a>. Each invocation evaluates one
-        pixel, accumulating color as drawing commands run. <code>p</code>, <code>p.x</code>, and
-        <code>p.y</code> read the current transformed pixel position; <code>time</code> is seconds;
-        <code>width</code> and <code>height</code> are the project canvas dimensions (320 × 240 by
-        default). You can also call <code>(canvas-width)</code> and <code>(canvas-height)</code> in
-        a shader.
+        <code>map</code> takes key/value pairs. <code>lookup</code> reads a vector index or map key,
+        with an optional fallback (nil by default). <code>assoc</code> and <code>conj</code> return
+        new collections. <code>keys</code>, <code>values</code>, <code>contains?</code>,
+        <code>slice</code>, <code>concat</code>, <code>distinct</code> and <code>sort</code> support
+        collection processing. Equality compares collection contents. <code>distinct</code> uses
+        identity for collection entries and value equality for primitives. <code>fn</code> creates a
+        lexical anonymous function; mapv/filter callbacks receive one item, reduce receives
+        accumulator/item, and optional sort comparators receive two items and return a number.
+      </p>
+      <p>
+        <code>range</code> returns indices from zero to count minus one, with count 0–10000.
+        Collection operations share the active interpreter budget, including calls to helpers from
+        another application scope. State values are bounded JSON data: at most 10,000 nodes and 32
+        nested levels per value, with finite numbers and safe property keys.
+        <code>json-read</code> validates JSON; <code>json-write</code> serializes valid data.
+      </p>
+      <h2 id="metadata">Declaration metadata</h2>
+      <p>
+        <code>(definitions)</code> returns records with name, kind, parameters, annotation, path and
+        line. <code>(state-metadata)</code> returns key, default value, computed flag, annotation,
+        path and line. Annotations remain uninterpreted in the engine. Editor Lisp chooses sliders,
+        choices, previews and labels. Literal defaults preserve their declared values; computed
+        defaults expose their evaluated/preserved value without rerunning initialization. Imported
+        helpers retain their defining source positions.
+      </p>
+      <h2 id="shaders">Drawing and nested pixel effects</h2>
+      <pre><code>(defdraw plasma [speed]
+  ["Plasma" [2] [320 240]]
+  (pixels [p time]
+    (rgb (+ 0.5 (* 0.5 (sin (+ (* p.x 0.02) (* time speed)))))
+         0.2
+         0.6)))
+
+(defdraw render []
+  (plasma 2)
+  (fill "#f8f8f2")
+  (text [12 12] "Shapes, text and procedural pixels"))</code></pre>
+      <p>
+        <code>defdraw render []</code> is the primary render hook. Every drawable is an ordinary
+        callable Lisp function and can call imported drawables, use state, loops and conditions, and
+        compose shapes, text and pixel effects. The CPU builds this ordered stream once per frame;
+        the GPU renders its coverage and evaluates nested pixel effects. Shapes after a pixel block
+        appear above it. Use <code>scope</code> around reusable components to restore drawing
+        settings.
+      </p>
+      <p>
+        <code>(pixels [p time] ...)</code> is the GPU boundary inside a drawable. Its body can
+        return a color expression (scalar grayscale, RGB, RGBA, or hex color) or use shader drawing
+        commands. It covers the drawable's logical canvas, with the surrounding translation, scale,
+        clipping, opacity and blend mode applied. Transparent pixels preserve earlier drawing; a
+        color result replaces the block's own accumulated color. The default is transparent until
+        painted. Outer fill colors do not tint the pixel result.
+      </p>
+      <p>
+        <code>p</code>, <code>p.x</code> and <code>p.y</code> are local pixel coordinates;
+        <code>time</code> is elapsed game/scene time. <code>width</code>, <code>height</code>,
+        <code>(canvas-width)</code> and <code>(canvas-height)</code> describe the logical drawing
+        canvas, independent of preview scale or DPI. These names are reserved inside a pixel block.
+        Drawable arguments and outer lexical numeric/color values are captured as uniforms. Numeric
+        vectors of 2–4 components and their .x/.y/.z/.w components are supported.
+        <code>(get :key)</code> reads a state value once per invocation; State changes update
+        uniforms without recompiling the program. Supported captures are finite numbers, hex colors,
+        and numeric vectors; convert booleans to numbers outside the block when needed.
+      </p>
+      <p>
+        Keep gameplay, browser access, sound, mutation, conditions and calls to ordinary Lisp
+        functions outside <code>pixels</code>. None of those execute per pixel. Compose pixel
+        effects by calling their enclosing <code>defdraw</code> functions from <code>render</code>.
+        Pixel bodies use the shader subset below. Rendering uses <code>defdraw render []</code>;
+        there is no separate CPU or legacy pixel render hook.
       </p>
       <p>
         Shader bodies support drawing commands, <code>let</code>, <code>scope</code>, and
@@ -238,7 +303,7 @@ true false nil           ; CPU booleans and null</code></pre>
         <code
           >+ - * / sin cos abs floor fract length noise min max pow mod clamp mix step smoothstep
           vec2 vec3 rgb rgba</code
-        >, <code>(position)</code>, and <code>(param :key)</code>. Two-, three-, and four-component
+        >, <code>(position)</code>, and <code>(get :key)</code>. Two-, three-, and four-component
         numeric vectors are supported. Vector lengths must match; arithmetic can combine a scalar
         and a vector. Other functions require compatible WGSL argument types: for example, use
         <code>(pow [0.2 0.4 0.6] [2 2 2])</code>, not a vector and scalar exponent.
@@ -249,9 +314,9 @@ true false nil           ; CPU booleans and null</code></pre>
         <a href="api.html#shader-math">the shader math reference</a> for signatures and examples.
       </p>
       <p class="note">
-        The CPU and shader contexts share syntax and drawing concepts, but their supported forms
-        differ. A WebGPU validation error keeps the previous shader active. CPU functions cannot yet
-        be called from shaders.
+        Ordinary drawing and nested pixel bodies share syntax and drawing concepts, but their
+        supported forms differ. A WebGPU validation error keeps the previous shader active. CPU
+        functions cannot yet be called from shaders.
       </p>
     </main>
     <footer>

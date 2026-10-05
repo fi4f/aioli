@@ -1,5 +1,7 @@
-import { hookDefinition } from './hook-definitions.js';
+import { functionInfo, stateInfo } from './metadata.js';
+import { validKey, validateValue, equalValues } from './state-values.js';
 // Shared reader and CPU runtime. Shader compilation consumes the same AST.
+let execution = null;
 export const sym = (name) => ({ type: 'symbol', name });
 export const isSym = (v, name) => v?.type === 'symbol' && (name === undefined || v.name === name);
 /** Read strict Lisp AST forms. Incomplete source is handled by source-tokens.js. */
@@ -69,7 +71,9 @@ export function parse(source) {
         items.push(read());
       }
       index++;
-      return v === '(' ? items : { type: 'vector', items };
+      const node = v === '(' ? items : { type: 'vector', items };
+      Object.defineProperty(node, 'location', { value: { line: l } });
+      return node;
     }
     if (v === ')' || v === ']') throw new Error(`Line ${l}: unexpected ${v}`);
     if (typeof v === 'object') return v;
@@ -99,8 +103,32 @@ export function print(node) {
 export function createRuntime(state, host = {}) {
   const global = Object.create(null),
     budget = host.budget ?? 10000;
-  const stateKeys = new Set();
-  let fuel = budget;
+  const stateKeys = new Set(),
+    definitions = new Map(),
+    fields = new Map();
+  let sourcePath = '';
+  const collection = (value) => {
+    if (!Array.isArray(value) || value.length > 10000) throw new Error('Expected a bounded vector');
+    return value;
+  };
+  const invoke = (fn, ...args) => {
+    consume();
+    if (typeof fn !== 'function') throw new Error('Expected a function');
+    return fn(...args);
+  };
+  const fallback = { remaining: budget, state, keys: stateKeys, fields };
+  const consume = () => {
+    if (--(execution ?? fallback).remaining < 0) throw new Error('Evaluation budget exceeded');
+  };
+  const run = (fn) => {
+    const previous = execution;
+    execution = { remaining: budget, state, keys: stateKeys, fields };
+    try {
+      return fn();
+    } finally {
+      execution = previous;
+    }
+  };
   const numeric =
     (name, fn) =>
     (...args) => {
@@ -125,7 +153,65 @@ export function createRuntime(state, host = {}) {
     round: numeric('round', Math.round),
     mod: numeric('mod', (x, y) => ((x % y) + y) % y),
     str: (...values) => values.map(String).join(''),
-    count: (x) => x.length,
+    count: (x) =>
+      x == null ? 0 : Array.isArray(x) || typeof x === 'string' ? x.length : Object.keys(x).length,
+    vector: (...values) => values,
+    range: (count) => {
+      if (!Number.isInteger(count) || count < 0 || count > 10000)
+        throw new Error('range requires 0–10000');
+      return Array.from({ length: count }, (_, i) => i);
+    },
+    type: (value) => (value === null ? 'nil' : Array.isArray(value) ? 'vector' : typeof value),
+    'json-read': (text) => validateValue(JSON.parse(text)),
+    'json-write': (value) => JSON.stringify(validateValue(value)),
+    'vector?': Array.isArray,
+    'number?': (value) => typeof value === 'number' && Number.isFinite(value),
+    'string?': (value) => typeof value === 'string',
+    'boolean?': (value) => typeof value === 'boolean',
+    'integer?': Number.isInteger,
+    map: (...pairs) => {
+      if (pairs.length % 2) throw new Error('map expects key/value pairs');
+      const value = Object.create(null);
+      for (let i = 0; i < pairs.length; i += 2) value[validKey(pairs[i])] = pairs[i + 1];
+      return value;
+    },
+    lookup: (value, key, fallback = null) =>
+      value != null && Object.hasOwn(value, key) ? value[key] : fallback,
+    assoc: (value, key, entry) => ({ ...value, [validKey(key)]: entry }),
+    keys: (value) => Object.keys(value),
+    values: (value) => Object.values(value),
+    'contains?': (value, key) =>
+      Array.isArray(value)
+        ? value.some((entry) => equalValues(entry, key))
+        : value != null && Object.hasOwn(value, key),
+    conj: (value, entry) => [...collection(value), entry],
+    concat: (...values) => values.flatMap(collection),
+    slice: (value, start, end) => value.slice(start, end),
+    distinct: (value) => [...new Set(collection(value))],
+    'index-of': (value, entry) => value.indexOf(entry),
+    mapv: (fn, value) => collection(value).map((entry) => invoke(fn, entry)),
+    filter: (fn, value) => collection(value).filter((entry) => invoke(fn, entry)),
+    reduce: (fn, initial, value) =>
+      collection(value).reduce((result, entry) => invoke(fn, result, entry), initial),
+    sort: (value, fn = (a, b) => String(a).localeCompare(String(b))) =>
+      [...collection(value)].sort((a, b) => invoke(fn, a, b)),
+    compare: (a, b) => String(a).localeCompare(String(b)),
+    split: (value, separator) => value.split(separator),
+    join: (value, separator = '') => collection(value).join(separator),
+    'starts-with?': (value, prefix) => typeof value === 'string' && value.startsWith(prefix),
+    'ends-with?': (value, suffix) => typeof value === 'string' && value.endsWith(suffix),
+    'lower-case': (value) => value.toLowerCase(),
+    trim: (value) => value.trim(),
+    'includes?': (value, item) => value.includes(item),
+    'replace-pattern': (value, pattern, replacement) =>
+      value.replace(new RegExp(pattern), replacement),
+    precision: (value, digits) => Number(value.toPrecision(digits)),
+    'matches?': (value, pattern) => new RegExp(pattern, 'i').test(value),
+    error: (message) => {
+      throw new Error(message);
+    },
+    'state-metadata': () => [...fields.values()],
+    definitions: () => [...definitions.values()],
     nth: (xs, i) => {
       if (!Number.isInteger(i) || i < 0 || i >= xs.length)
         throw new Error('nth: index out of bounds');
@@ -135,10 +221,15 @@ export function createRuntime(state, host = {}) {
     '>': (a, b) => a > b,
     '<=': (a, b) => a <= b,
     '>=': (a, b) => a >= b,
-    '=': (a, b) => a === b,
+    '=': equalValues,
     not: (x) => !x,
     get: (key) => {
       stateKeys.add(key);
+      if (execution?.state === state) {
+        execution.keys.add(key);
+        if (!execution.fields.has(key) && fields.has(key))
+          execution.fields.set(key, fields.get(key));
+      }
       if (!(key in state)) throw new Error(`Unknown state :${key}`);
       return state[key];
     },
@@ -152,7 +243,7 @@ export function createRuntime(state, host = {}) {
   });
   Object.assign(global, host.primitives || {});
   function evaluate(node, env = global) {
-    if (--fuel < 0) throw new Error('Evaluation budget exceeded (possible recursive loop)');
+    consume();
     if (typeof node === 'number') return node;
     if (node?.type === 'string') return node.value;
     if (node?.type === 'vector') return node.items.map((n) => evaluate(n, env));
@@ -171,24 +262,36 @@ export function createRuntime(state, host = {}) {
         return value;
       };
     // Special forms control evaluation order; ordinary calls evaluate arguments.
-    if (['defn', 'defdraw', 'defsound'].includes(name)) {
-      const hook = hookDefinition(node);
-      if (!isSym(args[0]) || args[1]?.type !== 'vector' || !args[1].items.every((n) => isSym(n)))
+    if (['defn', 'defdraw', 'defsound', 'fn'].includes(name)) {
+      const anonymous = name === 'fn';
+      const definition = anonymous ? [sym('defn'), sym('anonymous'), ...args] : node;
+      const hook = functionInfo(definition, sourcePath);
+      const parts = definition.slice(1);
+      if (!isSym(parts[0]) || parts[1]?.type !== 'vector' || !parts[1].items.every((n) => isSym(n)))
         throw new Error('Use (defn name [arguments] body...)');
-      const params = args[1].items.map((n) => n.name),
+      const params = parts[1].items.map((n) => n.name),
         closure = env;
-      env[args[0].name] = (...values) => {
+      const fn = (...values) => {
         if (values.length !== params.length)
-          throw new Error(`${args[0].name}: expected ${params.length} arguments`);
+          throw new Error(`${parts[0].name}: expected ${params.length} arguments`);
         // Prototype-linked environments implement lexical lookup, not mutation
         // of an outer binding. Shared mutation must go through set! explicitly.
         const local = Object.create(closure);
         params.forEach((p, i) => (local[p] = values[i]));
-        let result;
-        for (const n of args.slice(hook ? hook.bodyOffset - 1 : 2)) result = evaluate(n, local);
-        return result;
+        const previousPath = sourcePath;
+        sourcePath = hook.path;
+        try {
+          let result;
+          for (const n of parts.slice(hook.bodyOffset - 1)) result = evaluate(n, local);
+          return result;
+        } finally {
+          sourcePath = previousPath;
+        }
       };
-      if (hook) env[args[0].name].hook = hook;
+      fn.hook = hook;
+      if (anonymous) return fn;
+      env[parts[0].name] = fn;
+      definitions.set(hook.name, hook);
       return null;
     }
     if (name === 'pixels') {
@@ -239,14 +342,20 @@ export function createRuntime(state, host = {}) {
       )
         throw new Error(`${name} expects a state key and value`);
       const key = ev(args[0]);
+      validKey(key);
       stateKeys.add(key);
-      if (name === 'init!' && key in state) return state[key];
+      const info = name === 'init!' ? stateInfo(node, sourcePath, key) : null;
+      if (name === 'init!' && key in state) {
+        if (info.computed) info.value = state[key];
+        fields.set(key, info);
+        return state[key];
+      }
       const value = ev(args[1]);
-      if (typeof key !== 'string') throw new Error('State keys must be keywords or strings');
-      if (typeof value === 'number' && !Number.isFinite(value))
-        throw new Error('State must be finite');
-      if (!['number', 'string', 'boolean'].includes(typeof value))
-        throw new Error('State values must be numbers, strings, or booleans');
+      if (info) {
+        if (info.computed) info.value = value;
+        fields.set(key, info);
+      }
+      validateValue(value);
       state[key] = value;
       return value;
     }
@@ -271,18 +380,28 @@ export function createRuntime(state, host = {}) {
     state,
     stateKeys,
     global,
-    load(forms) {
-      fuel = budget;
-      for (const n of forms) evaluate(n);
+    metadata: { definitions, fields },
+    load(forms, path = '') {
+      sourcePath = path;
+      run(() => {
+        for (const node of forms) evaluate(node);
+      });
     },
     call(name, ...args) {
-      fuel = budget;
-      if (typeof global[name] !== 'function') throw new Error(`Missing (defn ${name} [...])`);
-      return global[name](...args);
+      return run(() => {
+        if (typeof global[name] !== 'function') throw new Error(`Missing (defn ${name} [...])`);
+        return global[name](...args);
+      });
+    },
+    invoke(name, ...args) {
+      const fn = () => {
+        if (typeof global[name] !== 'function') throw new Error(`Missing function ${name}`);
+        return global[name](...args);
+      };
+      return execution ? fn() : run(fn);
     },
     evaluate(node) {
-      fuel = budget;
-      return evaluate(node);
+      return run(() => evaluate(node));
     },
   };
 }

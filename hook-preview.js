@@ -1,5 +1,5 @@
 import { engineServices } from './engine-services.js';
-import { resolveModules, cpuForms } from './module-loader.js';
+import { resolveModules } from './module-loader.js';
 import { sourceHooks } from './hook-definitions.js';
 import { synthesize } from './audio.js';
 
@@ -14,7 +14,8 @@ export function previewHook({ files, path, name, state = {}, args, entry, resour
     throw new Error(`${name}: expected ${hook.params.length} preview arguments`);
   const services = engineServices({ size: () => hook.size, resource });
   const runtime = services.create(structuredClone(state));
-  for (const module of modules) runtime.load(cpuForms(module.forms));
+  runtime.global.generator = () => null;
+  for (const module of modules) runtime.load(module.forms, module.path);
   const result = { ...hook, path, args: structuredClone(args), state: runtime.state };
   if (hook.kind === 'draw') result.draw = runtime.drawFrame(...hook.size, name, args);
   else result.pcm = synthesize(runtime.collectSound(name, ...args));

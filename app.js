@@ -1,3 +1,6 @@
+import { AudioOutput } from './audio-output.js';
+import { policy, policySource } from './editor-policy.js';
+import { validateValue, validKey } from './state-values.js';
 import { pixelBlock } from './pixel-block.js';
 import { canvasSize } from './canvas-size.js';
 import { textOutput, textMime } from './text-generator.js';
@@ -12,14 +15,23 @@ import {
 } from './folder-operations.js';
 import { sourceHooks } from './hook-definitions.js';
 import { previewHook } from './hook-preview.js';
-import { inspectorFields, liveFields, fieldRow, referencedStateKeys } from './inspector-fields.js';
-import { launchApplication } from './application.js';
+import {
+  inspectorDeclarations,
+  liveFields,
+  fieldRow,
+  referencedStateKeys,
+} from './inspector-fields.js';
+import {
+  launchApplication,
+  stageApplication,
+  updateApplication,
+  drawApplication,
+} from './application.js';
 import { engineServices } from './engine-services.js';
 import { applicationFiles } from './application-files.js';
 import { exportHTML } from './html-export.js';
 import { parse, createRuntime } from './lisp.js';
-import { compileShader } from './shader.js';
-import { exampleScenePaths } from './example-sources.js';
+import { exampleScenePaths, exampleToolPaths } from './example-sources.js';
 import { validateVoice, synthesize, wav } from './audio.js';
 import { DrawList } from './drawing.js';
 import { GPUHost } from './gpu.js';
@@ -31,20 +43,17 @@ import { CodeInput } from './code-input.js';
 import { editorSourcePaths } from './editor-sources.js';
 import { openTab, closeTab, renameTab, tabLayout } from './code-tabs.js';
 import { AssetPreview } from './asset-preview.js';
-import { stageScene, callHook, callLifecycle, isScenePath, selectScene } from './scenes.js';
+import { callHook } from './scenes.js';
 import { normalizeSource, displaySource } from './source-text.js';
 import { assetKind, isCommandFile, projectTree, toggleFolder } from './file-tree.js';
-import { generatorSources } from './generators.js';
 import { stageGenerators, fieldValue } from './generator-inspector.js';
-import { sourceRole } from './source-roles.js';
+import { sourceRole, isScenePath } from './source-roles.js';
 import {
   rolePath,
   sourcePath,
   sourceKey,
   resolvePath,
   resolveModules,
-  cpuForms,
-  pixelHook,
   projectSnapshot,
   readProject,
 } from './project.js';
@@ -53,12 +62,13 @@ const bundledResources = await loadBundledResources();
 const resourceIcons = new ResourceIcons((images) => gpu?.setIcons(images));
 
 /** Browser services for the Lisp editor; appearance and layout stay in Lisp. */
+const audioOutput = new AudioOutput();
 const $ = (id) => document.getElementById(id),
   canvas = $('app'),
-  // Retain the storage key so earlier local projects migrate in place.
-  storageKey = 'aioli.project.v3';
+  storageKey = 'aioli.project';
 // Resolve against this module, not the domain root, for GitHub Pages subpaths.
 async function loadBundledSource(filename) {
+  if (policySource(filename) !== undefined) return normalizeSource(policySource(filename));
   const response = await fetch(new URL(filename, import.meta.url));
   if (!response.ok) throw new Error(`Unable to load ${filename}: HTTP ${response.status}`);
   return normalizeSource(await response.text());
@@ -69,7 +79,9 @@ const defaults = {
   ),
   game: await loadBundledSource('game.lisp'),
   main: await loadBundledSource('main.lisp'),
-  ...generatorSources,
+  ...Object.fromEntries(
+    await Promise.all(exampleToolPaths.map(async (path) => [path, await loadBundledSource(path)])),
+  ),
   ...Object.fromEntries(
     await Promise.all(editorSourcePaths.map(async (path) => [path, await loadBundledSource(path)])),
   ),
@@ -81,15 +93,10 @@ let generatorPrograms = [],
   sceneFields = [],
   sceneStateKeys = new Set();
 let sceneColorKey = null;
-const selectedGenerator = (programs, target) =>
-  programs.find((program) => program.path === target['active-generator']) ?? programs[0];
-const outputGenerator = (programs, target, output) => {
-  const selected = selectedGenerator(programs, target);
-  return selected?.output === output
-    ? selected
-    : (programs.find((program) => program.path === target[`${output}-generator-path`]) ??
-        programs.find((program) => program.output === output));
-};
+const selectedGenerator = (programs, target, editor) =>
+  policy('editor-selected-generator', [programs, target], editor);
+const outputGenerator = (programs, target, output, editor) =>
+  policy('editor-output-generator', [programs, target, output], editor);
 const transientBuffers = {
   __palette: '',
   __path: 'lib/new.lisp',
@@ -147,96 +154,15 @@ const keys = new Set(),
     target: null,
   },
   activations = new Set();
-const guide = `AIOLI / all in one lisp
+const guide = await loadBundledSource('editor/guide.txt');
 
-The editor is an aioli app.
-Edit main.lisp for editor layout and behavior.
-Edit game.lisp for the embedded application.
-Edit editor/ui/components.lisp for button and slider implementations.
-Every visible element is a WebGPU pixel primitive.
-
-Ctrl/Cmd+Enter  Evaluate all programs
-F2             Recover the editor shell
-F4             Focus preview / restore editor
-Escape         Close tools and menus
-Click game     A/D or arrows, Space to jump
-
-DRAWING (CPU editor and GPU scenes)
-  (fill "#bbd6a6")
-  (rect [20 80] [120 32])
-  (circle [60 100] 8)
-  (line [0 0] [20 20] 2)
-  (scope (translate [10 0]) ...)
-  (opacity 0.5) (blend :add)
-
-EDITOR PRIMITIVES
-  (text [20 80] "Hello")
-  (clip [0 0] [200 200])
-  (surface [640 150] [640 480])
-  (code-editor [16 100] [500 600] :main)
-  (screen-width) (screen-height)
-  (hit? [20 80] [120 32])
-  (pointer-pressed?) (pointer-down?)
-  (pointer-x) (pointer-y)
-  (capture! :id) (captured? :id)
-
-LISP FUNCTIONS
-  defn let do if when repeat scope
-  init! set! get str count nth
-  + - * / sin cos abs min max floor round clamp mod
-
-Shaders use (defpixel name [p time] ...) and
-compile into WGSL. (param :key) reads shared state.
-The editor emits an ordered drawing stream that
-WebGPU evaluates per pixel on a fullscreen quad.
-
-Widgets in editor/ui/components.lisp are ordinary Lisp functions.
-You can change their shape, colors, layout, and
-interaction logic while the app is running.
-
-TEXT INPUT
-Mouse selection, arrows, clipboard, and IME use
-a hidden browser textarea. Text, selection, and
-the caret are all visibly rendered in WebGPU.
-Wheel scrolls source; Shift+wheel scrolls sideways.
-
-AUDIO
-(voice :sine 440 880 0.3 0.35)
-Arguments: waveform, start Hz, end Hz, seconds, gain.
-Waveforms: sine, triangle, square, sawtooth, noise.
-The Sound tool edits the same shared parameters.
-
-PROJECTS
-File: open/save JSON and export images.
-Project: evaluate, pause, reset and generators.
-View: panes, palette, WGSL and recovery.
-Edit: undo/redo and clipboard. About: help and docs.
-The last accepted source and state save locally.
-Bad edits retain the working app and shader.
-F2 opens the stock recovery shell if an editor edit
-hides the code view or breaks frame execution.
-
-LIMITS
-Small Lisp runtime, bounded frame evaluation.
-No persistent GPU feedback or custom graph routing.
-The host/compiler are JavaScript native bindings;
-the editor app and widgets are Lisp source.
-
-Full documentation: About > Documentation.
-`;
-
-/** Validate imports before evaluating them, while retaining legacy save support. */
+/** Validate imports before evaluating them, using the current project format. */
 function validateProject(project) {
-  return readProject(project, defaults, bundledResources);
+  return readProject(project);
 }
 
 try {
-  const saved = JSON.parse(
-    localStorage.getItem(storageKey) ||
-      localStorage.getItem('aioli.project.v2') ||
-      localStorage.getItem('pixel-lisp.project.v2') ||
-      localStorage.getItem('pixel-lisp.project.v1'),
-  );
+  const saved = JSON.parse(localStorage.getItem(storageKey) || null);
   if (saved) {
     const project = validateProject(saved);
     for (const key of Object.keys(sources)) if (!key.startsWith('__')) delete sources[key];
@@ -404,6 +330,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
   const visibleSources = () => (live() ? sources : candidateSources);
   const visibleResources = () => (live() ? resources : candidateResources);
   const rowsForTarget = () => resourceRows(visibleSources(), visibleResources());
+  let frameSize = null;
   const actions =
     (fn) =>
     (...args) => {
@@ -415,7 +342,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
     key: (k) => code.focus === 'world' && keys.has(k),
     pixels: (args, env, evaluate) => {
       if (!draw) throw new Error('pixels requires a draw hook');
-      draw.pixels(pixelBlock(args, env, evaluate, target));
+      draw.pixels(pixelBlock(args, env, evaluate));
     },
     beginScope: () => draw?.scope(),
     endScope: () => draw?.restore(),
@@ -440,6 +367,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       if (live()) exportWav();
     },
     primitives: {
+      generator: () => null,
       ...Object.fromEntries(
         [
           'background',
@@ -469,15 +397,12 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       'game-code': (path) => visibleSources()[sourceKey(resolvePath(path))] ?? '',
       'game-get': (key) => result.applicationState?.[key] ?? applicationState[key],
       'game-set!': (key, value) => {
-        if (
-          !['number', 'string', 'boolean'].includes(typeof value) ||
-          (typeof value === 'number' && !Number.isFinite(value))
-        )
-          throw new Error('Invalid game state');
+        validKey(key);
+        validateValue(value);
         (result.applicationState ?? applicationState)[key] = value;
       },
-      'canvas-width': () => canvasSize(target)[0],
-      'canvas-height': () => canvasSize(target)[1],
+      'canvas-width': () => (frameSize ?? canvasSize(target))[0],
+      'canvas-height': () => (frameSize ?? canvasSize(target))[1],
       'open-canvas-settings': actions(() => {
         const [w, h] = canvasSize(state);
         sources.__canvasSize = `${w} ${h}`;
@@ -529,17 +454,9 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           runProject();
       }),
       'prepare-folder-path': actions((operation = 'create') => {
-        const path = state['context-path'] ?? '';
-        const parent =
-          state['context-kind'] === 'folder'
-            ? path + '/'
-            : path.slice(0, path.lastIndexOf('/') + 1);
-        sources.__path = operation === 'create' ? parent + 'new-folder' : path;
-        state['folder-source'] = path;
-        state['file-operation'] = 'folder-' + operation;
-        state['file-context'] = false;
-        state.window = 'file-path';
-        state['file-path-editing'] = false;
+        const dialog = policy('editor-folder-dialog', [state, operation], runtime);
+        sources.__path = dialog.input;
+        Object.assign(state, dialog.state);
       }),
       'apply-folder-path': actions((path) =>
         state['file-operation'] === 'folder-create'
@@ -551,22 +468,9 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           .length,
       'delete-folder': actions((path) => deleteProjectFolder(path)),
       'prepare-file-path': actions((rename = false) => {
-        const contextPath = state['context-path'] ?? '';
-        const folder =
-          state['context-kind'] === 'folder'
-            ? contextPath + '/'
-            : state['context-kind'] === 'file'
-              ? contextPath.slice(0, contextPath.lastIndexOf('/') + 1)
-              : '';
-        sources.__path = rename ? state['selected-file'] : folder + 'new.lisp';
-        state['file-operation'] = rename ? 'rename' : 'create';
-        if (!rename) {
-          state['new-file-type'] = 'script';
-          state['new-generator-output'] = 'image';
-        }
-        state['file-path-editing'] = false;
-        state['file-context'] = false;
-        state.window = 'file-path';
+        const dialog = policy('editor-file-dialog', [state, rename], runtime);
+        sources.__path = dialog.input;
+        Object.assign(state, dialog.state);
       }),
       // During staging this selects the initial scene; live calls request a
       // transactional transition. The previous scene survives rejected edits.
@@ -608,7 +512,8 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           result.sceneFields ?? sceneFields,
           result.applicationState ?? applicationState,
           result.sceneStateKeys ?? sceneStateKeys,
-        ).map(fieldRow),
+          result,
+        ).map((field) => fieldRow(field, result)),
       'scene-field-value': (key) => (result.applicationState ?? applicationState)[key],
       'set-scene-field': (key, value) => {
         const data = result.applicationState ?? applicationState;
@@ -616,9 +521,10 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           result.sceneFields ?? sceneFields,
           data,
           result.sceneStateKeys ?? sceneStateKeys,
+          result,
         ).find((field) => field.key === key);
         if (!field) throw new Error('Unknown scene field');
-        data[key] = fieldValue(field, value);
+        data[key] = fieldValue(field, value, result);
         dirty = true;
       },
       'scene-field-step': (key) => {
@@ -626,6 +532,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           result.sceneFields ?? sceneFields,
           result.applicationState ?? applicationState,
           result.sceneStateKeys ?? sceneStateKeys,
+          result,
         ).find((field) => field.key === key);
         const region = items.findLast((region) => region.key === '__scene-' + key);
         if (region && field) region.step = field.step;
@@ -635,14 +542,18 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           result.sceneFields ?? sceneFields,
           result.applicationState ?? applicationState,
           result.sceneStateKeys ?? sceneStateKeys,
+          result,
         ).find((field) => field.key === target['scene-edit-key'])?.kind ?? '',
       'edit-scene-field': actions((key) => {
-        const field = liveFields(sceneFields, applicationState, sceneStateKeys).find(
+        const field = liveFields(sceneFields, applicationState, sceneStateKeys, runtime).find(
           (field) => field.key === key,
         );
         if (!field) throw new Error('Unknown scene field');
         state['scene-edit-key'] = key;
-        sources.__sceneValue = String(applicationState[key]);
+        sources.__sceneValue =
+          typeof applicationState[key] === 'object'
+            ? JSON.stringify(applicationState[key])
+            : String(applicationState[key]);
         code.forgetBuffer('__sceneValue');
         if (field.kind === 'color') {
           sceneColorKey = key;
@@ -652,14 +563,15 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         }
       }),
       'apply-scene-field': actions(() => {
-        const field = liveFields(sceneFields, applicationState, sceneStateKeys).find(
+        const field = liveFields(sceneFields, applicationState, sceneStateKeys, runtime).find(
           (field) => field.key === state['scene-edit-key'],
         );
-        if (field) applicationState[field.key] = fieldValue(field, sources.__sceneValue);
+        if (field) applicationState[field.key] = fieldValue(field, sources.__sceneValue, runtime);
         state['scene-edit-key'] = '';
         dirty = true;
       }),
-      'command-file?': (path) => isCommandFile(path) && sourceKey(path) in visibleSources(),
+      'command-file?': (path) =>
+        isCommandFile(path, 'lisp', result) && sourceKey(path) in visibleSources(),
       'selected-file?': () =>
         sourceKey(target['selected-file'] ?? '') in sources ||
         (target['selected-file'] ?? '') in resources,
@@ -692,6 +604,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
             rowsForTarget(),
             target['open-folders'],
             savedFolders(target['project-folders']),
+            result,
           ).map(
             (row) =>
               row[4] * 14 +
@@ -709,6 +622,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           rowsForTarget(),
           target['open-folders'],
           savedFolders(target['project-folders']),
+          result,
         ).slice(
           treeOffset(target, rowsForTarget(), capacity),
           treeOffset(target, rowsForTarget(), capacity) + 64,
@@ -718,9 +632,10 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           rowsForTarget(),
           target['open-folders'],
           savedFolders(target['project-folders']),
+          result,
         ).length,
       'toggle-folder': actions((path) => {
-        state['open-folders'] = toggleFolder(state['open-folders'], path);
+        state['open-folders'] = toggleFolder(state['open-folders'], path, runtime);
         state['file-offset'] = 0;
         dirty = true;
       }),
@@ -740,18 +655,18 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         Object.keys(sources).filter((key) => !key.startsWith('__')).length +
         Object.keys(resources).length,
       'open-code-tab': actions((key) => {
-        openTab(state, sources, key);
+        openTab(state, sources, key, runtime);
         dirty = true;
       }),
       'close-code-tab': actions((key) => {
-        closeTab(state, sources, key);
+        closeTab(state, sources, key, runtime);
         dirty = true;
       }),
       'scroll-code-tabs': actions((delta) => {
         state['tab-offset'] = Math.max(0, (state['tab-offset'] ?? 0) + delta);
       }),
       'code-tabs': (width) => {
-        tabs = tabLayout(target, visibleSources(), committedSources, width);
+        tabs = tabLayout(target, visibleSources(), committedSources, width, result);
         return tabs.rows;
       },
       'code-tabs-before?': () => tabs.before,
@@ -806,7 +721,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         path = resolvePath(path);
         const key = sourceKey(path);
         if (key in sources) {
-          if (sourceRole(path) === 'generator')
+          if (sourceRole(path, result) === 'generator')
             return evaluateGeneratorSelection(path).then((ok) => {
               if (ok) {
                 state.window = 'generator';
@@ -815,7 +730,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
                 state['text-preview-offset'] = state['text-preview-x'] = 0;
               }
             });
-          openTab(state, sources, key);
+          openTab(state, sources, key, runtime);
           state['show-code'] = true;
           if (innerWidth < (state['ui-narrow-width'] ?? 850)) state['show-files'] = false;
           state['file-path-editing'] = false;
@@ -826,8 +741,9 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           return previewAsset(path);
         } else throw new Error(`Missing file ${path}`);
       }),
-      'new-file-path': newFilePath,
-      'new-file-code': newFileCode,
+      'new-file-path': (path, type) => newFilePath(path, type, result),
+      'new-file-code': (type, output) => newFileCode(type, output, result),
+      'project-text': (path) => visibleSources()[sourceKey(path)],
       'create-file': actions((path, text = '; New project module\n') => {
         path = resolvePath(path);
         assertFileDestination(path);
@@ -839,7 +755,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         if (typeof text !== 'string' || text.length > 100000)
           throw new Error('Invalid source text');
         sources[key] = normalizeSource(text);
-        openTab(state, sources, key);
+        openTab(state, sources, key, runtime);
         state['show-code'] = true;
         if (innerWidth < (state['ui-narrow-width'] ?? 850)) state['show-files'] = false;
         state['file-path-editing'] = false;
@@ -881,7 +797,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         if (['main.lisp', 'game.lisp'].includes(path))
           throw new Error('main.lisp and game.lisp cannot be deleted');
         const key = sourceKey(path);
-        closeTab(state, sources, key);
+        closeTab(state, sources, key, runtime);
         code.forgetBuffer(key);
         delete sources[key];
         delete resources[path];
@@ -902,7 +818,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
               resources: freshResources,
               state: {
                 'show-files': true,
-                'open-folders': '["examples"]',
+                'open-folders': ['examples'],
                 tab: 'game',
                 'selected-file': 'game.lisp',
               },
@@ -938,34 +854,36 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       'generator-files': () =>
         Object.keys(visibleSources())
           .map(sourcePath)
-          .filter((path) => sourceRole(path) === 'generator')
+          .filter((path) => sourceRole(path, result) === 'generator')
           .sort(),
       'generator-path': () =>
-        selectedGenerator(result.generators ?? generatorPrograms, target)?.path ?? '',
+        selectedGenerator(result.generators ?? generatorPrograms, target, result)?.path ?? '',
       'generator-title': () =>
-        selectedGenerator(result.generators ?? generatorPrograms, target)?.title ?? 'Generators',
+        selectedGenerator(result.generators ?? generatorPrograms, target, result)?.title ??
+        'Generators',
       'generator-edit-kind': () =>
-        selectedGenerator(result.generators ?? generatorPrograms, target)?.fields.find(
+        selectedGenerator(result.generators ?? generatorPrograms, target, result)?.fields.find(
           (field) => field.key === target['inspector-edit-key'],
         )?.kind ?? '',
       'generator-output': () =>
-        selectedGenerator(result.generators ?? generatorPrograms, target)?.output ?? '',
+        selectedGenerator(result.generators ?? generatorPrograms, target, result)?.output ?? '',
       'generator-text': () =>
-        textOutput(selectedGenerator(result.generators ?? generatorPrograms, target)).text,
+        textOutput(selectedGenerator(result.generators ?? generatorPrograms, target, result)).text,
       'generator-text-error': () =>
-        textOutput(selectedGenerator(result.generators ?? generatorPrograms, target)).error,
+        textOutput(selectedGenerator(result.generators ?? generatorPrograms, target, result)).error,
       'generator-text-line-count': () =>
-        textOutput(selectedGenerator(result.generators ?? generatorPrograms, target)).lines.length,
+        textOutput(selectedGenerator(result.generators ?? generatorPrograms, target, result)).lines
+          .length,
       'generator-filename': () =>
-        selectedGenerator(result.generators ?? generatorPrograms, target)?.filename ??
+        selectedGenerator(result.generators ?? generatorPrograms, target, result)?.filename ??
         'generated.txt',
       'generate-text-preview': actions(() => {
-        textOutput(selectedGenerator(generatorPrograms, state), true);
+        textOutput(selectedGenerator(generatorPrograms, state, runtime), true);
         dirty = true;
       }),
       'text-preview': (origin, size) => {
         const output = textOutput(
-          selectedGenerator(result.generators ?? generatorPrograms, target),
+          selectedGenerator(result.generators ?? generatorPrograms, target, result),
         );
         const lines = output.lines;
         const offset = target['text-preview-offset'] ?? 0;
@@ -988,24 +906,24 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       'export-text': actions(() => exportGeneratedText(true)),
       'save-text-resource': actions(() => exportGeneratedText(false)),
       'generator-fields': () =>
-        (selectedGenerator(result.generators ?? generatorPrograms, target)?.fields ?? []).map(
-          (field) => [
-            field.key,
-            field.label,
-            field.kind,
-            field.low,
-            field.high,
-            field.step,
-            field.choices,
-          ],
-        ),
+        (
+          selectedGenerator(result.generators ?? generatorPrograms, target, result)?.fields ?? []
+        ).map((field) => [
+          field.key,
+          field.label,
+          field.kind,
+          field.low,
+          field.high,
+          field.step,
+          field.choices,
+        ]),
       'normalize-generator-field': (key) => {
         const field = selectedGenerator(
           result.generators ?? generatorPrograms,
           target,
         )?.fields.find((field) => field.key === key);
         if (field) {
-          target[key] = fieldValue(field, target[key]);
+          target[key] = fieldValue(field, target[key], result);
           const region = items.findLast((region) => region.key === key);
           if (region) region.step = field.step;
         }
@@ -1015,7 +933,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           state.window = 'generator';
           return;
         }
-        if (sourceRole(path) !== 'generator' || !(sourceKey(path) in sources))
+        if (sourceRole(path, result) !== 'generator' || !(sourceKey(path) in sources))
           throw new Error('Expected a .generator.lisp file');
         if (await evaluateGeneratorSelection(path)) {
           state.window = 'generator';
@@ -1024,13 +942,14 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         }
       }),
       'edit-generator-field': actions((key) => {
-        const field = selectedGenerator(generatorPrograms, state)?.fields.find(
+        const field = selectedGenerator(generatorPrograms, state, runtime)?.fields.find(
           (field) => field.key === key,
         );
         if (!field) throw new Error('Unknown generator field');
         sceneColorKey = null;
         state['inspector-edit-key'] = key;
-        sources.__generatorValue = String(state[key]);
+        sources.__generatorValue =
+          typeof state[key] === 'object' ? JSON.stringify(state[key]) : String(state[key]);
         code.forgetBuffer('__generatorValue');
         if (field.kind === 'color') {
           const input = $('generator-color');
@@ -1039,24 +958,20 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         }
       }),
       'apply-generator-field': actions(() => {
-        const field = selectedGenerator(generatorPrograms, state)?.fields.find(
+        const field = selectedGenerator(generatorPrograms, state, runtime)?.fields.find(
           (field) => field.key === state['inspector-edit-key'],
         );
-        if (field) state[field.key] = fieldValue(field, sources.__generatorValue);
+        if (field) state[field.key] = fieldValue(field, sources.__generatorValue, runtime);
         state['inspector-edit-key'] = '';
         dirty = true;
       }),
       'palette-query': () => sources.__palette,
-      'palette-commands': () => {
-        const query = sources.__palette.toLowerCase().trim();
-        return Object.keys(sources)
-          .filter(
-            (key) =>
-              isCommandFile(sourcePath(key)) && (!query || key.toLowerCase().includes(query)),
-          )
-          .sort()
-          .slice(0, 8);
-      },
+      'palette-commands': () =>
+        policy(
+          'editor-palette-commands',
+          [Object.keys(visibleSources()).map(sourcePath), sources.__palette],
+          result,
+        ),
       'run-command': actions((path) => runCommand(path)),
       'run-instruction': actions(() => runInstruction(sources.__palette)),
       'path-input': () => sources.__path,
@@ -1088,8 +1003,13 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       },
       'image-preview': (origin, size) => {
         draw.surface(origin, size, 5);
-        const program = outputGenerator(result.generators ?? generatorPrograms, target, 'image');
-        if (program?.unified) draw.composite(program.runtime.drawFrame(), origin, size);
+        const program = outputGenerator(
+          result.generators ?? generatorPrograms,
+          target,
+          'image',
+          result,
+        );
+        if (program) draw.composite(program.runtime.drawFrame(), origin, size);
       },
       'export-image': actions((path = 'assets/generated.png') => exportGeneratedImage(path, true)),
       'save-image-resource': actions((path = 'assets/generated.png') =>
@@ -1152,14 +1072,18 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         draw.surface(origin, size);
         const application = result.gameRuntime ?? gameRuntime;
         const scene = 'scene' in result ? result.scene : activeScene;
-        if (application) draw.composite(application.drawFrame(...canvasSize(target)), origin, size);
-        if (scene) draw.composite(scene.runtime.drawFrame(...canvasSize(target)), origin, size);
+        if (application)
+          draw.composite(
+            drawApplication({ runtime: application, scene }, canvasSize(target)),
+            origin,
+            size,
+          );
         items.push({ id: 'world', label: 'Game viewport', origin, size });
       },
       'buffer-open': (origin, size, tab) => {
         const text =
           tab === 'wgsl'
-            ? compiled?.code || 'No compiled shader'
+            ? compiled?.displayCode || compiled?.code || 'No compiled shader'
             : tab === 'guide'
               ? guide
               : tab === 'diagnostic'
@@ -1251,15 +1175,9 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
             index++;
           const backup = `${stem}-backup-${index}.lisp`;
           sources[backup] = sources[key];
-          let owned;
-          try {
-            owned = JSON.parse(state['editor-file-paths'] ?? '[]');
-          } catch {
-            owned = [];
-          }
-          state['editor-file-paths'] = JSON.stringify([
-            ...new Set([...(Array.isArray(owned) ? owned : []), sourcePath(backup)]),
-          ]);
+          state['editor-file-paths'] = [
+            ...new Set([...(state['editor-file-paths'] ?? []), sourcePath(backup)]),
+          ];
         }
         for (const key of editorKeys)
           sources[key] = key === editorKeys[0] ? defaults.main : defaults[key];
@@ -1294,11 +1212,19 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       'export-png': actions(async () => {
         try {
           if (!gpu) throw new Error('WebGPU is unavailable');
-          const size = canvasSize(state), list = new DrawList(...size);
+          const size = canvasSize(state),
+            list = new DrawList(...size);
           list.surface([0, 0], size);
-          list.composite(gameRuntime.drawFrame(...size), [0, 0], size);
-          if (activeScene) list.composite(activeScene.runtime.drawFrame(...size), [0, 0], size);
-          download(await gpu.snapshot(false, list, activeScene ? sceneTime : time, applicationState, state), 'image/png', 'aioli.png');
+          list.composite(
+            drawApplication({ runtime: gameRuntime, scene: activeScene }, size),
+            [0, 0],
+            size,
+          );
+          download(
+            await gpu.snapshot(list, activeScene ? sceneTime : time, applicationState, state),
+            'image/png',
+            'aioli.png',
+          );
         } catch (e) {
           report(e.message, true);
         }
@@ -1307,15 +1233,23 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
   });
   result.pendingActions = [];
   result.drawFrame = (width = 320, height = 240, name = 'render', args = []) => {
-    const outer = draw;
+    const outer = draw,
+      previousSize = frameSize;
+    frameSize = [width, height];
     draw = new DrawList(width, height);
-    try { result.call(name, ...args); return draw; } finally { draw = outer; }
+    try {
+      result.call(name, ...args);
+      return draw;
+    } finally {
+      draw = outer;
+      frameSize = previousSize;
+    }
   };
   result.drawEditor = () => {
     draw = new DrawList(innerWidth, innerHeight);
     items = [];
     try {
-      result.call(result.global.render?.hook?.kind === 'draw' ? 'render' : typeof result.global.draw === 'function' ? 'draw' : 'editor');
+      result.call(result.global.render?.hook?.kind === 'draw' ? 'render' : 'editor');
       return { draw, regions: items };
     } finally {
       draw = null;
@@ -1359,7 +1293,7 @@ async function evaluate({
       gameBaseline = { ...applicationState };
     // File operations and gameplay edits are not repairs to the editor. Keep
     // the recovery shell until its sources are explicitly changed and accepted.
-    const editorChanged = [...new Set(['main', 'main', 'ui', ...editorSourcePaths])].some(
+    const editorChanged = [...new Set(['main', ...editorSourcePaths])].some(
       (key) => candidateSources[key] !== committedSources[key],
     );
     const nextRecovery = !exitRecovery && (imported?.recovery ?? (recovery && !editorChanged));
@@ -1432,102 +1366,70 @@ async function evaluate({
       staged.pendingActions = [];
       return staged;
     };
-    const gameCandidate = makeGameRuntime();
-    candidate.gameRuntime = gameCandidate;
-    launchApplication({
+    const game = stageApplication({
       files: stores.game,
       entry: 'game.lisp',
       state: gameTarget,
+      makeRuntime: makeGameRuntime,
       lifecycle: scene === undefined ? (restart ? 'init' : lifecycle) : '',
-      makeRuntime: () => gameCandidate,
-    });
-    const scenePath = selectScene({
-      explicit: scene,
-      requested: gameCandidate.initialScene,
+      explicitScene: scene,
+      previous: gameRuntime
+        ? {
+            runtime: gameRuntime,
+            scene: activeScene,
+            files: applicationFiles(committedSources, state['editor-file-paths']).game,
+          }
+        : null,
       previousRequest:
         reset || restart
           ? undefined
           : imported
             ? gameTarget['entry-scene-request']
             : (gameRuntime?.initialScene ?? gameTarget['entry-scene-request']),
-      active: gameTarget['active-scene'],
       activating: !runtime || !!imported || reset || restart,
+      restart: reset || restart || !!imported,
     });
-    gameTarget['entry-scene-request'] = gameCandidate.initialScene ?? '';
-    const sceneChanged = scenePath !== (activeScene?.path ?? '') || reset || restart || !!imported;
-    // Run exit against staged state too: a failed shader must not leave the old
-    // scene or leak its cleanup effects. Exit precedes the incoming init/enter.
-    const exitTarget = reset || restart || imported ? { ...applicationState } : gameTarget;
-    const outgoingRoot =
-      exitTarget === gameTarget || !activeScene
-        ? gameCandidate
-        : launchApplication({
-            files: applicationFiles(committedSources, state['editor-file-paths']).game,
-            entry: 'game.lisp',
-            state: exitTarget,
-            lifecycle: '',
-            makeRuntime: () => makeGameRuntime(exitTarget),
-          });
-    const outgoing =
-      sceneChanged && activeScene && typeof activeScene.runtime.global.exit === 'function'
-        ? stageScene(
-            applicationFiles(committedSources, state['editor-file-paths']).game,
-            activeScene.path,
-            outgoingRoot,
-            () => makeGameRuntime(exitTarget),
-          )
-        : null;
-    callLifecycle(outgoing?.runtime, 'exit');
-    const nextScene = scenePath
-      ? stageScene(stores.game, scenePath, gameCandidate, makeGameRuntime)
-      : null;
-    gameTarget['active-scene'] = scenePath;
+    const gameCandidate = game.runtime,
+      nextScene = game.scene,
+      outgoing = game.outgoing;
+    const scenePath = gameTarget['active-scene'],
+      sceneChanged = game.changed;
+    candidate.gameRuntime = gameCandidate;
     candidate.scene = nextScene;
-    const declared = new Map();
-    candidate.sceneStateKeys = (nextScene?.runtime ?? gameCandidate).stateKeys;
-    for (const module of resolveModules(stores.game, [scenePath || 'game.lisp'])) {
+    const sceneRuntime = nextScene?.runtime ?? gameCandidate;
+    candidate.sceneStateKeys = sceneRuntime.stateKeys;
+    for (const module of sceneRuntime.modules)
       referencedStateKeys(module.forms, candidate.sceneStateKeys);
-      for (const field of inspectorFields(module.path, module.forms))
-        declared.set(field.key, field);
-    }
-    candidate.sceneFields = [...declared.values()];
+    candidate.sceneFields = inspectorDeclarations(
+      [...sceneRuntime.metadata.fields.values()],
+      candidate,
+    );
     if (sceneChanged) {
       target['scene-inspector-offset'] = 0;
       target['scene-edit-key'] = '';
-    }
-    if (nextScene) {
-      callLifecycle(nextScene.runtime, sceneChanged || !activeScene ? 'init' : 'reload');
-      if (sceneChanged || !activeScene) callLifecycle(nextScene.runtime, 'enter');
-      callHook(nextScene.runtime, 'update', 0);
     }
     if (generator !== undefined) target['active-generator'] = generator;
     const nextGenerators = stageGenerators(candidateSources, candidate, () =>
       makeRuntime(target, candidateSources, imported?.resources ?? resources),
     );
     candidate.generators = nextGenerators;
-    const selected = selectedGenerator(nextGenerators, target);
+    const selected = selectedGenerator(nextGenerators, target, candidate);
     target['active-generator'] = selected?.path ?? '';
     if (selected) target[`${selected.output}-generator-path`] = selected.path;
     for (const program of nextGenerators)
       for (const field of program.fields) {
         try {
-          target[field.key] = fieldValue(field, target[field.key]);
+          target[field.key] = fieldValue(field, target[field.key], candidate);
         } catch {
           target[field.key] = field.value;
         }
       }
-    const imageGenerator = outputGenerator(nextGenerators, target, 'image');
-    const audioGenerator = outputGenerator(nextGenerators, target, 'audio');
+    const imageGenerator = outputGenerator(nextGenerators, target, 'image', candidate);
+    const audioGenerator = outputGenerator(nextGenerators, target, 'audio', candidate);
+    if (imageGenerator && gpu) await gpu.preparePixels(imageGenerator.runtime.drawFrame());
     const stagedDraw = candidate.drawEditor().draw;
     if (gpu) await gpu.preparePixels(stagedDraw);
     gameCandidate.collectSound();
-    const shader = compileShader(nextScene?.render ?? gameCandidate.render(), gameTarget),
-      imageShader = compileShader(
-        imageGenerator?.render ?? parse('(defpixel image [p time] (background "#000000"))'),
-        target,
-      ),
-      pipeline = gpu ? await gpu.prepare(shader) : null,
-      imagePipeline = gpu ? await gpu.prepare(imageShader) : null;
     const generatedPatch = audioGenerator?.runtime.collectGeneratedSound() ?? [];
     const nextGeneratedSound = generatedPatch.length
       ? synthesize(generatedPatch)
@@ -1543,7 +1445,6 @@ async function evaluate({
           gameTarget[key] = value;
     // Nothing above this point replaces the running program. Draft text remains
     // editable even if validation fails; persistence only uses committedSources.
-    if (gpu) gpu.resizeScene(...logicalSize);
     state = target;
     runtime = candidate;
     gameRuntime = gameCandidate;
@@ -1552,7 +1453,12 @@ async function evaluate({
     applicationState = gameTarget;
     activeScene = nextScene;
     if (sceneChanged) sceneTime = 0;
-    compiled = shader;
+    const pixelPrograms = gpu?.pixelSource(stagedDraw);
+    compiled = {
+      code: pixelPrograms?.source ?? '',
+      primitives:
+        pixelPrograms?.programs.reduce((sum, program) => sum + program.primitives, 0) ?? 0,
+    };
     for (const key of Object.keys(sources)) if (!key.startsWith('__')) delete sources[key];
     Object.assign(sources, candidateSources);
     if (imported) {
@@ -1560,14 +1466,11 @@ async function evaluate({
       hookPreview = null;
     }
     committedSources = { ...candidateSources };
-    if (pipeline) gpu.commit(pipeline, shader);
-    if (imagePipeline) gpu.commitImage(imagePipeline, imageShader);
     generatedSound = nextGeneratedSound;
     generatorPrograms = nextGenerators;
     const acceptedEditorState = { ...state };
     rescueRuntime = makeRuntime(state);
-    for (const module of resolveModules(defaults, ['main']))
-      rescueRuntime.load(cpuForms(module.forms));
+    for (const module of resolveModules(defaults, ['main'])) rescueRuntime.load(module.forms);
     Object.assign(state, acceptedEditorState);
     document.documentElement.style.setProperty('--ui-bg', state['ui-bg'] ?? '#1e1f1c');
     document.documentElement.style.setProperty('--ui-text', state['ui-text'] ?? '#f8f8f2');
@@ -1590,7 +1493,8 @@ async function evaluateGeneratorSelection(path) {
 function refreshAudio(force = false) {
   if (!runtime) return;
   const generatedPatch =
-    outputGenerator(generatorPrograms, state, 'audio')?.runtime.collectGeneratedSound() ?? [];
+    outputGenerator(generatorPrograms, state, 'audio', runtime)?.runtime.collectGeneratedSound() ??
+    [];
   const generatedSignature = JSON.stringify(generatedPatch);
   if (force || generatedSignature !== refreshAudio.generatedSignature) {
     generatedSound = generatedPatch.length ? synthesize(generatedPatch) : new Float32Array(4410);
@@ -1606,8 +1510,7 @@ function refreshAudio(force = false) {
   audioSignature = signature;
 }
 async function activateAudio() {
-  if (!audioContext) audioContext = new AudioContext();
-  if (audioContext.state === 'suspended') await audioContext.resume();
+  audioContext = await audioOutput.resume();
 }
 async function playPatch() {
   refreshAudio();
@@ -1615,14 +1518,8 @@ async function playPatch() {
 }
 async function playSamples(pcm) {
   if (!pcm) throw new Error('No generated audio available');
-  await activateAudio();
-  const buffer = audioContext.createBuffer(1, pcm.length, 44100);
-  buffer.copyToChannel(pcm, 0);
-  const source = audioContext.createBufferSource();
-  source.buffer = buffer;
-  source.connect(audioContext.destination);
-  source.start();
-  source.onended = () => source.disconnect();
+  await audioOutput.play(pcm);
+  audioContext = audioOutput.context;
 }
 function exportWav() {
   try {
@@ -1641,7 +1538,7 @@ function runCommand(path) {
   path = resolvePath(path);
   if (!isCommandFile(path)) throw new Error('Commands must end in .command.lisp');
   const modules = resolveModules(sources, [path]);
-  for (const module of modules) runtime.load(cpuForms(module.forms));
+  for (const module of modules) runtime.load(module.forms);
   dirty = true;
   report(`Executed ${path}`);
 }
@@ -1650,7 +1547,7 @@ function runInstruction(text) {
   const modules = resolveModules({ ...sources, 'instruction.command.lisp': text }, [
     'instruction.command.lisp',
   ]);
-  for (const module of modules) runtime.load(cpuForms(module.forms));
+  for (const module of modules) runtime.load(module.forms);
   dirty = true;
   report('Instruction executed');
 }
@@ -1676,18 +1573,13 @@ async function storeGenerated(path, blob, shouldDownload) {
 async function exportGeneratedImage(path, shouldDownload) {
   if (!gpu || !lastDraw) throw new Error('WebGPU is unavailable');
   // Submit current GUI parameters before reading back, even between frames.
-  gpu.draw(lastDraw, activeScene ? sceneTime : time, applicationState, state);
-  const program = outputGenerator(generatorPrograms, state, 'image');
-  let list;
-  if (program?.unified) {
-    list = new DrawList(320, 240);
-    list.surface([0, 0], [320, 240], 5);
-    list.composite(program.runtime.drawFrame(), [0, 0], [320, 240]);
-  }
-  await storeGenerated(path, await gpu.snapshot(true, list, 0, applicationState, state), shouldDownload);
+  gpu.draw(lastDraw, activeScene ? sceneTime : time);
+  const program = outputGenerator(generatorPrograms, state, 'image', runtime);
+  const list = program.runtime.drawFrame();
+  await storeGenerated(path, await gpu.snapshot(list, 0), shouldDownload);
 }
 async function exportGeneratedText(shouldDownload) {
-  const program = selectedGenerator(generatorPrograms, state);
+  const program = selectedGenerator(generatorPrograms, state, runtime);
   const output = textOutput(program);
   if (output.error) throw new Error(output.error);
   await storeGenerated(
@@ -1733,10 +1625,10 @@ function accessibility() {
         state[r.key] = Number(control.value);
         if (r.key.startsWith('__scene-')) {
           const key = r.key.slice(8);
-          const field = liveFields(sceneFields, applicationState, sceneStateKeys).find(
+          const field = liveFields(sceneFields, applicationState, sceneStateKeys, runtime).find(
             (field) => field.key === key,
           );
-          if (field) applicationState[key] = fieldValue(field, Number(control.value));
+          if (field) applicationState[key] = fieldValue(field, Number(control.value), runtime);
         }
         dirty = true;
       };
@@ -1832,12 +1724,12 @@ async function moveProjectFile(oldPath, newPath) {
   for (const record of [state, applicationState])
     for (const [key, value] of Object.entries(record)) {
       if (value === oldPath) record[key] = newPath;
-      else if (typeof value === 'string' && value.startsWith('['))
-        record[key] = value.replaceAll(JSON.stringify(oldPath), JSON.stringify(newPath));
+      else if (Array.isArray(value))
+        record[key] = value.map((item) => (item === oldPath ? newPath : item));
     }
   state['selected-file'] = newPath;
   const folder = newPath.split('/').slice(0, -1).join('/');
-  if (folder && !JSON.parse(state['open-folders']).includes(folder))
+  if (folder && !state['open-folders'].includes(folder))
     state['open-folders'] = toggleFolder(state['open-folders'], folder);
   if (await evaluate()) {
     code.renameBuffer(plan.oldKey, plan.newKey);
@@ -1856,11 +1748,11 @@ function createProjectFolder(path) {
   const ancestors = path.split('/');
   for (let i = 1; i <= ancestors.length; i++) persisted.add(ancestors.slice(0, i).join('/'));
   if (persisted.size > 256) throw new Error('Maximum 256 explicit folders');
-  state['project-folders'] = JSON.stringify([...persisted]);
+  state['project-folders'] = [...persisted];
   const expanded = new Set(savedFolders(state['open-folders']));
   const parts = path.split('/');
   for (let i = 1; i <= parts.length; i++) expanded.add(parts.slice(0, i).join('/'));
-  state['open-folders'] = JSON.stringify([...expanded]);
+  state['open-folders'] = [...expanded];
   state.window = '';
   state['file-offset'] = 0;
   dirty = true;
@@ -1906,14 +1798,14 @@ async function moveProjectFolder(oldPath, newPath) {
   for (const key of pathFields)
     if (typeof state[key] === 'string') state[key] = plan.remap(state[key]);
   for (const key of ['open-folders', 'editor-file-paths'])
-    if (state[key]) state[key] = JSON.stringify(savedFolders(state[key]).map(plan.remap));
+    if (state[key]) state[key] = savedFolders(state[key]).map(plan.remap);
   for (const [key, value] of Object.entries(applicationState))
     if (typeof value === 'string') applicationState[key] = plan.remap(value);
-  state['project-folders'] = JSON.stringify(plan.folders);
+  state['project-folders'] = plan.folders;
   const expanded = new Set(savedFolders(state['open-folders']));
   const parts = newPath.split('/');
   for (let i = 1; i <= parts.length; i++) expanded.add(parts.slice(0, i).join('/'));
-  state['open-folders'] = JSON.stringify([...expanded]);
+  state['open-folders'] = [...expanded];
   state.window = '';
   state['file-context'] = false;
   state['file-offset'] = 0;
@@ -1943,15 +1835,13 @@ async function deleteProjectFolder(path) {
   for (const file of removed) {
     const key = sourceKey(file);
     if (key in sources) {
-      closeTab(state, sources, key);
+      closeTab(state, sources, key, runtime);
       delete sources[key];
     }
     delete resources[file];
   }
   for (const key of ['project-folders', 'open-folders'])
-    state[key] = JSON.stringify(
-      savedFolders(state[key]).filter((folder) => !insideFolder(folder, path)),
-    );
+    state[key] = savedFolders(state[key]).filter((folder) => !insideFolder(folder, path));
   state['file-context'] = false;
   state.window = '';
   if (await evaluate()) {
@@ -2344,7 +2234,7 @@ $('open-file-input').onchange = async (event) => {
       const text = normalizeSource(await file.text());
       if (text.length > 100000) throw new Error('Source exceeds 100KB');
       sources[key] = text;
-      openTab(state, sources, key);
+      openTab(state, sources, key, runtime);
       state['show-code'] = true;
       state['code-collapsed'] = false;
     } else {
@@ -2393,15 +2283,15 @@ $('resource-input').onchange = async (event) => {
 
 $('generator-color').addEventListener('input', (event) => {
   if (sceneColorKey) {
-    const field = liveFields(sceneFields, applicationState, sceneStateKeys).find(
+    const field = liveFields(sceneFields, applicationState, sceneStateKeys, runtime).find(
       (field) => field.key === sceneColorKey,
     );
-    if (field) applicationState[field.key] = fieldValue(field, event.target.value);
+    if (field) applicationState[field.key] = fieldValue(field, event.target.value, runtime);
   } else {
-    const field = selectedGenerator(generatorPrograms, state)?.fields.find(
+    const field = selectedGenerator(generatorPrograms, state, runtime)?.fields.find(
       (field) => field.key === state['inspector-edit-key'],
     );
-    if (field) state[field.key] = fieldValue(field, event.target.value);
+    if (field) state[field.key] = fieldValue(field, event.target.value, runtime);
   }
   dirty = true;
 });
@@ -2419,8 +2309,7 @@ function frame(now) {
     try {
       if (!state.paused && !gameFailed) {
         time += dt;
-        callHook(gameRuntime, 'update', dt);
-        callHook(activeScene?.runtime, 'update', dt);
+        updateApplication({ runtime: gameRuntime, scene: activeScene }, dt);
         sceneTime += dt;
       }
     } catch (e) {
@@ -2465,8 +2354,7 @@ function frame(now) {
       report(`Editor: ${e.message}. Press F2 for recovery.`, true);
     }
     try {
-      if (gpu && lastDraw)
-        gpu.draw(lastDraw, activeScene ? sceneTime : time, applicationState, state);
+      if (gpu && lastDraw) gpu.draw(lastDraw, activeScene ? sceneTime : time);
     } catch (e) {
       report(`Drawing: ${e.message}`, true);
     }
@@ -2519,13 +2407,13 @@ window.aioli = {
     return { ...applicationState };
   },
   get shader() {
-    return compiled?.code;
+    return compiled?.displayCode ?? compiled?.code;
   },
   get primitives() {
     return compiled?.primitives;
   },
   get running() {
-    return Boolean(gpu?.scenePipeline) && !gameFailed && !editorFailed && !gpuFailure;
+    return Boolean(gpu && runtime) && !gameFailed && !editorFailed && !gpuFailure;
   },
   get regions() {
     return regions.map((r) => ({ ...r }));

@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { createStaticServer } from '../server.js';
 import { exportHTML } from '../html-export.js';
-import { defaults } from '../examples.js';
+import { defaults } from './fixtures.js';
 const require = createRequire(import.meta.url);
 const { chromium } = require(
   `${process.env.USERPROFILE}/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright`,
@@ -44,7 +44,7 @@ try {
   await click('source');
   await page.keyboard.press('Control+a');
   await page.keyboard.insertText(
-    '(init! :editor-hidden true)\n(defn update [dt] (set! :px (pointer-x)) (set! :py (pointer-y)) (set! :sw (screen-width)) (set! :sh (screen-height)))\n(defn draw [] (fill "#ff0000") (rect [12 12] [40 40]))',
+    '(init! :editor-hidden true)\n(defn update [dt] (set! :px (pointer-x)) (set! :py (pointer-y)) (set! :sw (screen-width)) (set! :sh (screen-height)))\n(defdraw render [] (fill "#ff0000") (rect [12 12] [40 40]))',
   );
   await page.keyboard.press('Control+Enter');
   await page.waitForFunction(
@@ -126,8 +126,8 @@ try {
     {
       ...Object.fromEntries(Object.entries(defaults).filter(([k]) => k !== 'main')),
       'game.lisp': '(start-scene "level.lisp")',
-      'level.lisp': defaults['scenes/garden.scene.lisp'],
-      'second.lisp': defaults['scenes/bloom.scene.lisp'],
+      'level.lisp': defaults['examples/garden.scene.lisp'],
+      'second.lisp': defaults['examples/bloom.scene.lisp'],
       'unused.lisp': '; </script> retained',
     },
     { 'assets/example.txt': { data: 'data:text/plain;base64,SGVsbG8=' } },

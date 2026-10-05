@@ -14,7 +14,7 @@ const vector = (v, n = 2) => {
  * bounds=[x,y,w,h], color=RGBA, detail=shape/glyph data,
  * meta=[kind, extra, blendMode, reserved], clip=[x,y,w,h].
  * Kinds: 0 rectangle, 1 circle, 2 line, 3 glyph, 4 game, 5 generated image,
- * 6 asset preview, 7 theme-tinted icon mask.
+ * 6 asset preview, 7 theme-tinted icon mask, 8 nested GPU pixel material.
  */
 export class DrawList {
   constructor(width, height) {
@@ -127,6 +127,7 @@ export class DrawList {
   clip(origin, size) {
     const p = this.point(origin);
     vector(size);
+    size = size.map((value) => value * this.state.scale);
     const old = this.state.clip,
       x = Math.max(old[0], p[0]),
       y = Math.max(old[1], p[1]);
@@ -140,7 +141,12 @@ export class DrawList {
   surface(origin, size, kind = 4) {
     const p = this.point(origin);
     vector(size);
-    this.emit(kind, [...p, ...size]);
+    if (kind === 4 || kind === 5) {
+      this.scope();
+      this.fill('#000000');
+      this.emit(0, [...p, ...size]);
+      this.restore();
+    } else this.emit(kind, [...p, ...size]);
   }
   /** Place an application's private command stream inside a host surface. */
   composite(list, origin, size) {
@@ -180,12 +186,15 @@ export class DrawList {
     // The full logical canvas is a material surface. Scope/clip can bound it.
     const origin = this.point([0, 0]);
     const previous = this.commands.length;
-    this.emit(8, [...origin, this.width * this.state.scale, this.height * this.state.scale],
-      [this.width, this.height, this.state.opacity, 0]);
+    this.emit(
+      8,
+      [...origin, this.width * this.state.scale, this.height * this.state.scale],
+      [this.width, this.height, this.state.opacity, 0],
+    );
     if (this.commands.length > previous) this.commands.at(-1).pixel = program;
   }
   primitives() {
-    return {
+    return (this.api ??= {
       background: (color) => {
         this.scope();
         this.state.offset = [0, 0];
@@ -217,7 +226,7 @@ export class DrawList {
         if (!(mode in modes)) throw new Error('Invalid blend mode');
         this.state.mode = modes[mode];
       },
-    };
+    });
   }
 }
 

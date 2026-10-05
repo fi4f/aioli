@@ -66,7 +66,7 @@ try {
   assert.equal(await page.evaluate(() => window.aioli.error), false);
   await page.keyboard.press('F4');
   // Use the actual project export with this scene as the application entry.
-  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project.v3')));
+  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
   project.files['game.lisp'] = '(start-scene "examples/doom.scene.lisp")';
   await page.locator('#file-input').setInputFiles({
     name: 'crypt.json',

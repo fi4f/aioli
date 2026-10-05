@@ -34,10 +34,9 @@ try {
   }
   await click('source');
   await page.keyboard.press('Control+a');
-  await page.keyboard
-    .insertText(`(defn update [dt] (set! :cw (canvas-width)) (set! :ch (canvas-height)))
-(defn draw [] (fill "#ff0000") (circle [(/ (canvas-width) 2) (/ (canvas-height) 2)] 12))
-(defpixel render [p time] (background "#272822") (fill "#66d9ef") (rect [(- width 10) 0] [10 height]))`);
+  await page.keyboard.insertText(
+    '(defn update [dt] (set! :cw (canvas-width)) (set! :ch (canvas-height)))\n(defdraw render [] (pixels [p time] (background "#272822") (fill "#66d9ef") (rect [(- width 10) 0] [10 height])) (fill "#ff0000") (circle [(/ (canvas-width) 2) (/ (canvas-height) 2)] 12))',
+  );
   await page.keyboard.press('Control+Enter');
   await page.waitForFunction(
     () => !window.aioli.pending && window.aioli.applicationState.cw === 320,

@@ -28,11 +28,7 @@ export function rgba(value) {
  * CPU functions are intentionally not evaluated here. Emitted expressions carry
  * their WGSL type; the browser validates the remaining GPU overload constraints.
  */
-export function compileShader(forms, state = {}, { pixelResult = false } = {}) {
-  const def = forms.find((n) => Array.isArray(n) && isSym(n[0], 'defpixel'));
-  if (!def || forms.length !== 1 || !isSym(def[1]) || def[2]?.type !== 'vector')
-    throw new Error('Scene must contain one (defpixel name [p time] ...)');
-  if (print(def[2]) !== '[p time]') throw new Error('Pixel program arguments must be [p time]');
+export function compilePixelShader(nodes, state = {}) {
   const params = [],
     paramMap = new Map();
   let serial = 0,
@@ -178,9 +174,7 @@ export function compileShader(forms, state = {}, { pixelResult = false } = {}) {
     return nodes
       .map((n) => {
         if (++statements > 4096) throw new Error('Shader expansion exceeds 4096 statements');
-        if (pixelResult && (!Array.isArray(n) || !isSym(n[0]))) return `d.color = ${color(n, locals)};`;
-        if (!Array.isArray(n) || !isSym(n[0]))
-          throw new Error(`Expected drawing expression, got ${print(n)}`);
+        if (!Array.isArray(n) || !isSym(n[0])) return `d.color = ${color(n, locals)};`;
         const [h, ...a] = n,
           name = h.name;
         const arities = {
@@ -254,12 +248,11 @@ export function compileShader(forms, state = {}, { pixelResult = false } = {}) {
           }
           return `{ ${declarations.join('\n')}\n${body(a.slice(1), local)}\n}`;
         }
-        if (pixelResult) return `d.color = ${color(n, locals)};`;
-        throw new Error(`Unknown drawing command ${name}`);
+        return `d.color = ${color(n, locals)};`;
       })
       .join('\n');
   }
-  const drawing = body(def.slice(3));
+  const drawing = body(nodes);
   const code = `struct Uniforms { data: array<vec4f, 64> }
 @group(0) @binding(0) var<uniform> u: Uniforms;
 struct Draw { p: vec2f, color: vec4f, paint: vec4f, opacity: f32, mode: u32 }
@@ -268,18 +261,20 @@ fn rotatePoint(p: vec2f, a: f32) -> vec2f { return vec2f(cos(a)*p.x-sin(a)*p.y, 
 ${pixelCoverageWGSL}
 fn composite(d: ptr<function, Draw>, coverage: f32) {
   let a=clamp((*d).paint.a*(*d).opacity*coverage,0.0,1.0);
-  var rgb=(*d).paint.rgb;
-  if ((*d).mode==1u) { rgb=(*d).color.rgb+rgb*a; }
-  else if ((*d).mode==2u) { rgb=mix((*d).color.rgb,(*d).color.rgb*rgb,a); }
-  else { rgb=mix((*d).color.rgb,rgb,a); }
-  (*d).color=vec4f(rgb,a+(*d).color.a*(1.0-a));
+  let destination=(*d).color;
+  let alpha=a+destination.a*(1.0-a);
+  var source=(*d).paint.rgb;
+  if ((*d).mode==1u) { source += destination.rgb*destination.a; }
+  else if ((*d).mode==2u) { source=mix(source, destination.rgb*source, destination.a); }
+  let rgb=(destination.rgb*destination.a*(1.0-a)+source*a)/max(alpha,0.000001);
+  (*d).color=vec4f(rgb,alpha);
 }
 @vertex fn vs(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
   let corners=array<vec2f,6>(vec2f(-1.0,-1.0),vec2f(1.0,-1.0),vec2f(-1.0,1.0),vec2f(-1.0,1.0),vec2f(1.0,-1.0),vec2f(1.0,1.0));
   return vec4f(corners[index],0.0,1.0);
 }
 @fragment fn fs(@builtin(position) pixel: vec4f) -> @location(0) vec4f {
-  var d=Draw(floor(pixel.xy), vec4f(0.0,0.0,0.0,1.0), vec4f(1.0), 1.0, 0u);
+  var d=Draw(floor(pixel.xy), vec4f(0.0,0.0,0.0,0.0), vec4f(1.0), 1.0, 0u);
   ${drawing}
   return d.color;
 }`;

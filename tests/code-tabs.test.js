@@ -18,11 +18,11 @@ test('opening sources deduplicates tabs; closing preserves files and the neighbo
 
 test('renaming an open file keeps its position; stale and malformed saved tabs are pruned', () => {
   const sources = { scene: '', 'new.lisp': '' };
-  const state = { tab: 'old.lisp', 'open-tabs': '["scene","old.lisp"]' };
+  const state = { tab: 'old.lisp', 'open-tabs': ['scene', 'old.lisp'] };
   renameTab(state, sources, 'old.lisp', 'new.lisp');
   assert.deepEqual(openTabs(state, sources), ['scene', 'new.lisp']);
   assert.equal(state.tab, 'new.lisp');
-  state['open-tabs'] = '[null,12,"missing.lisp","scene","scene"]';
+  state['open-tabs'] = [null, 12, 'missing.lisp', 'scene', 'scene'];
   state.tab = 1;
   assert.deepEqual(openTabs(state, sources), ['scene']);
 });

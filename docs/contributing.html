@@ -16,6 +16,7 @@
         <a href="editor.html">Editor</a>
         <a href="projects.html">Projects</a>
         <a href="contributing.html" aria-current="page">Contribute</a>
+        <a href="architecture.html">Architecture</a>
       </nav>
     </header>
     <main>
@@ -93,12 +94,12 @@ npm start</code></pre>
               <td>Static HTML files in <code>docs/</code></td>
             </tr>
             <tr>
-              <td>Project modules, imports and migrations</td>
+              <td>Current project validation and private application namespaces</td>
               <td><code>project.js</code></td>
             </tr>
             <tr>
               <td>Default generator and command source</td>
-              <td><code>generators.js</code></td>
+              <td><code>editor/policy/</code> and <code>editor/templates/</code></td>
             </tr>
           </tbody>
         </table>
@@ -179,8 +180,8 @@ node tests/browser-widgets.mjs</code></pre>
       </p>
       <p>
         Checks cover actual WebGPU programs, live source input and quote painting, Lisp widgets,
-        recovery, exports, saved-project migration, documentation links, and a simulated repository
-        subpath. Screenshots are placed in the ignored <code>artifacts/</code> directory.
+        recovery, exports, current-format persistence, documentation links, and a simulated
+        repository subpath. Screenshots are placed in the ignored <code>artifacts/</code> directory.
       </p>
       <h2 id="github-pages">Host on GitHub Pages</h2>
       <p>

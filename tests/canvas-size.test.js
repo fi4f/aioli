@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { canvasSize } from '../canvas-size.js';
 import { engineServices } from '../engine-services.js';
 import { parse } from '../lisp.js';
-import { compileShader } from '../shader.js';
+import { compilePixelShader } from '../shader.js';
 import { projectSnapshot, readProject } from '../project.js';
 
 test('canvas dimensions validate and round-trip through project settings without exposing editor state', () => {
@@ -20,10 +20,9 @@ test('canvas dimensions validate and round-trip through project settings without
 });
 
 test('shader dimensions use GPU size uniforms through symbols and canvas accessors', () => {
-  const shader = compileShader(
-    parse(`(defpixel render [p time]
-    (background "#000000")
-    (circle [(/ (canvas-width) 2) (/ height 2)] (/ (canvas-height) 4)))`),
+  const shader = compilePixelShader(
+    parse(`(background "#000000")
+    (circle [(/ (canvas-width) 2) (/ height 2)] (/ (canvas-height) 4))`),
   );
   assert.match(shader.code, /u\.data\[0\]\.y/);
   assert.match(shader.code, /u\.data\[0\]\.z/);

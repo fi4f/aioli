@@ -10,12 +10,12 @@ import { projectTree } from '../file-tree.js';
 import { resolveModules } from '../module-loader.js';
 
 test('empty folders appear in the tree without placeholder resources', () => {
-  const rows = projectTree([], '["art"]', ['art/empty']);
+  const rows = projectTree([], ['art'], ['art/empty']);
   assert.deepEqual(
     rows.map((row) => row[0]),
     ['art', 'art/empty'],
   );
-  assert.deepEqual(savedFolders('["art/empty","art/empty"]'), ['art/empty']);
+  assert.deepEqual(savedFolders(['art/empty', 'art/empty']), ['art/empty']);
   assert.equal(folderPaths({}, {}, ['art/empty']).has('art'), true);
 });
 

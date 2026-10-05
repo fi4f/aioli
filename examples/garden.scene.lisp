@@ -69,10 +69,10 @@
            (mod (+ (* i 31) 7) 112)] [1 1]))
 
   ; The moon and its shadow.
-  (fill (param :accent))
-  (circle [245 48] (param :moon))
+  (fill (get :accent))
+  (circle [245 48] (get :moon))
   (fill "#111c30")
-  (circle [255 42] (param :moon))
+  (circle [255 42] (get :moon))
 
   ; Rolling hills, still just pixel coverage.
   (fill "#253d42")
@@ -89,14 +89,14 @@
   (repeat 12 i
     (scope
       (translate [(+ 15 (* i 27)) 190])
-      (let [sway (* (param :wind)
+      (let [sway (* (get :wind)
                     (sin (+ (* time 1.4) i)))
             tall (+ 15 (mod (* i 7) 22))]
         (fill "#638368")
         (line [0 0] [sway (- tall)] 2)
         (fill "#385b43")
         (rect [2 -8] [5 3])
-        (fill (param :accent))
+        (fill (get :accent))
         (circle [sway (- tall)] 4)
         (fill "#f6dfaf")
         (circle [sway (- tall)] 1))))
@@ -104,8 +104,8 @@
   ; Fireflies use additive blending.
   (scope
     (blend :add)
-    (opacity (param :glow))
-    (fill (param :accent))
+    (opacity (get :glow))
+    (fill (get :accent))
     (repeat 9 i
       (circle [(+ 24 (* i 33)
                   (* 6 (sin (+ time i))))
@@ -114,7 +114,7 @@
 
   ; Gameplay state arrives as uniforms.
   (scope
-    (translate [(param :x) (param :y)])
+    (translate [(get :x) (get :y)])
     (fill "#c4ef9b")
     (rect [-5 -12] [10 12])
     (circle [0 -12] 5)

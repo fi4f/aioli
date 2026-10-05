@@ -61,8 +61,6 @@ struct Command { bounds: vec4f, color: vec4f, detail: vec4f, flags: vec4f, clip:
 @group(0) @binding(1) var<storage,read> bins: array<u32>;
 @group(0) @binding(2) var<uniform> screen: vec4f;
 @group(0) @binding(3) var glyphs: texture_2d<f32>;
-@group(0) @binding(4) var scene: texture_2d<f32>;
-@group(0) @binding(5) var image: texture_2d<f32>;
 @group(0) @binding(6) var asset: texture_2d<f32>;
 @group(0) @binding(7) var icons: texture_2d<f32>;
 @group(0) @binding(8) var iconSampler: sampler;
@@ -99,12 +97,6 @@ ${pixelCoverageWGSL}
     if (kind == 3u) {
       let glyphPosition = vec2i(command.detail.xy + floor(relative / command.bounds.zw * command.detail.zw));
       paint.a *= textureLoad(glyphs, glyphPosition, 0).a;
-    }
-    if (kind == 4u || kind == 5u) {
-      let dimensions = select(textureDimensions(image), textureDimensions(scene), kind == 4u);
-      let scenePosition = clamp(vec2i(relative / command.bounds.zw * vec2f(dimensions)), vec2i(0), vec2i(dimensions) - vec2i(1));
-      if (kind == 4u) { paint = textureLoad(scene, scenePosition, 0); }
-      else { paint = textureLoad(image, scenePosition, 0); }
     }
     if (kind == 6u) {
       let dimensions = textureDimensions(asset);
@@ -161,22 +153,6 @@ export class GPUHost {
       onError(`WebGPU device lost: ${info.message || info.reason}. Reload to reconnect.`, true),
     );
     device.addEventListener('uncapturederror', (e) => onError(e.error.message));
-    r.sceneTexture = device.createTexture({
-      size: [320, 240],
-      format: 'rgba8unorm',
-      usage:
-        GPUTextureUsage.RENDER_ATTACHMENT |
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.COPY_SRC,
-    });
-    r.imageTexture = device.createTexture({
-      size: [320, 240],
-      format: 'rgba8unorm',
-      usage:
-        GPUTextureUsage.RENDER_ATTACHMENT |
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.COPY_SRC,
-    });
     // A valid placeholder binding exists before any project image is opened.
     r.assetTexture = device.createTexture({
       size: [1, 1],
@@ -185,25 +161,6 @@ export class GPUHost {
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.COPY_DST |
         GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-    r.imageUniform = device.createBuffer({
-      size: 1024,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    r.uniform = device.createBuffer({
-      size: 1024,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    r.sceneLayout = device.createBindGroupLayout({
-      entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }],
-    });
-    r.sceneBind = device.createBindGroup({
-      layout: r.sceneLayout,
-      entries: [{ binding: 0, resource: { buffer: r.uniform } }],
-    });
-    r.imageBind = device.createBindGroup({
-      layout: r.sceneLayout,
-      entries: [{ binding: 0, resource: { buffer: r.imageUniform } }],
     });
     r.screen = device.createBuffer({
       size: 16,
@@ -222,8 +179,6 @@ export class GPUHost {
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: {} },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: {} },
-        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: {} },
         { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: {} },
         { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: {} },
         { binding: 8, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
@@ -331,32 +286,6 @@ export class GPUHost {
     this.assetTexture = texture;
     this.bindDirty = true;
   }
-  async prepare(shader) {
-    // A rejected live shader is a normal edit error, not a lost device. Capture
-    // validation locally so it cannot poison the active program's error state.
-    this.device.pushErrorScope('validation');
-    const module = this.device.createShaderModule({ code: shader.code }),
-      scope = this.device.popErrorScope();
-    const info = await module.getCompilationInfo(),
-      validation = await scope;
-    const errors = info.messages.filter((m) => m.type === 'error');
-    if (errors.length)
-      throw new Error('WGSL: ' + errors.map((e) => `line ${e.lineNum}: ${e.message}`).join('\n'));
-    if (validation) throw new Error('WGSL: ' + validation.message);
-    return this.device.createRenderPipelineAsync({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout] }),
-      vertex: { module, entryPoint: 'vs' },
-      fragment: { module, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] },
-    });
-  }
-  commit(pipeline, shader) {
-    this.scenePipeline = pipeline;
-    this.shader = shader;
-  }
-  commitImage(pipeline, shader) {
-    this.imagePipeline = pipeline;
-    this.imageShader = shader;
-  }
   buffer(name, size) {
     // Grow buffers geometrically and rebuild the bind group only when needed.
     if (!this[name] || this[name].size < size) {
@@ -370,22 +299,46 @@ export class GPUHost {
     return this[name];
   }
   pixelSource(drawList) {
-    const programs = [...new Map(drawList.commands.filter(c => c.pixel).map(c =>
-      [c.pixel.shader.code, c.pixel.shader])).values()];
+    const programs = [
+      ...new Map(
+        drawList.commands.filter((c) => c.pixel).map((c) => [c.pixel.shader.code, c.pixel.shader]),
+      ).values(),
+    ];
     if (programs.length > 32) throw new Error('Maximum 32 distinct pixel programs per frame');
     if (!programs.length) return { source: uiShader, programs };
+    const signature = programs.map((program) => program.code).join('\0');
+    this.pixelSources ??= new Map();
+    if (this.pixelSources.has(signature)) return this.pixelSources.get(signature);
     const shader = programs[0];
-    const helpers = shader.code.slice(shader.code.indexOf('struct Draw'), shader.code.indexOf('@vertex'))
+    const helpers = shader.code
+      .slice(shader.code.indexOf('struct Draw'), shader.code.indexOf('@vertex'))
       .replace(pixelCoverageWGSL, '');
-    const functions = programs.map((program, i) => `
+    const functions = programs
+      .map(
+        (program, i) => `
       fn pixelEffect${i}(position: vec2f, base: u32) -> vec4f {
         var d=Draw(floor(position), vec4f(0.0), vec4f(1.0), 1.0, 0u);
         ${program.pixelBody.replace(/u\.data\[(\d+)\]/g, (_, slot) => `pixelData[base + ${slot}u]`)}
         return d.color;
-      }`).join('\n');
-    const dispatch = programs.map((_, i) =>
-      `if (u32(command.flags.y) == ${i}u) { paint = pixelEffect${i}(localPosition, u32(command.flags.w)); }`).join('\n');
-    return { programs, source: uiShader.replace('// PIXEL_FUNCTIONS', helpers + functions).replace('// PIXEL_DISPATCH', dispatch) };
+      }`,
+      )
+      .join('\n');
+    const dispatch = programs
+      .map(
+        (_, i) =>
+          `if (u32(command.flags.y) == ${i}u) { paint = pixelEffect${i}(localPosition, u32(command.flags.w)); }`,
+      )
+      .join('\n');
+    const result = {
+      programs,
+      source: uiShader
+        .replace('// PIXEL_FUNCTIONS', helpers + functions)
+        .replace('// PIXEL_DISPATCH', dispatch),
+    };
+    if (this.pixelSources.size >= 32)
+      this.pixelSources.delete(this.pixelSources.keys().next().value);
+    this.pixelSources.set(signature, result);
+    return result;
   }
   async preparePixels(drawList, format = this.format) {
     const { source, programs } = this.pixelSource(drawList);
@@ -398,39 +351,35 @@ export class GPUHost {
       const module = this.device.createShaderModule({ code: source });
       const validation = this.device.popErrorScope();
       const info = await module.getCompilationInfo();
-      const errors = info.messages.filter(m => m.type === 'error');
+      const errors = info.messages.filter((m) => m.type === 'error');
       const error = await validation;
-      if (errors.length || error) throw new Error('pixels WGSL: ' + (errors.map(e => e.message).join('\n') || error.message));
+      if (errors.length || error)
+        throw new Error(
+          'pixels WGSL: ' + (errors.map((e) => e.message).join('\n') || error.message),
+        );
       const pipeline = await this.device.createRenderPipelineAsync({
         layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.uiLayout] }),
         vertex: { module, entryPoint: 'vs' },
         fragment: { module, entryPoint: 'fs', targets: [{ format }] },
       });
-      if (this.pixelPipelines.size >= 32) this.pixelPipelines.delete(this.pixelPipelines.keys().next().value);
+      if (this.pixelPipelines.size >= 32)
+        this.pixelPipelines.delete(this.pixelPipelines.keys().next().value);
       this.pixelPipelines.set(key, pipeline);
     })();
     this.pendingPixels.set(key, pending);
-    try { await pending; } catch (error) {
-      if (this.pixelFailures.size >= 32) this.pixelFailures.delete(this.pixelFailures.keys().next().value);
-      this.pixelFailures.set(key, error); throw error;
-    } finally { this.pendingPixels.delete(key); }
+    try {
+      await pending;
+    } catch (error) {
+      if (this.pixelFailures.size >= 32)
+        this.pixelFailures.delete(this.pixelFailures.keys().next().value);
+      this.pixelFailures.set(key, error);
+      throw error;
+    } finally {
+      this.pendingPixels.delete(key);
+    }
   }
-  resizeScene(width, height) {
-    if (this.sceneTexture.width === width && this.sceneTexture.height === height) return;
-    const previous = this.sceneTexture;
-    this.sceneTexture = this.device.createTexture({
-      size: [width, height],
-      format: 'rgba8unorm',
-      usage:
-        GPUTextureUsage.RENDER_ATTACHMENT |
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.COPY_SRC,
-    });
-    this.bindDirty = true;
-    previous.destroy();
-  }
-  draw(drawList, time, state, imageState = state, output = null) {
-    // Pass 1 renders the game texture. Pass 2 samples it among editor commands.
+  draw(drawList, time, output = null) {
+    // Composite shapes, assets, and nested pixel materials in drawing order.
     const device = this.device,
       metrics = displayMetrics(
         drawList.width,
@@ -443,23 +392,37 @@ export class GPUHost {
     this.updateIconAtlas(metrics);
     const { source, programs } = this.pixelSource(drawList);
     const format = output?.format ?? this.format;
-    const materialPipeline = !programs.length && format === this.format ? this.uiPipeline : this.pixelPipelines.get(format + source);
+    const materialPipeline =
+      !programs.length && format === this.format
+        ? this.uiPipeline
+        : this.pixelPipelines.get(format + source);
     if (!materialPipeline) {
-      this.preparePixels(drawList, format).catch(e => this.onError(e.message));
+      this.preparePixels(drawList, format).catch((e) => this.onError(e.message));
       return;
     }
     const pixelValues = [];
-    const materialCommands = drawList.commands.map(command => {
+    const materialCommands = drawList.commands.map((command) => {
       if (!command.pixel) return command;
       const { shader, values } = command.pixel;
       const base = pixelValues.length / 4;
       pixelValues.push(time, command.detail[0], command.detail[1], 0);
       for (const { key, kind } of shader.params)
         pixelValues.push(...(kind === 'color' ? rgba(values[key]) : [values[key], 0, 0, 0]));
-      return { ...command, meta: [8, programs.findIndex(program => program.code === shader.code), command.meta[2], base] };
+      return {
+        ...command,
+        meta: [
+          8,
+          programs.findIndex((program) => program.code === shader.code),
+          command.meta[2],
+          base,
+        ],
+      };
     });
-    device.queue.writeBuffer(this.buffer('pixelBuffer', Math.max(16, pixelValues.length * 4)),
-      0, new Float32Array(pixelValues.length ? pixelValues : [0, 0, 0, 0]));
+    device.queue.writeBuffer(
+      this.buffer('pixelBuffer', Math.max(16, pixelValues.length * 4)),
+      0,
+      new Float32Array(pixelValues.length ? pixelValues : [0, 0, 0, 0]),
+    );
     const commands = deviceCommands(materialCommands, metrics);
     if (!output && this.canvas.width !== width) this.canvas.width = width;
     if (!output && this.canvas.height !== height) this.canvas.height = height;
@@ -483,8 +446,6 @@ export class GPUHost {
           { binding: 1, resource: { buffer: this.binBuffer } },
           { binding: 2, resource: { buffer: this.screen } },
           { binding: 3, resource: this.atlas.createView() },
-          { binding: 4, resource: this.sceneTexture.createView() },
-          { binding: 5, resource: this.imageTexture.createView() },
           { binding: 6, resource: this.assetTexture.createView() },
           { binding: 7, resource: this.iconAtlas.createView() },
           { binding: 8, resource: this.iconSampler },
@@ -494,55 +455,6 @@ export class GPUHost {
       this.bindDirty = false;
     }
     const encoder = device.createCommandEncoder();
-    // Independent uniforms/textures prevent an image recipe from replacing the
-    // game shader. Both previews are evaluated by their own fullscreen quad.
-    for (const [pipeline, shader, texture, uniform, bind, clock, parameters] of [
-      [
-        this.scenePipeline,
-        this.shader,
-        this.sceneTexture,
-        this.uniform,
-        this.sceneBind,
-        time,
-        state,
-      ],
-      [
-        this.imagePipeline,
-        this.imageShader,
-        this.imageTexture,
-        this.imageUniform,
-        this.imageBind,
-        0,
-        imageState,
-      ],
-    ]) {
-      if (!pipeline) continue;
-      const uniforms = new Float32Array(256);
-      uniforms.set([clock, texture.width, texture.height, 0]);
-      shader.params.forEach(({ key, kind }, i) => {
-        if (kind === 'color') uniforms.set(rgba(parameters[key]), (i + 1) * 4);
-        else {
-          const v = Number(parameters[key]);
-          if (!Number.isFinite(v)) throw new Error(`Invalid shader parameter :${key}`);
-          uniforms[(i + 1) * 4] = v;
-        }
-      });
-      device.queue.writeBuffer(uniform, 0, uniforms);
-      const pass = encoder.beginRenderPass({
-        colorAttachments: [
-          {
-            view: texture.createView(),
-            clearValue: { r: 0, g: 0, b: 0, a: 1 },
-            loadOp: 'clear',
-            storeOp: 'store',
-          },
-        ],
-      });
-      pass.setPipeline(pipeline);
-      pass.setBindGroup(0, bind);
-      pass.draw(6);
-      pass.end();
-    }
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
@@ -559,17 +471,18 @@ export class GPUHost {
     pass.end();
     device.queue.submit([encoder.finish()]);
   }
-  async snapshot(generated = false, list = null, time = 0, state = {}, imageState = state) {
+  async snapshot(list, time = 0) {
     let output;
     if (list) {
       await this.preparePixels(list, 'rgba8unorm');
       output = this.device.createTexture({
-        size: [list.width, list.height], format: 'rgba8unorm',
+        size: [list.width, list.height],
+        format: 'rgba8unorm',
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
       });
-      this.draw(list, time, state, imageState, output);
+      this.draw(list, time, output);
     }
-    const texture = output ?? (generated ? this.imageTexture : this.sceneTexture);
+    const texture = output;
     const { width, height } = texture;
     const bytesPerRow = Math.ceil((width * 4) / 256) * 256;
     const buffer = this.device.createBuffer({

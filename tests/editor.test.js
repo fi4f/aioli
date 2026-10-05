@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parse, createRuntime } from '../lisp.js';
 import { DrawList, binCommands } from '../drawing.js';
-import { resolveModules, cpuForms } from '../project.js';
+import { resolveModules } from '../project.js';
 import { editorSourcePaths } from '../editor-sources.js';
 import { tabLayout } from '../code-tabs.js';
-import { generatorSources } from '../generators.js';
-import { defaults } from '../examples.js';
+import { generatorSources } from './fixtures.js';
+import { defaults } from './fixtures.js';
 const uiSource = readFileSync(
   new URL('../editor/ui/components.lisp', import.meta.url),
   'utf8',
@@ -97,15 +97,17 @@ function editor(width = 1440, height = 900) {
       waveform: () => {},
     },
   });
-  r.load(cpuForms(parse(defaults['scenes/garden.scene.lisp'])));
-  resolveModules(sources, ['ui', 'main']).forEach((module) => r.load(cpuForms(module.forms)));
+  r.load(parse(defaults['examples/garden.scene.lisp']));
+  resolveModules(sources, ['ui', 'main']).forEach((module) => r.load(module.forms));
   return { r, state, draw, regions };
 }
 test('fullscreen editor app draws pixels and defines its controls in Lisp', () => {
   const { r, draw, regions, state } = editor();
   r.call('editor');
   assert.deepEqual(draw.commands[0].bounds, [0, 0, 1440, 900]);
-  assert.ok(draw.commands.some((c) => c.meta[0] === 4));
+  assert.ok(
+    draw.commands.some((c) => c.meta[0] === 0 && c.color.slice(0, 3).every((value) => value === 0)),
+  );
   assert.ok(draw.commands.some((c) => c.meta[0] === 3));
   assert.ok(regions.some((r) => r.id === 'tab-main'));
   assert.equal(state['show-tools'], false);

@@ -16,6 +16,7 @@
         <a href="editor.html" aria-current="page">Editor</a>
         <a href="projects.html">Projects</a>
         <a href="contributing.html">Contribute</a>
+        <a href="architecture.html">Architecture</a>
       </nav>
     </header>
     <main>
@@ -34,13 +35,13 @@
         letterboxing. JSON saves retain the settings; a new project starts at 320 × 240. Changing
         resolution does not rewrite coordinates in existing scene code.
       </p>
-      <pre><code>(defn draw []
-  (rect [0 0] [(canvas-width) (canvas-height)]))
-
-(defpixel render [p time]
+      <pre><code>(defdraw render []
   (background "#272822")
-  (fill "#66d9ef")
-  (circle [(/ width 2) (/ height 2)] 40))</code></pre>
+  (pixels [p time]
+    (fill "#66d9ef")
+    (circle [(/ width 2) (/ height 2)] 40))
+  (fill "#f8f8f2")
+  (rect [0 0] [(canvas-width) 2]))</code></pre>
       <h2>The workspace</h2>
       <p>
         <strong>View → Code pane</strong> shows or hides source.
@@ -262,7 +263,8 @@
         View → Scene inspector displays fields belonging to the currently running scene, including
         its imports and fields created by its hooks. If no scene is active, it inspects game.lisp
         instead. Values left in shared state by earlier scenes and unrelated game.lisp fields are
-        hidden. It supports sliders, choices, booleans, colors and editable text. Optional
+        hidden. It supports sliders, choices, booleans, colors, editable text and structured JSON
+        values. Optional
         <code>init!</code> annotations supply labels, limits, steps, or choices:
       </p>
       <pre><code>(init! :radius 20 ["Radius" 5 80 0.5])
@@ -416,8 +418,7 @@
         The browser also stores accepted source and shared state in local storage. Invalid drafts do
         not overwrite accepted source there. Storage belongs to the browser origin: moving from
         localhost to a hosted site does not automatically move projects. Save/Open JSON transfers
-        projects between hosts. Existing saves from the original Pixel Lisp name are migrated when
-        present on the same origin.
+        projects between hosts. Only current-format projects are loaded.
       </p>
     </main>
     <footer>

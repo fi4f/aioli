@@ -21,7 +21,7 @@ test('live scene fields retain declared limits and stable inferred limits withou
 test('scene inspection excludes stale scene and application state while including active hook fields', () => {
   const state = { radius: 20, oldSceneField: 30, boots: 1, dynamic: 4, shaderValue: 7 };
   const forms = parse(
-    '(init! :radius 20) (defpixel render [p time] (circle [0 0] (param :shaderValue)))',
+    '(init! :radius 20) (defdraw render [] (pixels [p time] (circle [0 0] (get :shaderValue))))',
   );
   const fields = inspectorFields('current.scene.lisp', forms);
   const keys = referencedStateKeys(forms);

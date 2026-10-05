@@ -8,7 +8,7 @@ import { previewHook } from '../hook-preview.js';
 const source = `(init! :changed 0)
 (defdraw dot [x y] ["Dot" [30 40] [100 80]] (fill "#ff0000") (circle [x y] 5) (set! :changed (+ (get :changed) 1)))
 (defdraw pair [] (scope (dot 10 20)) (scope (dot 60 20)))
-(defn draw [] (pair))
+(defdraw render [] (pair))
 (defsound tone [pitch] ["Tone" [440]] (voice :sine pitch pitch 0.2 0.3))
 (defsound hit [] ["Hit"] (voice :noise 100 40 0.1 0.2) (tone 80))`;
 

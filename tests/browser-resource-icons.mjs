@@ -105,12 +105,12 @@ try {
   );
   await click('close-window');
   await page.waitForFunction(() =>
-    JSON.parse(localStorage.getItem('aioli.project.v3')).state['open-folders']?.includes(
+    JSON.parse(localStorage.getItem('aioli.project')).state['open-folders']?.includes(
       'editor/icon',
     ),
   );
-  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project.v3')));
-  assert.equal(project.version, 21);
+  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
+  assert.equal(project.version, 1);
   project.resources['editor/icon/code.png'] = initial['editor/icon/play.png'];
   delete project.resources['editor/icon/folder.png'];
   await page.locator('#file-input').setInputFiles({

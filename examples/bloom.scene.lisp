@@ -57,7 +57,7 @@
   (translate [160 120])
   (scope
     (blend :add)
-    (opacity (param :glow))
+    (opacity (get :glow))
     (repeat 16 i
       (scope
         (rotate (+ (* i 0.3927) (* time 0.15)))
@@ -66,7 +66,7 @@
                    (/ i 16)))
         (circle [(+ 40 (* 12 (sin time))) 0]
                 (+ 15 (* 5 (sin (+ time i))))))))
-  (fill (param :accent))
-  (circle [0 0] (param :moon))
+  (fill (get :accent))
+  (circle [0 0] (get :moon))
   (fill "#101b25")
-  (circle [4 -4] (* (param :moon) 0.7))))
+  (circle [4 -4] (* (get :moon) 0.7))))

@@ -5,3 +5,12 @@ export const exampleScenePaths = [
   'examples/plasma.scene.lisp',
   'examples/doom.scene.lisp',
 ];
+
+export const exampleToolPaths = [
+  'examples/generators/image.generator.lisp',
+  'examples/generators/audio.generator.lisp',
+  'examples/generators/text.generator.lisp',
+  'examples/commands/center-player.command.lisp',
+  'examples/commands/export-image.command.lisp',
+  'examples/commands/export-audio.command.lisp',
+];

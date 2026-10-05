@@ -117,7 +117,7 @@ try {
   await page.screenshot({ path: 'artifacts/sound-hook-preview.png' });
   // Saved preview windows return to inline controls, never a stale decode or missing buffer.
   await page.waitForFunction(
-    () => JSON.parse(localStorage.getItem('aioli.project.v3')).state.window === 'hook-sound',
+    () => JSON.parse(localStorage.getItem('aioli.project')).state.window === 'hook-sound',
   );
   await page.reload();
   await page.waitForFunction(() => window.aioli?.running && window.aioli.state.window === '');
@@ -133,12 +133,10 @@ try {
   );
   assert.equal(await page.evaluate(() => window.aioli.error), false);
   // A regular draw hook calls defdraw functions; named audio works in both hosts.
-  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project.v3')));
+  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
   project.files['hooks.lisp'] = await page.evaluate(() => window.aioli.sources['hooks.lisp']);
-  project.files['game.lisp'] = `(import "./hooks.lisp")
-(defn draw [] (mark 50 60))
-(defn update [dt]
-  (when (pointer-pressed?) (play-sound :tone 220) (play-sound :hit)))`;
+  project.files['game.lisp'] =
+    '(import "./hooks.lisp")\n(defn update [dt] (when (pointer-pressed?) (play-sound :tone 220) (play-sound :hit)))\n(defdraw render [] (mark 50 60))';
   project.state = { tab: 'game', 'show-code': true };
   project.applicationState = {};
   await page.locator('#file-input').setInputFiles({

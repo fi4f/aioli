@@ -88,7 +88,7 @@ try {
       !window.aioli.sources['examples/move-me.lisp'],
   );
   // A collision must leave both files intact; dropping outside Files cancels.
-  const collision = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project.v3')));
+  const collision = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
   collision.files['examples/move-me.lisp'] = '; keep destination';
   await page.locator('#file-input').setInputFiles({
     name: 'collision.json',
@@ -164,6 +164,8 @@ try {
   await click('close-window');
   const imageData = await page.evaluate(() => window.aioli.resources['sample.png'].data);
   await click('folder-examples/commands');
+  // Keep both endpoints visible while the expanded editor shows its policy/template files.
+  await page.setViewportSize({ width: 1200, height: 1800 });
   await click('folder-editor');
   await drag('file-sample.png', 'folder-editor/icon');
   await page.waitForFunction(

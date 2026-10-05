@@ -1,17 +1,11 @@
 import { resolvePath } from './module-loader.js';
-import { sourcePath } from './project.js';
+import { sourcePath } from './project-paths.js';
 import { planFileMove } from './file-moves.js';
 export const insideFolder = (path, folder) => path === folder || path.startsWith(folder + '/');
-export function savedFolders(value = '[]') {
-  try {
-    const paths = JSON.parse(value);
-    if (!Array.isArray(paths) || paths.length > 256) throw new Error();
-    return [
-      ...new Set(paths.filter((path) => typeof path === 'string' && resolvePath(path) === path)),
-    ];
-  } catch {
-    return [];
-  }
+export function savedFolders(value = []) {
+  return Array.isArray(value)
+    ? [...new Set(value.filter((path) => typeof path === 'string' && resolvePath(path) === path))]
+    : [];
 }
 export function filePaths(sources, resources) {
   return [

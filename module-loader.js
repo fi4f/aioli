@@ -21,8 +21,8 @@ export function resolvePath(path, importer = '') {
 }
 
 /** Dependency-first evaluation, once per file. A cycle is always an error.
- * Imports share the CPU environment. Only defpixel is handed to the GPU compiler;
- * ordinary forms beside it remain ordinary CPU Lisp.
+ * Imports share the application environment. Drawing functions build commands;
+ * only nested pixels bodies are handed to the GPU compiler.
  */
 export function resolveModules(sources, roots) {
   const files = Object.fromEntries(
@@ -61,8 +61,3 @@ export function resolveModules(sources, roots) {
   roots.forEach((root) => visit(root));
   return modules;
 }
-
-export const cpuForms = (forms) =>
-  forms.filter(
-    (form) => !(Array.isArray(form) && (isSym(form[0], 'defpixel') || isSym(form[0], 'generator'))),
-  );

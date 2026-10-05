@@ -9,7 +9,7 @@
         (ui-choice id caption key (nth field 6) x y width)
         (if (= kind "boolean")
           (ui-toggle id caption key x y width)
-          (when (ui-button id (str caption " / " (get key)) [x y] [width 32] false)
+          (when (ui-button id (str caption " / " (if (= kind "data") (slice (json-write (get key)) 0 60) (get key))) [x y] [width 32] false)
             (edit-generator-field key)))))))
 
 (defn generator-window [kind x y w h]

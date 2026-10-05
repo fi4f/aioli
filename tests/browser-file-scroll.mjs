@@ -31,13 +31,13 @@ try {
     );
   }
 
-  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project.v3')));
+  const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
   const names = Array.from(
     { length: 50 },
     (_, i) => `long-${String(i).padStart(2, '0')}-${'filename'.repeat(8)}.lisp`,
   );
   for (const name of names) project.files[name] = '; scrolling sample';
-  project.state = { 'show-files': true, 'open-folders': '[]', 'show-code': true, 'file-offset': 0 };
+  project.state = { 'show-files': true, 'open-folders': [], 'show-code': true, 'file-offset': 0 };
   await page.locator('#file-input').setInputFiles({
     name: 'scroll.json',
     mimeType: 'application/json',

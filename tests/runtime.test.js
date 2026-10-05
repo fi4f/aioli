@@ -1,9 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parse, print, createRuntime } from '../lisp.js';
-import { cpuForms } from '../project.js';
-import { compileShader } from '../shader.js';
-import { defaults, presets } from '../examples.js';
+import { compilePixelShader } from '../shader.js';
+import { defaults } from './fixtures.js';
 import { validateVoice, synthesize, wav } from '../audio.js';
 
 function boot(keys = new Set(), existing = {}) {
@@ -13,7 +12,7 @@ function boot(keys = new Set(), existing = {}) {
     key: (k) => keys.has(k),
     voice: (...a) => voices.push(validateVoice(...a)),
   });
-  r.load(cpuForms(parse(defaults['scenes/garden.scene.lisp'])));
+  r.load(parse(defaults['examples/garden.scene.lisp']));
   return { r, state, voices };
 }
 test('reader round-trips strings, vectors, numbers, and comments', () => {
@@ -41,7 +40,7 @@ test('gameplay moves, clamps, jumps, and lands using Lisp code', () => {
 });
 test('live reload preserves shared state and function replacement', () => {
   const { r, state } = boot(new Set(), { x: 90, moon: 31 });
-  r.load(cpuForms(parse(defaults['scenes/garden.scene.lisp'])));
+  r.load(parse(defaults['examples/garden.scene.lisp']));
   assert.equal(state.x, 90);
   assert.equal(state.moon, 31);
   r.load(parse('(defn center [] (set! :x 160))'));
@@ -57,28 +56,14 @@ test('runtime bounds recursive evaluations and rejects non-finite arithmetic', (
   assert.throws(() => r.call('loop'), /budget|stack/i);
   assert.throws(() => r.evaluate(parse('(/ 1 0)')[0]), /non-finite/);
 });
-test('all pixel presets generate WGSL with one quad and parameter bindings', () => {
-  const { state } = boot();
-  for (const source of Object.values(presets)) {
-    const shader = compileShader(parse(source), state);
-    assert.match(shader.code, /@fragment fn fs/);
-    assert.match(shader.code, /array<vec2f,6>/);
-    assert.ok(shader.primitives > 0);
-    assert.ok(shader.params.length > 0);
-    assert.ok(shader.params.every((p) => p.key in state));
-  }
-});
 test('shader state scopes preserve accumulated color; expansion and types are checked', () => {
-  const s = compileShader(parse('(defpixel a [p time] (scope (fill "#ffffff") (circle [0 0] 2)))'));
+  const s = compilePixelShader(parse('(scope (fill "#ffffff") (circle [0 0] 2))'));
   assert.match(s.code, /d.p = saved0.p/);
   assert.doesNotMatch(s.code, /d.color = saved0.color/);
+  assert.throws(() => compilePixelShader(parse('(repeat 65 i (circle [0 0] 2))')), /0–64/);
+  assert.throws(() => compilePixelShader(parse('(circle 3 2)')), /vec2f/);
   assert.throws(
-    () => compileShader(parse('(defpixel a [p time] (repeat 65 i (circle [0 0] 2)))')),
-    /0–64/,
-  );
-  assert.throws(() => compileShader(parse('(defpixel a [p time] (circle 3 2))')), /vec2f/);
-  assert.throws(
-    () => compileShader(parse('(defpixel a [p time] (fill (param :absent)))'), {}),
+    () => compilePixelShader(parse('(fill (param :absent))'), {}),
     /Unknown shader parameter/,
   );
 });
