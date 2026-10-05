@@ -30,10 +30,10 @@ try {
       () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
     );
   }
-  let diskBytes = await readFile('assets/editor-icons/code.png');
+  let diskBytes = await readFile('editor/icon/code.png');
   let missing = false;
   let reads = 0;
-  await page.route('**/assets/editor-icons/code.png', (route) => {
+  await page.route('**/editor/icon/code.png', (route) => {
     reads++;
     return route.fulfill({
       status: missing ? 404 : 200,
@@ -42,12 +42,12 @@ try {
     });
   });
   const initial = await page.evaluate(() => window.aioli.resources);
-  assert.equal(Object.keys(initial).filter((p) => p.startsWith('assets/editor-icons/')).length, 9);
+  assert.equal(Object.keys(initial).filter((p) => p.startsWith('editor/icon/')).length, 11);
   await click('view');
   await click('files');
-  await click('folder-assets');
-  await click('folder-assets/editor-icons');
-  await click('file-assets/editor-icons/code.png');
+  await click('folder-editor');
+  await click('folder-editor/icon');
+  await click('file-editor/icon/code.png');
   await page.waitForFunction(() => window.aioli.preview.ready);
   assert.equal(await page.evaluate(() => window.aioli.preview.width), 64);
   assert.equal(await page.evaluate(() => window.aioli.state.window), 'image-asset');
@@ -55,33 +55,26 @@ try {
   await page.screenshot({ path: 'artifacts/editor-icon-resource.png' });
   await click('close-window');
   // Simulate editing disk files without changing the user's PNGs.
-  diskBytes = await readFile('assets/editor-icons/play.png');
+  diskBytes = await readFile('editor/icon/play.png');
   const changedData = 'data:image/png;base64,' + diskBytes.toString('base64');
   await page.waitForFunction(
-    (data) => window.aioli.resources['assets/editor-icons/code.png'].data === data,
+    (data) => window.aioli.resources['editor/icon/code.png'].data === data,
     changedData,
   );
   assert.ok(reads > 0);
-  await click('file-assets/editor-icons/code.png');
+  await click('file-editor/icon/code.png');
   await page.waitForFunction(() => window.aioli.preview.ready);
   assert.equal(await page.evaluate(() => window.aioli.preview.status), '');
   missing = true;
-  await page.waitForFunction(
-    () => window.aioli.resources['assets/editor-icons/code.png'].sourceMissing,
-  );
+  await page.waitForFunction(() => window.aioli.resources['editor/icon/code.png'].sourceMissing);
   await page.waitForFunction(() => !window.aioli.preview.ready);
   missing = false;
-  await page.waitForFunction(
-    () => !window.aioli.resources['assets/editor-icons/code.png'].sourceMissing,
-  );
+  await page.waitForFunction(() => !window.aioli.resources['editor/icon/code.png'].sourceMissing);
   await page.waitForFunction(() => window.aioli.preview.ready);
   await click('close-window');
-  await page.route('**/assets/editor-icons/main.png', (route) =>
-    route.fulfill({ status: 404, body: '' }),
-  );
-  await page.waitForFunction(
-    () => window.aioli.resources['assets/editor-icons/main.png'].sourceMissing,
-  );
+  await click('folder-editor');
+  await page.route('**/editor/icon/main.png', (route) => route.fulfill({ status: 404, body: '' }));
+  await page.waitForFunction(() => window.aioli.resources['editor/icon/main.png'].sourceMissing);
   await page.waitForFunction(() => {
     const row = window.aioli.regions.find((r) => r.id === 'file-main.lisp');
     return (
@@ -97,7 +90,7 @@ try {
     );
   });
   // New Project must fetch now, independently of the polling timer or saved copies.
-  diskBytes = await readFile('assets/editor-icons/scene.png');
+  diskBytes = await readFile('editor/icon/scene.png');
   const newData = 'data:image/png;base64,' + diskBytes.toString('base64');
   await page
     .locator('#open-file-input')
@@ -109,7 +102,7 @@ try {
   await page.waitForFunction(
     (data) =>
       !window.aioli.pending &&
-      window.aioli.resources['assets/editor-icons/code.png'].data === data &&
+      window.aioli.resources['editor/icon/code.png'].data === data &&
       !window.aioli.resources['custom.png'],
     newData,
   );
@@ -119,7 +112,7 @@ try {
   );
   assert.equal(
     await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project.v3')).version),
-    12,
+    17,
   );
   assert.deepEqual(errors, []);
   console.log('Disk icon edits, missing/recovered assets and clean New Project assets passed');

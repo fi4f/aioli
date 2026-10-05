@@ -1,3 +1,4 @@
+import { generatorSources } from './generators.js';
 import { editorSourcePaths } from './editor-sources.js';
 import { sourcePath } from './project.js';
 import { resolveModules } from './module-loader.js';
@@ -21,6 +22,7 @@ export function applicationFiles(sources, owned = []) {
     'editor/graphics-tools.lisp',
     'editor/sound-tools.lisp',
     ...editorSourcePaths,
+    ...Object.keys(generatorSources),
     ...(Array.isArray(owned) ? owned : []),
   ]);
   editorPaths.delete('game.lisp');

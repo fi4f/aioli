@@ -1,6 +1,6 @@
 import { sourceRole } from './source-roles.js';
 
-/** Project directories are derived from filenames, never separate resources.
+/** Project directories come from filenames plus saved empty-folder entries.
  * This module supplies tree data only; Lisp owns indentation, disclosure marks,
  * selection and painting. Expansion fits in one persisted shared-state string.
  */
@@ -40,7 +40,7 @@ export function assetKind(path, kind, mime = '') {
 /** Rows: [path, kind, bufferKey, basename, depth, expanded, assetKind]. Folders sort before
  * leaves at each level; hidden descendants consume no rows or scroll space.
  */
-export function projectTree(files, value) {
+export function projectTree(files, value, folders = []) {
   const expanded = expandedFolders(value),
     root = { folders: new Map(), files: [] };
   for (const [path, kind, key, mime] of files) {
@@ -54,6 +54,16 @@ export function projectTree(files, value) {
       directory = directory.folders.get(name);
     }
     directory.files.push([path, kind, key, parts.at(-1), assetKind(path, kind, mime)]);
+  }
+  for (const path of folders) {
+    let directory = root;
+    const parts = path.split('/');
+    parts.forEach((name, index) => {
+      const folderPath = parts.slice(0, index + 1).join('/');
+      if (!directory.folders.has(name))
+        directory.folders.set(name, { path: folderPath, folders: new Map(), files: [] });
+      directory = directory.folders.get(name);
+    });
   }
   const rows = [];
   function visit(directory, depth) {

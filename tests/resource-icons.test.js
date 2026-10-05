@@ -32,22 +32,22 @@ test('resource masks accept arbitrary paths, replace stale decodes, and recycle 
 });
 
 test('older projects import bundled images once, preserving customized assets and later deletions', () => {
-  const path = 'assets/editor-icons/code.png';
+  const path = 'editor/icon/code.png';
   const icon = { mime: 'image/png', data: 'data:image/png;base64,AA==' };
   const custom = { mime: 'image/png', data: 'data:image/png;base64,AQ==' };
-  const defaults = { 'assets/editor-icons/folder.png': icon, [path]: icon };
+  const defaults = { 'editor/icon/folder.png': icon, [path]: icon };
   const saved = { ...projectSnapshot({ main: '', game: '' }, {}, { [path]: custom }), version: 9 };
   const loaded = readProject(saved, {}, defaults);
   assert.deepEqual(loaded.resources[path], custom);
-  assert.deepEqual(loaded.resources['assets/editor-icons/folder.png'], icon);
+  assert.deepEqual(loaded.resources['editor/icon/folder.png'], icon);
   delete loaded.resources[path];
   const current = projectSnapshot(loaded.sources, loaded.state, loaded.resources);
   assert.equal(readProject(current, {}, defaults).resources[path], undefined);
-  assert.equal(saved.resources['assets/editor-icons/folder.png'], undefined);
+  assert.equal(saved.resources['editor/icon/folder.png'], undefined);
 });
 
 test('new image icon migrates once while preserving replacements and later deletions', () => {
-  const path = 'assets/editor-icons/image.png';
+  const path = 'editor/icon/image.png';
   const icon = { mime: 'image/png', data: 'data:image/png;base64,AA==', source: path };
   const saved = { ...projectSnapshot({ main: '', game: '' }, {}, {}), version: 11 };
   const loaded = readProject(saved, {}, { [path]: icon });
@@ -65,3 +65,28 @@ test('new image icon migrates once while preserving replacements and later delet
     undefined,
   );
 });
+
+for (const [name, version] of [
+  ['generator', 12],
+  ['command', 13],
+]) {
+  test(`new ${name} icon migrates once while preserving replacements and later deletions`, () => {
+    const path = `editor/icon/${name}.png`;
+    const icon = { mime: 'image/png', data: 'data:image/png;base64,AA==', source: path };
+    const saved = { ...projectSnapshot({ main: '', game: '' }, {}, {}), version };
+    const loaded = readProject(saved, {}, { [path]: icon });
+    assert.deepEqual(loaded.resources[path], icon);
+    const custom = { mime: 'image/png', data: 'data:image/png;base64,AQ==' };
+    saved.resources[path] = custom;
+    assert.deepEqual(readProject(saved, {}, { [path]: icon }).resources[path], custom);
+    delete loaded.resources[path];
+    assert.equal(
+      readProject(
+        projectSnapshot(loaded.sources, loaded.state, loaded.resources),
+        {},
+        { [path]: icon },
+      ).resources[path],
+      undefined,
+    );
+  });
+}

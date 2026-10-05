@@ -40,6 +40,7 @@ try {
   await click('files');
   await click('folder-examples');
   assert.ok(await page.evaluate(() => window.aioli.regions.some((r) => r.id === 'play-game.lisp')));
+  assert.ok(await page.evaluate(() => window.aioli.regions.some((r) => r.id === 'play-main.lisp')));
   await click('play-examples/bloom.scene.lisp');
   await page.waitForFunction(
     () =>
@@ -63,6 +64,8 @@ try {
 (init! :caption "Hello" ["Caption"])
 ${Array.from({ length: 20 }, (_, i) => `(init! :extra-${i} ${i} ["Extra ${i}" 0 30])`).join('\n')}
 (defpixel render [p time] (background "#000000") (fill (param :tint)) (circle [160 120] (param :radius)))`;
+  project.files['levels/tiny.scene.lisp'] =
+    '(init! :only-current 1 ["Only current" 0 10 1]) (defpixel render [p time] (background "#000000"))';
   project.files['levels/bad.scene.lisp'] = '(defpixel render [p time] (circle 3 2))';
   project.applicationState = {};
   project.state = {
@@ -93,6 +96,10 @@ ${Array.from({ length: 20 }, (_, i) => `(init! :extra-${i} ${i} ["Extra ${i}" 0 
   await input.dispatchEvent('input');
   await page.waitForFunction(() => window.aioli.applicationState.radius === 33.5);
   assert.equal(await page.evaluate(() => window.aioli.editorState.radius), undefined);
+  assert.equal(
+    await page.evaluate(() => window.aioli.regions.some((r) => r.id === 'scene-field-boots')),
+    false,
+  );
   await click('scene-field-mode');
   assert.equal(await page.evaluate(() => window.aioli.applicationState.mode), 'square');
   await click('scene-field-enabled');
@@ -117,6 +124,25 @@ ${Array.from({ length: 20 }, (_, i) => `(init! :extra-${i} ${i} ["Extra ${i}" 0 
   assert.equal(await page.evaluate(() => window.aioli.applicationState.tint), '#ff0000');
   await mkdir('artifacts', { recursive: true });
   await page.screenshot({ path: 'artifacts/scene-inspector.png' });
+  await click('play-levels/tiny.scene.lisp');
+  await page.waitForFunction(
+    () =>
+      !window.aioli.pending &&
+      window.aioli.applicationState['active-scene'] === 'levels/tiny.scene.lisp',
+  );
+  assert.deepEqual(
+    await page.evaluate(() =>
+      window.aioli.regions.filter((r) => r.id.startsWith('scene-field-')).map((r) => r.id),
+    ),
+    ['scene-field-only-current'],
+  );
+  assert.equal(await page.evaluate(() => window.aioli.applicationState.caption), 'Updated');
+  await click('play-levels/custom.scene.lisp');
+  await page.waitForFunction(
+    () =>
+      !window.aioli.pending &&
+      window.aioli.applicationState['active-scene'] === 'levels/custom.scene.lisp',
+  );
   await click('play-levels/bad.scene.lisp');
   await page.waitForFunction(() => window.aioli.error && !window.aioli.pending);
   assert.equal(

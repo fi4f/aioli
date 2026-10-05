@@ -51,3 +51,9 @@
 
 (init! :code-collapsed false)
 (init! :inspector-collapsed false)
+
+(init! :project-folders "[]")
+(init! :auto-evaluate true)
+
+(init! :new-file-type "script")
+(init! :new-generator-output "image")

@@ -8,10 +8,10 @@ import { editorSourcePaths } from '../editor-sources.js';
 import { tabLayout } from '../code-tabs.js';
 import { generatorSources } from '../generators.js';
 import { defaults } from '../examples.js';
-const uiSource = readFileSync(new URL('../ui/components.lisp', import.meta.url), 'utf8').replaceAll(
-  '\"./',
-  '\"./ui/',
-);
+const uiSource = readFileSync(
+  new URL('../editor/ui/components.lisp', import.meta.url),
+  'utf8',
+).replaceAll('\"./', '\"./editor/ui/');
 const editorSource = readFileSync(new URL('../main.lisp', import.meta.url), 'utf8');
 const sources = {
   ...defaults,
@@ -54,6 +54,7 @@ function editor(width = 1440, height = 900) {
       'game-set!': (key, value) => (state[key] = value),
       'preview-path': () => 'game.lisp',
       'scene-fields': () => [],
+      'source-hooks': () => [],
       'scroll-region': (id, origin, size, key, limit) =>
         Math.max(0, Math.min(limit, state[key] ?? 0)),
       'screen-width': () => width,
@@ -82,6 +83,7 @@ function editor(width = 1440, height = 900) {
       'error?': () => false,
       'recovery?': () => false,
       'project-tree': () => [],
+      'project-tree-width': () => 0,
       'project-tree-count': () => 0,
       'project-tree-offset': () => 0,
       'path-input': () => 'lib/new.lisp',

@@ -67,11 +67,14 @@ export async function startApplication(project, canvas) {
           transition(path).catch(showError);
         } else if (instance) instance.initialScene = path;
       },
-      playSound: async () => {
+      playSound: async (name = 'sound', ...args) => {
+        const owner =
+          name !== 'sound' && instance.global[name]?.hook?.kind === 'sound'
+            ? instance
+            : (scene?.runtime ?? runtime);
+        const pcm = synthesize(owner.collectSound(name, ...args));
         context ??= new AudioContext();
         await context.resume();
-        const patch = (scene?.runtime ?? runtime).collectSound();
-        const pcm = synthesize(patch);
         const buffer = context.createBuffer(1, pcm.length, 44100);
         buffer.copyToChannel(pcm, 0);
         const source = context.createBufferSource();

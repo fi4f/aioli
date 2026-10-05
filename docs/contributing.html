@@ -10,10 +10,12 @@
     <header>
       <a class="brand" href="../">aioli <span>all in one lisp</span></a>
       <nav aria-label="Documentation">
-        <a href="./">Start</a><a href="language.html">Language</a><a href="api.html">APIs</a
-        ><a href="editor.html">Editor</a
-        ><a href="contributing.html" aria-current="page">Contribute</a>
+        <a href="./">Start</a>
+        <a href="language.html">Language</a>
+        <a href="api.html">APIs</a>
+        <a href="editor.html">Editor</a>
         <a href="projects.html">Projects</a>
+        <a href="contributing.html" aria-current="page">Contribute</a>
       </nav>
     </header>
     <main>
@@ -50,8 +52,8 @@ npm start</code></pre>
             <tr>
               <td>Widgets, controls, source painting</td>
               <td>
-                <code>ui/buttons.lisp</code>, <code>ui/sliders.lisp</code>,
-                <code>ui/code-input.lisp</code>
+                <code>editor/ui/buttons.lisp</code>, <code>editor/ui/sliders.lisp</code>,
+                <code>editor/ui/code-input.lisp</code>
               </td>
             </tr>
             <tr>
@@ -108,12 +110,13 @@ npm start</code></pre>
       </p>
       <h2 id="lisp-modules">Editor module layout</h2>
       <p>
-        <code>ui/components.lisp</code> imports reusable controls from <code>ui/</code>, while
-        <code>main.lisp</code> imports <code>editor/workspace.lisp</code>. The workspace composes
-        code, files, game and parameter panes plus menu, generator, palette and preview widgets.
-        Theme and state defaults live in <code>editor/state.lisp</code>. Each file owns its
-        component's drawing and interaction; browser decoding lives in
-        <code>asset-preview.js</code> and tab workspace data lives in <code>code-tabs.js</code>.
+        <code>editor/ui/components.lisp</code> imports reusable controls from
+        <code>editor/ui/</code>, while <code>main.lisp</code> imports
+        <code>editor/workspace.lisp</code>. The workspace composes code, files, game and parameter
+        panes plus menu, generator, palette and preview widgets. Theme and state defaults live in
+        <code>editor/state.lisp</code>. Each file owns its component's drawing and interaction;
+        browser decoding lives in <code>asset-preview.js</code> and tab workspace data lives in
+        <code>code-tabs.js</code>.
       </p>
       <p>
         To add a bundled Lisp module, create its file, import it from the appropriate Lisp entry or

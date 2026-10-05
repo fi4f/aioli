@@ -80,7 +80,7 @@ try {
   await download.saveAs(filename);
   const html = await readFile(filename, 'utf8');
   assert.equal(html.includes('editor/workspace.lisp'), false);
-  assert.equal(html.includes('assets/editor-icons/'), true);
+  assert.equal(html.includes('editor/icon/'), true);
   const offline = await browser.newPage();
   const external = [];
   offline.on('request', (r) => {

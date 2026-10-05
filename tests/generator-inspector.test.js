@@ -100,20 +100,23 @@ test('legacy projects migrate commands, generator imports and workspace referenc
     },
   };
   const loaded = readProject(project, {});
-  assert.ok(loaded.sources['commands/nested/reset.command.lisp']);
-  assert.ok(loaded.sources['generators/image.generator.lisp']);
-  assert.equal(loaded.state.tab, 'commands/nested/reset.command.lisp');
+  assert.ok(loaded.sources['examples/commands/nested/reset.command.lisp']);
+  assert.ok(loaded.sources['examples/generators/image.generator.lisp']);
+  assert.equal(loaded.state.tab, 'examples/commands/nested/reset.command.lisp');
   assert.equal(loaded.state['selected-file'], 'game.lisp');
   assert.equal(loaded.state.window, 'generator');
-  assert.equal(loaded.state['active-generator'], 'generators/image.generator.lisp');
+  assert.equal(loaded.state['active-generator'], 'examples/generators/image.generator.lisp');
   assert.deepEqual(JSON.parse(loaded.state['open-tabs']), [
     'game',
-    'commands/nested/reset.command.lisp',
+    'examples/commands/nested/reset.command.lisp',
   ]);
-  assert.equal(resolveModules(loaded.sources, ['game'])[0].path, 'commands/helper.command.lisp');
+  assert.equal(
+    resolveModules(loaded.sources, ['game'])[0].path,
+    'examples/commands/helper.command.lisp',
+  );
   assert.match(loaded.sources.main, /image.generator.lisp/);
   assert.equal(sourceKey('main.lisp'), 'main');
-  assert.equal(projectSnapshot(loaded.sources, loaded.state).version, 12);
+  assert.equal(projectSnapshot(loaded.sources, loaded.state).version, 17);
   assert.throws(
     () =>
       readProject(
@@ -142,6 +145,6 @@ test('main.lisp is canonical and version 6 saves repair earlier main.app.lisp re
   assert.equal(loaded.state['selected-file'], 'game.lisp');
   assert.deepEqual(JSON.parse(loaded.state['open-tabs']), ['game']);
   assert.match(loaded.sources.main, /game.lisp/);
-  assert.ok(loaded.sources['commands/helper.lisp']);
+  assert.ok(loaded.sources['examples/commands/helper.lisp']);
   assert.ok(projectSnapshot(loaded.sources, loaded.state).files['main.lisp']);
 });

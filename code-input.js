@@ -11,7 +11,7 @@ const MAX_SEGMENTS_PER_ROW = 64;
 
 /**
  * Native text input and source layout data. This class never paints the editor.
- * ui/code-input.lisp owns glyph colors, line numbers, selections and caret drawing.
+ * editor/ui/code-input.lisp owns glyph colors, line numbers, selections and caret drawing.
  * Each buffer retains its own selection and scroll position when tabs switch.
  */
 export class CodeInput {
@@ -196,7 +196,7 @@ export class CodeInput {
   }
 
   /**
-   * Return vectors consumed by code-editor in ui/components.lisp:
+   * Return vectors consumed by code-editor in editor/ui/components.lisp:
    * rows: [[numberPosition, numberText, [[tokenPosition, tokenText, kind], ...]], ...]
    * selections: [[origin, size], ...]; caret: [x,y] or null.
    * Source must remain paintable even when the strict Lisp reader rejects it.

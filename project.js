@@ -1,3 +1,4 @@
+import { migrateEditorLayout, legacyEditorPath } from './editor-layout.js';
 import { resolvePath, resolveModules as loadModules } from './module-loader.js';
 import { game as exampleUpdate, audio as exampleSound, presets } from './examples.js';
 import { parse, isSym } from './lisp.js';
@@ -154,7 +155,7 @@ export function projectSnapshot(
   applicationState = {},
 ) {
   return {
-    version: 12,
+    version: 17,
     files: Object.fromEntries(
       Object.entries(sources)
         .filter(([key]) => !key.startsWith('__'))
@@ -171,7 +172,7 @@ export function projectSnapshot(
 export function readProject(project, defaults, defaultResources = {}) {
   if (
     !project ||
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(project.version) ||
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17].includes(project.version) ||
     !project.state ||
     typeof project.state !== 'object' ||
     Array.isArray(project.state)
@@ -180,7 +181,7 @@ export function readProject(project, defaults, defaultResources = {}) {
   const files = project.version >= 3 ? project.files : project.sources;
   if (!files || typeof files !== 'object' || Object.keys(files).length > 256)
     throw new Error('Invalid project files');
-  const sources = Object.create(null);
+  let sources = Object.create(null);
   for (const [name, text] of Object.entries(files)) {
     const path = resolvePath(project.version >= 3 ? name : sourcePath(name));
     if (
@@ -196,7 +197,7 @@ export function readProject(project, defaults, defaultResources = {}) {
   }
   if (project.version === 1) {
     sources.editor = defaults.editor ?? '(import "/editor/workspace.lisp")';
-    sources.ui = defaults.ui ?? '(import "/ui/components.lisp")';
+    sources.ui = defaults.ui ?? '(import "/editor/ui/components.lisp")';
   }
   // v1-v3 implicitly loaded scene/audio/UI. Turn that behavior into explicit
   // imports, retaining the old files as editable, deletable ordinary modules.
@@ -296,7 +297,7 @@ export function readProject(project, defaults, defaultResources = {}) {
       typeof defaults.ui === 'string' &&
       sources.ui.trim() === defaults.ui.split('; Shared window shell')[0].trim())
   )
-    sources.ui = defaults.ui ?? '(import "/ui/components.lisp")';
+    sources.ui = defaults.ui ?? '(import "/editor/ui/components.lisp")';
   if (project.version < 4 && typeof sources.ui === 'string')
     sources[editorKey] = '(import "./ui.lisp")\n' + sources[editorKey];
   sources[editorKey] = sources[editorKey].replace(
@@ -309,21 +310,24 @@ export function readProject(project, defaults, defaultResources = {}) {
   // Saved projects carry their own components. Upgrade only exact known stock
   // content, so new interactions appear without overwriting human customizations.
   for (const [path, hashes] of Object.entries(editorSourceMigrations)) {
-    if (!(path in sources) || !(path in defaults)) continue;
+    const key = path in sources ? path : legacyEditorPath(path);
+    if (!(key in sources) || !(path in defaults)) continue;
     let hash = 0;
-    for (const character of normalizeSource(sources[path]))
+    for (const character of normalizeSource(sources[key]))
       hash = (Math.imul(hash, 31) + character.charCodeAt(0)) | 0;
-    if (hashes.includes(hash)) sources[path] = normalizeSource(defaults[path]);
+    if (hashes.includes(hash)) sources[key] = normalizeSource(defaults[path]);
   }
   // Retire only the unchanged stock facade. Human UI code stays a normal file.
   const stockUI =
-    typeof defaults['ui/components.lisp'] === 'string'
-      ? normalizeSource(defaults['ui/components.lisp']).replaceAll('"./', '"./ui/')
+    typeof defaults['editor/ui/components.lisp'] === 'string'
+      ? normalizeSource(defaults['editor/ui/components.lisp']).replaceAll('"./', '"./editor/ui/')
       : undefined;
   if (
     project.version < 5 &&
     typeof sources.ui === 'string' &&
     (sources.ui.trim() === stockUI?.trim() ||
+      sources.ui.trim() === stockUI?.replaceAll('./editor/ui/', './ui/').trim() ||
+      sources.ui.trim() === '(import "/editor/ui/components.lisp")' ||
       sources.ui.trim() === '(import "/ui/components.lisp")')
   ) {
     delete sources.ui;
@@ -439,7 +443,7 @@ export function readProject(project, defaults, defaultResources = {}) {
       for (const match of text.matchAll(/\((?:init!|set!)\s+:([^\s()[\]]+)/g))
         editorFields.add(match[1]);
   // Old saves shared their state. Never hand editor workspace/theme state to a game.
-  const applicationState =
+  let applicationState =
     project.applicationState ??
     (project.version < 7
       ? Object.fromEntries(Object.entries(project.state).filter(([key]) => !editorFields.has(key)))
@@ -474,6 +478,13 @@ export function readProject(project, defaults, defaultResources = {}) {
     Object.keys(resources).length > 256
   )
     throw new Error('Invalid resources');
+  if (project.version < 17) {
+    const relocated = migrateEditorLayout(sources, resources, project.state, applicationState);
+    sources = relocated.sources;
+    resources = relocated.resources;
+    applicationState = relocated.applicationState;
+    project = { ...project, state: relocated.state };
+  }
   // Import initial resources once for older projects, preserving replacements.
   // Newer saves own their resource store, including intentionally deleted assets.
   if (project.version < 10) {
@@ -487,25 +498,31 @@ export function readProject(project, defaults, defaultResources = {}) {
       if (resource.source && resources[path] && !resources[path].source)
         resources[path] = { ...resource };
   }
-  // Add newly supplied artwork once without replacing an existing image icon.
-  const imageIcon = 'assets/editor-icons/image.png';
-  if (
-    project.version < 12 &&
-    defaultResources[imageIcon] &&
-    !(imageIcon in resources) &&
-    Object.keys(resources).length < 256
-  )
-    resources = { ...resources, [imageIcon]: { ...defaultResources[imageIcon] } };
+  // Newly supplied icons migrate once, preserving custom artwork and later deletions.
+  for (const [name, version] of [
+    ['image', 12],
+    ['generator', 13],
+    ['command', 14],
+  ]) {
+    const path = `editor/icon/${name}.png`;
+    if (
+      project.version < version &&
+      defaultResources[path] &&
+      !(path in resources) &&
+      Object.keys(resources).length < 256
+    )
+      resources = { ...resources, [path]: { ...defaultResources[path] } };
+  }
   for (const [path, resource] of Object.entries(resources)) {
     if (
       (resource?.source !== undefined &&
         (typeof resource.source !== 'string' ||
           resolvePath(resource.source) !== resource.source)) ||
       resolvePath(path) !== path ||
-      path in files ||
+      sourceKey(path) in sources ||
       typeof resource?.data !== 'string' ||
-      !/^data:[\w/+.-]+;base64,[A-Za-z0-9+/]*={0,2}$/.test(resource.data) ||
-      resource.data.length > 8000000
+      !/^data:[\w/+.-]+(?:;charset=[\w.-]+)?;base64,[A-Za-z0-9+/]*={0,2}$/.test(resource.data) ||
+      resource.data.length > 8000256
     )
       throw new Error(`Invalid resource ${path}`);
   }

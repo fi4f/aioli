@@ -280,8 +280,8 @@ try {
   ]);
   await source('editor/workspace.lisp', workspace);
   await evaluated();
-  const buttons = await page.evaluate(() => window.aioli.sources['ui/buttons.lisp']);
-  await source('ui/buttons.lisp', buttons.replace('"#191f1b"', '"#26322a"'));
+  const buttons = await page.evaluate(() => window.aioli.sources['editor/ui/buttons.lisp']);
+  await source('editor/ui/buttons.lisp', buttons.replace('"#191f1b"', '"#26322a"'));
   await evaluated();
   assert.ok(
     await page.evaluate(() =>
@@ -290,7 +290,7 @@ try {
       ),
     ),
   );
-  await source('ui/buttons.lisp', buttons);
+  await source('editor/ui/buttons.lisp', buttons);
   await evaluated();
 
   if (await page.evaluate(() => window.aioli.state['show-files'])) await click('files');

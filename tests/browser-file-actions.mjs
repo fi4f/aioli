@@ -127,14 +127,16 @@ try {
   await drag('file-move-me.lisp', 'world');
   assert.ok(await page.evaluate(() => window.aioli.sources['move-me.lisp']));
   // Moving the active garden scene preserves imports, the entry request and preview.
-  await drag('file-examples/garden.scene.lisp', 'folder-commands');
+  await drag('file-examples/garden.scene.lisp', 'folder-examples/commands');
   await page.waitForFunction(
     () =>
       !window.aioli.pending &&
-      window.aioli.applicationState['active-scene'] === 'commands/garden.scene.lisp',
+      window.aioli.applicationState['active-scene'] === 'examples/commands/garden.scene.lisp',
   );
   assert.ok(
-    await page.evaluate(() => window.aioli.sources.game.includes('commands/garden.scene.lisp')),
+    await page.evaluate(() =>
+      window.aioli.sources.game.includes('examples/commands/garden.scene.lisp'),
+    ),
   );
   assert.equal(await page.evaluate(() => window.aioli.error), false);
   // Individual assets use the same open/save file actions.
@@ -146,7 +148,7 @@ try {
   ).setFiles({
     name: 'sample.png',
     mimeType: 'image/png',
-    buffer: await readFile('assets/editor-icons/code.png'),
+    buffer: await readFile('editor/icon/code.png'),
   });
   await page.waitForFunction(
     () =>
@@ -161,21 +163,26 @@ try {
   assert.equal(saved.suggestedFilename(), 'sample.png');
   await click('close-window');
   const imageData = await page.evaluate(() => window.aioli.resources['sample.png'].data);
-  await drag('file-sample.png', 'folder-assets');
+  await click('folder-examples/commands');
+  await click('folder-editor');
+  await drag('file-sample.png', 'folder-editor/icon');
   await page.waitForFunction(
     () =>
       !window.aioli.pending &&
-      window.aioli.resources['assets/sample.png'] &&
+      window.aioli.resources['editor/icon/sample.png'] &&
       !window.aioli.resources['sample.png'],
   );
   assert.equal(
-    await page.evaluate(() => window.aioli.resources['assets/sample.png'].data),
+    await page.evaluate(() => window.aioli.resources['editor/icon/sample.png'].data),
     imageData,
   );
-  assert.equal(await page.evaluate(() => window.aioli.state['selected-file']), 'assets/sample.png');
+  assert.equal(
+    await page.evaluate(() => window.aioli.state['selected-file']),
+    'editor/icon/sample.png',
+  );
   await page.reload();
   await page.waitForFunction(() => window.aioli?.running);
-  assert.ok(await page.evaluate(() => window.aioli.sources['commands/garden.scene.lisp']));
+  assert.ok(await page.evaluate(() => window.aioli.sources['examples/commands/garden.scene.lisp']));
   if ((await page.evaluate(() => window.aioli.state.menu)) !== 'file') await click('file');
   await click('new-project');
   await page.waitForFunction(

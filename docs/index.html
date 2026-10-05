@@ -14,9 +14,12 @@
     <header>
       <a class="brand" href="../">aioli <span>all in one lisp</span></a>
       <nav aria-label="Documentation">
-        <a href="./" aria-current="page">Start</a><a href="language.html">Language</a
-        ><a href="api.html">APIs</a><a href="editor.html">Editor</a
-        ><a href="contributing.html">Contribute</a> <a href="projects.html">Projects</a>
+        <a href="./" aria-current="page">Start</a>
+        <a href="language.html">Language</a>
+        <a href="api.html">APIs</a>
+        <a href="editor.html">Editor</a>
+        <a href="projects.html">Projects</a>
+        <a href="contributing.html">Contribute</a>
       </nav>
     </header>
     <main>
@@ -51,49 +54,60 @@
         >
       </div>
       <h2>Start with a small pixel program</h2>
-      <pre><code>(defpixel hello [p time]
+      <pre><code>(defpixel render [p time]
   (background "#101613")
   (fill "#bbd6a6")
   (circle [160 120] (+ 24 (* 4 (sin time)))))</code></pre>
       <p>
-        <a href="../">Open the workshop</a>, select the <strong>scene</strong> tab, replace its
-        source with this program, and press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> (or <kbd>Cmd</kbd> +
+        <a href="../">Open the workshop</a>, open <strong>View → Files pane</strong>, expand
+        <code>examples/</code>, and select <code>garden.scene.lisp</code>, replace its source with
+        this program, and press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> (or <kbd>Cmd</kbd> +
         <kbd>Enter</kbd>). The game view renders a 320 × 240 surface. Drawing coordinates begin at
         the top left.
       </p>
-      <h2>Five editable sources</h2>
+      <h2>Two entry points, ordinary project files</h2>
       <div class="table-scroll">
         <table>
           <thead>
             <tr>
-              <th>Tab</th>
+              <th>File or folder</th>
               <th>Purpose</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td><code>scene</code></td>
-              <td>A per-pixel program compiled into WGSL.</td>
+              <td><code>main.lisp</code></td>
+              <td>The editor application, importing its workspace and UI.</td>
             </tr>
             <tr>
-              <td><code>game</code></td>
-              <td>State initialization and <code>(defn update [dt] ...)</code>.</td>
+              <td><code>game.lisp</code></td>
+              <td>The embedded application entry, selecting the initial scene.</td>
             </tr>
             <tr>
-              <td><code>audio</code></td>
-              <td>A <code>sound</code> function that emits procedural voices.</td>
+              <td><code>examples/*.scene.lisp</code></td>
+              <td>Playable scenes combining CPU functions and a render shader.</td>
             </tr>
             <tr>
-              <td><code>editor</code></td>
-              <td>The fullscreen layout, drawing, and editor actions.</td>
+              <td><code>examples/generators/*.generator.lisp</code></td>
+              <td>Image, audio and text recipes with generated inspectors.</td>
             </tr>
             <tr>
-              <td><code>ui</code></td>
-              <td>Ordinary Lisp functions implementing widgets and source painting.</td>
+              <td><code>examples/commands/*.command.lisp</code></td>
+              <td>Explicit editor/game state actions and export samples.</td>
+            </tr>
+            <tr>
+              <td><code>editor/</code></td>
+              <td>Editable panes, reusable UI and ordinary PNG icons.</td>
             </tr>
           </tbody>
         </table>
       </div>
+      <p>
+        The editor can inspect game code and state; the game cannot access editor state or
+        capabilities. File suffixes are editor conventions. The runtime loads explicit imports,
+        regardless of suffix. See <a href="projects.html">Projects and tools</a> for generators,
+        commands and standalone HTML export.
+      </p>
       <h2>Browser requirements</h2>
       <p>
         The workshop requires a browser and device with WebGPU support, served over HTTPS or

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parse } from '../lisp.js';
-import { inspectorFields, liveFields } from '../inspector-fields.js';
+import { inspectorFields, liveFields, referencedStateKeys } from '../inspector-fields.js';
 
 test('live scene fields retain declared limits and stable inferred limits without clamping simulation state', () => {
   const state = { radius: 22, timer: 4, 'active-scene': 'level.lisp' };
@@ -16,4 +16,19 @@ test('live scene fields retain declared limits and stable inferred limits withou
     fields.some((field) => field.key === 'active-scene'),
     false,
   );
+});
+
+test('scene inspection excludes stale scene and application state while including active hook fields', () => {
+  const state = { radius: 20, oldSceneField: 30, boots: 1, dynamic: 4, shaderValue: 7 };
+  const forms = parse(
+    '(init! :radius 20) (defpixel render [p time] (circle [0 0] (param :shaderValue)))',
+  );
+  const fields = inspectorFields('current.scene.lisp', forms);
+  const keys = referencedStateKeys(forms);
+  keys.add('dynamic');
+  assert.deepEqual(
+    liveFields(fields, state, keys).map((field) => field.key),
+    ['radius', 'shaderValue', 'dynamic'],
+  );
+  assert.equal(state.oldSceneField, 30);
 });

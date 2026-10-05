@@ -3,7 +3,7 @@
   (let [name (if (= kind "main-entry") "game"
                 (if (= kind "editor-entry") "main"
                   (if (= kind "asset") "file" kind)))
-        path (str "assets/editor-icons/" name ".png")
+        path (str "editor/icon/" name ".png")
         special (or (= kind "main-entry") (= kind "editor-entry") (= kind "scene") (= kind "generator"))]
     (scope
       (fill (if special (get :ui-accent) (get :ui-muted)))

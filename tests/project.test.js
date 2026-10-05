@@ -25,9 +25,9 @@ import { compileShader } from '../shader.js';
 
 const defaults = {
   ...examples,
-  ui: readFileSync(new URL('../ui/components.lisp', import.meta.url), 'utf8').replaceAll(
+  ui: readFileSync(new URL('../editor/ui/components.lisp', import.meta.url), 'utf8').replaceAll(
     '\"./',
-    '\"./ui/',
+    '\"./editor/ui/',
   ),
   editor: readFileSync(new URL('../main.lisp', import.meta.url), 'utf8'),
   ...generatorSources,
@@ -107,7 +107,7 @@ test('v3 saves preserve extra source files and binary assets while excluding tra
     'assets/example.png': { mime: 'image/png', data: 'data:image/png;base64,AAAA' },
   };
   const snapshot = projectSnapshot(sources, { x: 7 }, resources);
-  assert.equal(snapshot.version, 12);
+  assert.equal(snapshot.version, 17);
   assert.equal(snapshot.files.__palette, undefined);
   const imported = readProject(JSON.parse(JSON.stringify(snapshot)), defaults);
   assert.equal(imported.sources['lib/helper.lisp'], sources['lib/helper.lisp']);
@@ -130,12 +130,12 @@ test('v2 migration retains custom source and state and installs generator files'
   const migrated = readProject({ version: 2, sources: source, state: { x: 17 } }, defaults);
   assert.equal(
     migrated.sources.main,
-    '(import "./ui/components.lisp")\n' +
+    '(import "./editor/ui/components.lisp")\n' +
       normalizeSource(source.editor) +
       '\n(defn draw [] (editor))',
   );
   assert.equal(migrated.state.x, 17);
-  assert.ok(migrated.sources['generators/image.generator.lisp']);
+  assert.ok(migrated.sources['examples/generators/image.generator.lisp']);
   assert.throws(
     () =>
       readProject(
@@ -163,7 +163,7 @@ test('project loading and saving normalize source newlines without replacing Uni
 });
 
 test('stock component upgrades preserve custom editor changes', () => {
-  const path = 'ui/buttons.lisp';
+  const path = 'editor/ui/buttons.lisp';
   const old = normalizeSource(defaults[path]).split('\n; A compact pixel play glyph')[0];
   const stock = projectSnapshot({ ...defaults, [path]: old }, {}, {});
   assert.equal(readProject(stock, defaults).sources[path], normalizeSource(defaults[path]));

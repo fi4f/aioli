@@ -12,18 +12,29 @@ export function generatorDescriptor(path, forms) {
     declaration?.[1]?.name?.replace(/^:/, '') ??
     (forms.some((form) => isSym(form?.[0], 'defpixel') && isSym(form[1], 'image'))
       ? 'image'
-      : 'audio');
-  if (!['image', 'audio'].includes(output))
-    throw new Error(`${path}: generator output must be :image or :audio`);
+      : forms.some((form) => isSym(form?.[0], 'defn') && isSym(form[1], 'generate-text'))
+        ? 'text'
+        : 'audio');
+  if (!['image', 'audio', 'text'].includes(output))
+    throw new Error(`${path}: generator output must be :image, :audio or :text`);
   if (
     declaration &&
-    (declaration.length > 3 ||
+    (declaration.length > (output === 'text' ? 4 : 3) ||
       !isSym(declaration[1]) ||
-      (declaration[2] && declaration[2].type !== 'string'))
+      (declaration[2] && declaration[2].type !== 'string') ||
+      (declaration[3] && declaration[3].type !== 'string'))
   )
-    throw new Error(`${path}: use (generator :image "Title") or (generator :audio "Title")`);
+    throw new Error(
+      `${path}: use (generator :image/:audio/:text "Title"), with an optional filename for :text`,
+    );
   const fields = inspectorFields(path, forms);
-  return { path, title: declaration?.[2]?.value ?? path.split('/').at(-1), output, fields };
+  return {
+    path,
+    title: declaration?.[2]?.value ?? path.split('/').at(-1),
+    output,
+    fields,
+    filename: declaration?.[3]?.value ?? 'generated.txt',
+  };
 }
 
 export function stageGenerators(sources, application, makeRuntime) {
@@ -44,6 +55,7 @@ export function stageGenerators(sources, application, makeRuntime) {
             'update',
             'sound',
             'generate-sound',
+            'generate-text',
             'enter',
             'exit',
             'editor',
@@ -54,6 +66,8 @@ export function stageGenerators(sources, application, makeRuntime) {
       for (const module of modules) runtime.load(cpuForms(module.forms));
       if (descriptor.output === 'audio' && typeof runtime.global['generate-sound'] !== 'function')
         throw new Error(`${path}: missing (defn generate-sound [] ...)`);
+      if (descriptor.output === 'text' && typeof runtime.global['generate-text'] !== 'function')
+        throw new Error(`${path}: missing (defn generate-text [] ...)`);
       const render = descriptor.output === 'image' ? pixelHook(modules, 'image') : null;
       return { ...descriptor, runtime, render };
     });

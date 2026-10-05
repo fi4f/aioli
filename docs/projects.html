@@ -10,9 +10,12 @@
     <header>
       <a class="brand" href="../">aioli <span>all in one lisp</span></a>
       <nav aria-label="Documentation">
-        <a href="./">Start</a><a href="language.html">Language</a><a href="api.html">APIs</a
-        ><a href="editor.html">Editor</a><a href="projects.html" aria-current="page">Projects</a
-        ><a href="contributing.html">Contribute</a>
+        <a href="./">Start</a>
+        <a href="language.html">Language</a>
+        <a href="api.html">APIs</a>
+        <a href="editor.html">Editor</a>
+        <a href="projects.html" aria-current="page">Projects</a>
+        <a href="contributing.html">Contribute</a>
       </nav>
     </header>
     <main>
@@ -21,16 +24,18 @@
       <p class="lead">
         A project contains named Lisp files, imported assets, generated images and sounds, and
         shared state. The file pane and tool windows are live Lisp widgets in <code>editor/</code>,
-        composed from <code>ui/</code> controls.
+        composed from <code>editor/ui/</code> controls.
       </p>
       <h2 id="files">File explorer</h2>
       <p>
         Use <strong>View → Files pane</strong> to dock the folder tree beside code and the game.
         Click a folder row to expand or collapse it. Nesting and expansion are saved with the
         project. Icons distinguish folders, code, images, audio and generic assets. Click a source
-        to open its code tab; clicking an image or audio asset opens its preview window. Scroll with
-        the mouse wheel or by dragging the scrollbar. Collapsed descendants consume no scroll space.
-        On narrow screens, opening a source returns to the code pane.
+        to open its code tab; clicking an image or audio asset opens its preview window. Scroll
+        vertically with the mouse wheel or vertical scrollbar; use Shift+wheel, a horizontal
+        trackpad gesture, or the horizontal scrollbar to reveal long names and deep folders.
+        Collapsed descendants consume no scroll space. On narrow screens, opening a source returns
+        to the code pane.
       </p>
       <p>
         Right-click a file, folder or empty tree area for file actions. Shift+F10 opens the selected
@@ -39,8 +44,9 @@
         <code>lib/math.lisp</code>. New file on a folder starts inside that folder; on a file, it
         starts beside that file. Create starts with a commented module. Import accepts local Lisp,
         image and audio files under <code>assets/</code> and never overwrites existing paths. Rename
-        does not rewrite imports: update references yourself. If evaluation fails, the working
-        program continues while you repair the draft.
+        and drag moves update relative imports and literal paths; rejected moves preserve the
+        working project. If evaluation fails, the working program continues while you repair the
+        draft.
       </p>
       <p>
         The workbench's <code>main.lisp</code> launches the editor; <code>game.lisp</code>
@@ -49,7 +55,10 @@
         has no access to editor state or capabilities. There is no separate editor entry.
         <code>.command.lisp</code>, <code>.generator.lisp</code> and <code>.scene.lisp</code>
         are editor conventions. The runtime loads modules by explicit path, regardless of extension.
-        Folders only organize files.
+        Folders only organize files. A new project groups the editor package in
+        <code>editor/ui/</code> and <code>editor/icon/</code>. Playable sample scenes live in
+        <code>examples/</code>, with commands in <code>examples/commands/</code> and
+        image/audio/text recipes in <code>examples/generators/</code>.
       </p>
       <h2 id="previews">Asset previews</h2>
       <p>
@@ -82,8 +91,15 @@
         <code>(game-get :x)</code>, <code>(game-set! :x 160)</code>,
         <code>(game-definitions)</code>, and <code>(game-call "function-name" argument)</code>.
         These capabilities exist only in the editor. Commands run in the editor environment;
-        <code>get</code> and <code>set!</code> refer to editor state.
+        <code>get</code> and <code>set!</code> refer to editor state. Use <code>game-get</code> and
+        <code>game-set!</code> for the active game or scene. A single command can read and write
+        both states without switching environments.
       </p>
+      <pre><code>; examples/commands/center-player.command.lisp
+(game-set! :x 160)
+(game-set! :y 190)
+(game-set! :vy 0)
+(set! :status "Player centered")</code></pre>
       <h2 id="imports">Import resolution</h2>
       <pre><code>; game.lisp
 (import "./lib/movement.lisp")
@@ -236,28 +252,61 @@
         generator of the matching output type. Legacy image/audio recipes migrate to
         <code>.generator.lisp</code>, with imports and workspace selections updated.
       </p>
+      <h2 id="text-generators">Text generators</h2>
+      <pre><code>; tools/level.generator.lisp
+(generator :text "Level CSV" "levels/generated.csv")
+(init! :level-name "garden" ["Level name"])
+(init! :level-width 320 ["Width" 64 1024 16])
+(init! :level-height 240 ["Height" 64 1024 16])
+(defn generate-text []
+  (str "name,width,height\n"
+       (get :level-name) "," (get :level-width) "," (get :level-height) "\n"))</code></pre>
+      <p>
+        <code>generate-text</code> must return a string, including an empty string for empty output.
+        The optional fourth declaration argument is a project-relative output filename; it defaults
+        to <code>generated.txt</code>. Change it to emit CSV, JSON, Markdown, shader source, or any
+        other text format. The filename chooses a MIME type where recognized, with UTF-8 text as the
+        fallback. The generator formats the contents itself; choosing <code>.json</code> does not
+        serialize or validate JSON.
+      </p>
+      <p>
+        The preview scrolls vertically with the wheel or scrollbar, with arrows for hidden lines.
+        Shift+wheel moves sideways. Generation is cached until a declared inspector parameter
+        changes or the source is re-evaluated. Generate forces another call, useful when reading
+        state outside the declared fields. The editor shows runtime errors in the preview, rather
+        than breaking gameplay.
+      </p>
+      <p>
+        Keep stores the exact UTF-8 text as an ordinary project resource. Download also stores it
+        and downloads the basename. Existing resources at the same output path are replaced; source
+        files, folder paths and paths outside the project are rejected. Outputs are limited to 6 MB,
+        and the hook uses the interpreter's normal instruction budget. Kept text resources open
+        read-only and are included in project JSON and standalone HTML exports.
+      </p>
       <h2 id="commands">Command palette</h2>
       <p>
-        Open Commands, Project → Command palette, or <strong>Ctrl/Cmd+Shift+P</strong>. Type part of
-        a path to filter saved <code>.command.lisp</code> files in any folder, then click a result
-        to execute it. Or type a Lisp program and press Run Lisp or Ctrl/Cmd+Enter. Palette text is
-        transient: it is not saved as a project file and is never evaluated just because you type
-        it.
+        Open View → Command palette, or <strong>Ctrl/Cmd+Shift+P</strong>. Type part of a path to
+        filter saved <code>.command.lisp</code> files in any folder, then click a result to execute
+        it. Or type a Lisp program and press Run Lisp or Ctrl/Cmd+Enter. Palette text is transient:
+        it is not saved as a project file and is never evaluated just because you type it.
       </p>
       <pre><code>; A command can automate state changes and exports.
-(set! :x 160)
-(set! :y 190)
-(set! :vy 0)
+(game-set! :x 160)
+(game-set! :y 190)
+(game-set! :vy 0)
 (export-image "assets/portrait.png")
 (export-sound "assets/chime.wav")</code></pre>
       <p>
         Create a file such as <code>tools/reset-player.command.lisp</code> to add your own saved
         command. Click the small play button beside its explorer icon to run it without opening a
         code tab, or choose Run command from its right-click menu. Nested command folders work too.
-        These programs run explicitly rather than during normal live evaluation. Commands share the
-        active CPU functions and state and can import helpers relative to their own directory. Typed
-        programs resolve imports as though they are in that directory too. Use <code>set!</code> for
-        immediate state edits, or <code>reset-project</code> to rebuild all state from defaults.
+        These programs run explicitly rather than during normal live evaluation. Commands share
+        editor CPU definitions and state and can import helpers relative to their own directory.
+        Typed palette programs resolve imports from the project root. Use <code>get</code>/<code
+          >set!</code
+        >
+        for editor state and <code>game-get</code>/<code>game-set!</code> for game/scene state, or
+        <code>reset-project</code> to rebuild all state from defaults.
       </p>
       <p>
         Each loaded module uses the normal evaluation budget. Execution is sequential: effects
@@ -285,13 +334,17 @@
             </tr>
             <tr>
               <td><code>(open-file path)</code></td>
-              <td>Open a source in the code pane, or report asset information.</td>
+              <td>
+                Open ordinary source in the code pane, a generator in its inspector, or an
+                image/audio/text asset in its preview.
+              </td>
             </tr>
             <tr>
               <td><code>(create-file path)</code><br /><code>(create-file path source)</code></td>
               <td>
-                Create a named Lisp file and open it. Reject an existing path. Source is an optional
-                string.
+                Create a named source buffer and open it. The New File dialog supplies role-specific
+                starter text; None permits an exact custom filename. Reject an existing path. Source
+                is an optional string.
               </td>
             </tr>
             <tr>
@@ -299,8 +352,8 @@
                 <code>(rename-file old-path new-path)</code><br /><code>(delete-file path)</code>
               </td>
               <td>
-                Move or remove a project resource. Only main/editor entry filenames are protected.
-                Rename keeps imports unchanged.
+                Move or remove a project resource. Only main.lisp and game.lisp are protected. Moves
+                rewrite relative imports and literal resource paths and retain open tabs.
               </td>
             </tr>
             <tr>
@@ -341,6 +394,27 @@
               </td>
             </tr>
             <tr>
+              <td>
+                <code>(generator-text)</code><br /><code>(generator-text-error)</code><br /><code
+                  >(generator-filename)</code
+                >
+              </td>
+              <td>
+                The selected text generator's cached string, current error (empty on success), and
+                output path.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>(generate-text-preview)</code><br /><code>(save-text-resource)</code
+                ><br /><code>(export-text)</code>
+              </td>
+              <td>
+                Force regeneration, keep the selected text output, or keep and download it.
+                Save/export use the declaration's filename.
+              </td>
+            </tr>
+            <tr>
               <td><code>(palette-query)</code><br /><code>(palette-commands)</code></td>
               <td>Current transient input; up to eight matching saved command paths.</td>
             </tr>
@@ -371,7 +445,7 @@
         F2 opens the latest recovery shell without replacing your project’s editor source. Creating
         or renaming files, editing gameplay or generators, and resetting state keep that shell
         active, including after reload. Accepting an edit to <code>main.lisp</code> or
-        <code>ui/components.lisp</code> returns to the project editor.
+        <code>editor/ui/components.lisp</code> returns to the project editor.
       </p>
       <p>
         In recovery, <strong>Use latest editor</strong> adopts the bundled editor and widget library
@@ -405,20 +479,21 @@
       </p>
       <h2 id="storage">Project format and persistence</h2>
       <p>
-        Version 3 JSON has <code>files</code> (named source strings), <code>resources</code> (MIME
-        type and base64 data URL per asset), and <code>state</code>. Source drafts are included in a
-        manual Save project; automatic browser persistence retains accepted source. Resource changes
-        are saved with the project. v1/v2 saves migrate without losing custom source or state; stock
-        editor/widget definitions receive the new tools. F2 opens the latest recovery shell if a
-        custom editor has no controls for them.
+        Version 17 JSON has <code>files</code> (named source strings), <code>resources</code> (MIME
+        type and base64 data URL per asset), editor <code>state</code>, separate
+        <code>applicationState</code>, and an optional recovery flag. Source drafts are included in
+        a manual Save project; automatic browser persistence retains accepted source. Resource
+        changes are saved with the project. v1/v2 saves migrate without losing custom source or
+        state; stock editor/widget definitions receive the new tools. F2 opens the latest recovery
+        shell if a custom editor has no controls for them.
       </p>
       <p>
         Limits are 256 source files, 100,000 characters per source, 256 assets, and 6 MB per
         imported/generated asset; project imports allow 16 MB total. Browser-local storage has its
-        own quota. If a large project exceeds it, use Save project to preserve it as JSON. Five
-        entry names are currently fixed; additional files are unlimited in role within the stated
-        file count. All source and assets are project data, so GitHub Pages hosting still requires
-        only static repository files.
+        own quota. If a large project exceeds it, use Save project to preserve it as JSON. Two entry
+        names, <code>main.lisp</code> and <code>game.lisp</code>, are fixed; additional files are
+        unlimited in role within the stated file count. All source and assets are project data, so
+        GitHub Pages hosting still requires only static repository files.
       </p>
     </main>
     <footer>

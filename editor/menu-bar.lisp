@@ -17,7 +17,7 @@
   (let [kind (get :menu) width (min 312 (- w 16))
         anchor (if (= kind "file") 8 (if (= kind "project") 56 (if (= kind "view") 136 (if (= kind "edit") 192 248))))
         x (min anchor (- w width 8)) y 52
-        height (if (= kind "file") 384 (if (= kind "project") (if (recovery?) 144 104) (if (= kind "view") (if (recovery?) 308 276) (if (= kind "edit") 204 102))))]
+        height (if (= kind "file") 384 (if (= kind "project") (if (recovery?) 174 134) (if (= kind "view") (if (recovery?) 308 276) (if (= kind "edit") 204 102))))]
     ; A background region dismisses the menu without also activating a pane.
     (region :menu-dismiss "Close menu" [0 50] [w (- h 80)])
     (when (and (pointer-pressed?) (hit? [0 50] [w (- h 80)])) (set! :menu false))
@@ -46,8 +46,9 @@
             (when (menu-action :evaluate "Run / Evaluate" "Ctrl+Enter" x (+ y 4) width true nil) (evaluate-project))
             (when (menu-action :pause (if (get :paused) "Play" "Pause") "" x (+ y 34) width true nil) (set! :paused (not (get :paused))))
             (when (menu-action :reset "Reset state" "" x (+ y 64) width true nil) (reset-project))
+            (when (menu-action :auto-evaluate "Automatic re-evaluation" "" x (+ y 94) width true (get :auto-evaluate)) (toggle-auto-evaluate))
             (when (recovery?)
-              (when (menu-action :upgrade-editor "Use latest editor" "" x (+ y 104) width true nil) (upgrade-editor))))
+              (when (menu-action :upgrade-editor "Use latest editor" "" x (+ y 134) width true nil) (upgrade-editor))))
           (if (= kind "view")
             (do
               (when (menu-action :code "Code pane" "" x (+ y 4) width true (and (get :show-code) (or (>= w 850) (not (get :show-files)))))

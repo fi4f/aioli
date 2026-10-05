@@ -1,5 +1,5 @@
 ; Fullscreen workspace composition; panes are independent imported Lisp files.
-(import "../ui/components.lisp")
+(import "./ui/components.lisp")
 (import "./state.lisp")
 (import "./code-pane.lisp")
 (import "./game-pane.lisp")
@@ -52,7 +52,7 @@
     (when (and (not focused) (not (= (get :window) "")))
       (if (= (get :window) "about") (about-aioli)
         (if (= (get :window) "file-path") (file-path-dialog)
-          (if (or (= (get :window) "image-asset") (= (get :window) "audio-asset"))
+          (if (or (= (get :window) "image-asset") (= (get :window) "audio-asset") (= (get :window) "text-asset"))
             (asset-preview-window) (project-window)))))
     (when (not (= (file-drag-path) ""))
       (scope

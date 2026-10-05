@@ -53,8 +53,9 @@
 
 (defn asset-preview-window []
   (let [image (= (get :window) "image-asset")
-        w (min (if image 900 760) (- (screen-width) 32))
-        h (min (if image 650 340) (- (screen-height) 100))
+        textual (= (get :window) "text-asset")
+        w (min (if (or image textual) 900 760) (- (screen-width) 32))
+        h (min (if (or image textual) 650 340) (- (screen-height) 100))
         x (/ (- (screen-width) w) 2) y 64]
     (fill "#354239") (rect [(- x 1) (- y 1)] [(+ w 2) (+ h 2)])
     (fill (get :ui-panel)) (rect [x y] [w h])
@@ -63,7 +64,9 @@
       (fill (get :ui-text)) (text [(+ x 16) (+ y 12)] (get :preview-path)))
     (when (ui-button :close-window "Close" [(+ x w -84) (+ y 4)] [76 32] false)
       (close-asset-preview))
+    (if textual
+      (code-editor [(+ x 16) (+ y 48)] [(- w 32) (- h 64)] :__textResource)
     (if (asset-ready?)
       (if image (image-asset-view x y w h) (audio-asset-view x y w h))
       (scope (clip [(+ x 16) (+ y 60)] [(- w 32) (- h 80)])
-        (fill (get :ui-muted)) (text [(+ x 16) (+ y 64)] (asset-status))))))
+        (fill (get :ui-muted)) (text [(+ x 16) (+ y 64)] (asset-status)))))))

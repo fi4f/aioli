@@ -1,3 +1,4 @@
+import { hookDefinition } from './hook-definitions.js';
 // Shared reader and CPU runtime. Shader compilation consumes the same AST.
 export const sym = (name) => ({ type: 'symbol', name });
 export const isSym = (v, name) => v?.type === 'symbol' && (name === undefined || v.name === name);
@@ -98,6 +99,7 @@ export function print(node) {
 export function createRuntime(state, host = {}) {
   const global = Object.create(null),
     budget = host.budget ?? 10000;
+  const stateKeys = new Set();
   let fuel = budget;
   const numeric =
     (name, fn) =>
@@ -136,12 +138,13 @@ export function createRuntime(state, host = {}) {
     '=': (a, b) => a === b,
     not: (x) => !x,
     get: (key) => {
+      stateKeys.add(key);
       if (!(key in state)) throw new Error(`Unknown state :${key}`);
       return state[key];
     },
     'key?': (key) => host.key?.(key) ?? false,
     voice: (...args) => host.voice?.(...args),
-    'play-sound': () => host.playSound?.(),
+    'play-sound': (...args) => host.playSound?.(...args),
     'export-wav': () => host.exportWav?.(),
     true: true,
     false: false,
@@ -168,7 +171,8 @@ export function createRuntime(state, host = {}) {
         return value;
       };
     // Special forms control evaluation order; ordinary calls evaluate arguments.
-    if (name === 'defn') {
+    if (['defn', 'defdraw', 'defsound'].includes(name)) {
+      const hook = hookDefinition(node);
       if (!isSym(args[0]) || args[1]?.type !== 'vector' || !args[1].items.every((n) => isSym(n)))
         throw new Error('Use (defn name [arguments] body...)');
       const params = args[1].items.map((n) => n.name),
@@ -181,9 +185,10 @@ export function createRuntime(state, host = {}) {
         const local = Object.create(closure);
         params.forEach((p, i) => (local[p] = values[i]));
         let result;
-        for (const n of args.slice(2)) result = evaluate(n, local);
+        for (const n of args.slice(hook ? hook.bodyOffset - 1 : 2)) result = evaluate(n, local);
         return result;
       };
+      if (hook) env[args[0].name].hook = hook;
       return null;
     }
     if (name === 'do') return body(args);
@@ -230,6 +235,7 @@ export function createRuntime(state, host = {}) {
       )
         throw new Error(`${name} expects a state key and value`);
       const key = ev(args[0]);
+      stateKeys.add(key);
       if (name === 'init!' && key in state) return state[key];
       const value = ev(args[1]);
       if (typeof key !== 'string') throw new Error('State keys must be keywords or strings');
@@ -259,6 +265,7 @@ export function createRuntime(state, host = {}) {
   }
   return {
     state,
+    stateKeys,
     global,
     load(forms) {
       fuel = budget;

@@ -18,7 +18,7 @@
         gx (if wide (+ x left 16) (+ x 16))
         gy (if wide (+ y 42) (+ y 166)) gw (if wide (- w left 32) (- w 32))
         output (generator-output) fields (generator-fields)
-        preview-height (if (= output "image") (if wide 150 90) 48)
+        preview-height (if (= output "audio") 48 (if wide 150 90))
         fy (+ gy preview-height 20)
         height (max 56 (- (+ y h) fy 136))]
     (when (ui-button :generator-select (if (= path "") "No .generator.lisp files" (str path " / Next"))
@@ -30,7 +30,12 @@
       (code-editor [(+ x 16) (+ y 42)] [(- left 32) (if wide (- h 58) 108)] path)
       (if (= output "image")
         (image-preview [gx gy] [(min gw (* preview-height (/ 4 3))) preview-height])
-        (do (fill (get :ui-accent)) (waveform [gx gy] [gw preview-height] true)))
+        (if (= output "text")
+          (do
+            (init! :text-preview-offset 0) (init! :text-preview-x 0)
+            (ui-inspector-scroll :generator-text-scroll :text-preview-offset gx gy gw preview-height (* (generator-text-line-count) 18))
+            (text-preview [gx gy] [(- gw 16) preview-height]))
+          (do (fill (get :ui-accent)) (waveform [gx gy] [gw preview-height] true))))
       (let [offset (ui-inspector-scroll :generator-inspector-scroll :inspector-offset gx fy gw height (* (count fields) 56))
             first (floor (/ offset 56))]
         (scope
@@ -46,7 +51,15 @@
         (do
           (when (ui-button :generator-keep "Keep" [gx (+ y h -44)] [72 32] false) (save-image-resource))
           (when (ui-button :generator-export "PNG" [(+ gx 80) (+ y h -44)] [72 32] false) (export-image)))
+        (if (= output "text")
+          (do
+            (scope (clip [gx (+ y h -84)] [gw 34])
+              (fill (get :ui-muted)) (text [gx (+ y h -84)] (str "File: " (generator-filename)))
+              (text [gx (+ y h -66)] "Shift+wheel scrolls sideways"))
+            (when (ui-button :generator-generate "Generate" [gx (+ y h -44)] [88 32] false) (generate-text-preview))
+            (when (ui-button :generator-keep "Keep" [(+ gx 96) (+ y h -44)] [64 32] false) (save-text-resource))
+            (when (ui-button :generator-export "Download" [(+ gx 168) (+ y h -44)] [100 32] false) (export-text)))
         (do
           (when (ui-button :generator-play "Play" [gx (+ y h -44)] [72 32] false) (play-generated-sound))
           (when (ui-button :generator-keep "Keep" [(+ gx 80) (+ y h -44)] [72 32] false) (save-sound-resource))
-          (when (ui-button :generator-export "WAV" [(+ gx 160) (+ y h -44)] [72 32] false) (export-sound)))))))
+          (when (ui-button :generator-export "WAV" [(+ gx 160) (+ y h -44)] [72 32] false) (export-sound))))))))

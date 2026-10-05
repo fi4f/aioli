@@ -10,9 +10,12 @@
     <header>
       <a class="brand" href="../">aioli <span>all in one lisp</span></a>
       <nav aria-label="Documentation">
-        <a href="./">Start</a><a href="language.html">Language</a
-        ><a href="api.html" aria-current="page">APIs</a><a href="editor.html">Editor</a
-        ><a href="contributing.html">Contribute</a> <a href="projects.html">Projects</a>
+        <a href="./">Start</a>
+        <a href="language.html">Language</a>
+        <a href="api.html" aria-current="page">APIs</a>
+        <a href="editor.html">Editor</a>
+        <a href="projects.html">Projects</a>
+        <a href="contributing.html">Contribute</a>
       </nav>
     </header>
     <main>
@@ -265,9 +268,9 @@
       </p>
       <h2 id="widgets">Lisp widget library</h2>
       <p>
-        These are normal functions imported by <code>ui/components.lisp</code> from
-        <code>ui/</code>, not special language forms. Call them from <code>editor</code>; changing
-        their definitions changes the editor live.
+        These are normal functions imported by <code>editor/ui/components.lisp</code> from
+        <code>editor/ui/</code>, not special language forms. Call them from <code>editor</code>;
+        changing their definitions changes the editor live.
       </p>
       <div class="table-scroll">
         <table>
@@ -389,8 +392,8 @@
       <h2 id="buffers">Source buffers</h2>
       <p>
         Most projects should call <code>code-editor</code>. The following primitives allow an
-        alternative source widget. They supply data only; <code>ui/code-input.lisp</code> paints the
-        visible content.
+        alternative source widget. They supply data only;
+        <code>editor/ui/code-input.lisp</code> paints the visible content.
       </p>
       <div class="table-scroll">
         <table>
@@ -429,8 +432,38 @@
       </div>
       <p>
         Token kinds are <code>comment string keyword number delimiter symbol whitespace</code>.
-        <code>(token-color kind)</code> in <code>ui/code-input.lisp</code> chooses colors. Buffer
-        text is displayed even when it cannot yet be evaluated.
+        <code>(token-color kind)</code> in <code>editor/ui/code-input.lisp</code> chooses colors.
+        Buffer text is displayed even when it cannot yet be evaluated.
+      </p>
+      <h2 id="preview-hooks">Inspectable drawing and sound hooks</h2>
+      <pre><code>(defdraw badge [x y]
+  ["Badge" [160 120] [320 240]]
+  (scope
+    (fill "#bbd6a6")
+    (circle [x y] 20)))
+
+(defsound jump [pitch]
+  ["Jump" [300]]
+  (voice :sine pitch (* pitch 3) 0.15 0.3))
+
+(defn draw [] (badge 160 120))
+; Call this from gameplay:
+; (play-sound :jump 300)</code></pre>
+      <p>
+        <code>defdraw</code> and <code>defsound</code> define ordinary CPU Lisp functions. Drawing
+        hooks can call other drawing hooks; sound hooks can mix recipes by calling other sound
+        hooks. Use <code>scope</code> to restore drawing settings around a component. The optional
+        annotation is <code>["Title" [argument defaults] [canvas width height]]</code>. Omitted
+        argument defaults are zero; the default preview canvas is 320 by 240. Explicit defaults must
+        match the function's argument count. Canvas dimensions are 1–4096.
+      </p>
+      <p>
+        Open the source and click <strong>Hooks</strong>, then choose a declaration to inspect it.
+        The editor executes only that hook against copied state with application actions and input
+        disabled. Drawing previews start with fresh drawing state and a blank canvas. Edit the JSON
+        argument array and click Preview to rerun it. Sound previews provide a waveform, play/pause,
+        stop, a one-second forward button and click/drag seeking. Preview state never changes the
+        game. These declarations work in exported apps; only inspection UI belongs to the editor.
       </p>
       <h2 id="audio">Procedural audio</h2>
       <pre><code>(defn sound []
@@ -445,16 +478,18 @@
       <p>
         Voices sweep frequency linearly, apply a short attack/release, and mix into mono audio at
         44.1 kHz with soft clipping. Noise is seeded and reproducible.
-        <code>(play-sound)</code> auditions the current patch; <code>(export-wav)</code> downloads
-        it as PCM WAV. Playback may require a browser gesture first: click the game or Play control.
+        <code>(play-sound)</code> auditions the current patch;
+        <code>(play-sound :jump 300)</code> plays a named <code>defsound</code> hook with arguments;
+        <code>(export-wav)</code> downloads it as PCM WAV. Playback may require a browser gesture
+        first: click the game or Play control.
       </p>
       <pre><code>(init! :pitch 440)
 (defn sound []
   (voice :sine (get :pitch) 880 0.3 0.35))</code></pre>
       <p>
         A Lisp slider bound to <code>:pitch</code> and a code edit both change the same recipe. The
-        <strong>Sound</strong> tool supplies controls for waveform, frequencies, duration, gain, and
-        an overtone.
+        generator inspector supplies controls from annotated state fields, while the Hooks button
+        previews individual named sound recipes.
       </p>
       <h2 id="actions">Editor actions</h2>
       <div class="table-scroll">
@@ -490,7 +525,10 @@
                 <code>(scene-fields)</code>, <code>(scene-field-value key)</code>,
                 <code>(set-scene-field key value)</code>
               </td>
-              <td>Inspect live state using the shared generator/scene annotation schema.</td>
+              <td>
+                Inspect state belonging to the active scene (or game.lisp when no scene is running)
+                using the shared annotation schema.
+              </td>
             </tr>
             <tr>
               <td><code>(export-html)</code></td>
@@ -538,8 +576,16 @@
         See the <a href="projects.html#apis">project API reference</a> for file operations,
         generator previews and exports, and palette commands. Use
         <code>(set! :show-files true)</code> to show the file pane. Set <code>:window</code> to
-        <code>"image"</code>, <code>"audio"</code>, or <code>"palette"</code> to open a tool window;
-        set it to <code>""</code> to close it.
+        <code>"generator"</code> or <code>"palette"</code> to open a tool window; set it to
+        <code>""</code> to close it.
+      </p>
+      <p>
+        Image generators use <code>defpixel image</code>; audio generators use
+        <code>generate-sound</code>; text generators declare
+        <code>(generator :text "Title" "output.txt")</code> and return a string from
+        <code>generate-text</code>. All use annotated <code>init!</code>
+        fields for inspector controls. Text preview/save APIs and filename rules are detailed in the
+        <a href="projects.html#text-generators">text generator reference</a>.
       </p>
       <h2>Menus and source editing</h2>
       <p>
@@ -555,7 +601,7 @@
         <code>(menu-region id label origin size enabled checked)</code> declares a menu
         interaction/accessibility region. Pass <code>nil</code> for an ordinary item, or a boolean
         checked state for a checkbox item. <code>(pointer-moved?)</code> is true for one frame after
-        pointer movement. The stock menu helpers in <code>ui/menu.lisp</code> and
+        pointer movement. The stock menu helpers in <code>editor/ui/menu.lisp</code> and
         <code>editor/menu-bar.lisp</code> paint headings, items, separators and the dismissible
         dropdown.
       </p>
@@ -574,13 +620,13 @@
       </p>
       <h2 id="asset-preview">Asset preview services</h2>
       <p>
-        <code>(open-file path)</code> opens source tabs or image/audio preview windows.
-        <code>(asset-ready?)</code> and <code>(asset-status)</code> report decode readiness/errors;
-        <code>(asset-width)</code> / <code>(asset-height)</code> give decoded image dimensions.
-        <code>(asset-image origin size)</code> samples the decoded image in the pixel drawing
-        stream. The stock window uses <code>:preview-path</code>, <code>:preview-zoom</code> and
-        <code>:preview-pan-x</code> / <code>:preview-pan-y</code>. Zoom multiplies the fitted size;
-        pan is measured in screen pixels.
+        <code>(open-file path)</code> opens source tabs, generator inspectors, or image/audio/text
+        resource previews. <code>(asset-ready?)</code> and <code>(asset-status)</code> report decode
+        readiness/errors; <code>(asset-width)</code> / <code>(asset-height)</code> give decoded
+        image dimensions. <code>(asset-image origin size)</code> samples the decoded image in the
+        pixel drawing stream. The stock window uses <code>:preview-path</code>,
+        <code>:preview-zoom</code> and <code>:preview-pan-x</code> / <code>:preview-pan-y</code>.
+        Zoom multiplies the fitted size; pan is measured in screen pixels.
       </p>
       <p>
         <code>(asset-waveform origin size)</code> draws the decoded audio envelope with the current

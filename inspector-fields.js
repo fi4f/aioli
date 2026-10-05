@@ -99,8 +99,9 @@ export const fieldRow = (field) => [
 ];
 
 /** Describe live fields not declared in source, including fields created by hooks. */
-export function liveFields(declared, state) {
-  for (const [key, value] of Object.entries(state)) {
+export function liveFields(declared, state, owned = Object.keys(state)) {
+  for (const key of owned) {
+    const value = state[key];
     if (
       ['active-scene', 'entry-scene-request'].includes(key) ||
       declared.some((field) => field.key === key)
@@ -115,4 +116,24 @@ export function liveFields(declared, state) {
     );
   }
   return declared.filter((field) => field.key in state);
+}
+
+/** Literal references cover shader parameters and conditional CPU paths. */
+export function referencedStateKeys(forms, keys = new Set()) {
+  const visit = (node) => {
+    if (Array.isArray(node)) {
+      if (['init!', 'set!', 'get', 'param'].some((name) => isSym(node[0], name))) {
+        const key =
+          node[1]?.type === 'string'
+            ? node[1].value
+            : node[1]?.name?.startsWith(':')
+              ? node[1].name.slice(1)
+              : null;
+        if (key) keys.add(key);
+      }
+      node.forEach(visit);
+    } else if (node?.type === 'vector') node.items.forEach(visit);
+  };
+  forms.forEach(visit);
+  return keys;
 }

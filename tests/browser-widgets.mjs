@@ -322,7 +322,7 @@ try {
     false,
   );
   assert.equal(
-    await page.evaluate(() => window.aioli.regions.some((r) => r.resourcePath === 'generators')),
+    await page.evaluate(() => window.aioli.regions.some((r) => r.resourcePath === 'editor')),
     true,
   );
   assert.equal(
@@ -442,8 +442,9 @@ try {
   await page.waitForFunction(() => window.aioli.state.x === 60 && window.aioli.state.paused);
   await page.screenshot({ path: 'artifacts/command-palette.png' });
   await type('center-player');
-  await click('command-commands/center-player.command.lisp');
-  await page.waitForFunction(() => window.aioli.state.x === 160);
+  await click('command-examples/commands/center-player.command.lisp');
+  await page.waitForFunction(() => window.aioli.applicationState.x === 160);
+  assert.equal(await page.evaluate(() => window.aioli.applicationState.vy), 0);
   await page.keyboard.press('Escape');
   await openFiles();
   await click('image-generator');
@@ -568,7 +569,7 @@ try {
 
   await click('close-window');
   await palette(
-    '(create-file "commands/custom.command.lisp" "(set! :x 23) (init! :command-runs 0) (set! :command-runs (+ (get :command-runs) 1))")',
+    '(create-file "commands/custom.command.lisp" "(set! :x 23) (init! :command-runs 0) (set! :command-runs (+ (get :command-runs) 1)) (game-set! :command-game (get :command-runs)) (set! :command-result (game-get :command-game))")',
   );
   await page.waitForFunction(
     () => window.aioli.sources['commands/custom.command.lisp'] && !window.aioli.pending,
@@ -586,6 +587,10 @@ try {
   await click('run-commands/custom.command.lisp');
   await page.waitForFunction(
     () => window.aioli.state.x === 23 && window.aioli.status.includes('Executed'),
+  );
+  assert.equal(
+    await page.evaluate(() => window.aioli.editorState['command-result']),
+    await page.evaluate(() => window.aioli.applicationState['command-game']),
   );
   assert.equal(await page.evaluate(() => window.aioli.state.tab), activeBeforeRun);
   assert.equal(await page.evaluate(() => window.aioli.state.window), '');
@@ -623,7 +628,7 @@ try {
   await click('export');
   await (await download).saveAs('artifacts/project-v3.json');
   const project = JSON.parse(await readFile('artifacts/project-v3.json', 'utf8'));
-  assert.equal(project.version, 12);
+  assert.equal(project.version, 17);
   assert.ok(project.files['lib/math.lisp']);
   assert.ok(project.resources['assets/generated.png']);
   assert.ok(project.resources['assets/generated.wav']);
@@ -645,15 +650,15 @@ try {
   // An older/custom saved shell remains the project source in recovery. File
   // operations must not silently switch back to that shell after evaluation.
   const oldEditor = '(defn draw [] (background "#101613"))\n; custom old editor';
-  const oldUI = project.files['ui/components.lisp'] + '\n; custom old library';
+  const oldUI = project.files['editor/ui/components.lisp'] + '\n; custom old library';
   const oldProject = {
     ...project,
     recovery: false,
-    files: { ...project.files, 'main.lisp': oldEditor, 'ui/components.lisp': oldUI },
+    files: { ...project.files, 'main.lisp': oldEditor, 'editor/ui/components.lisp': oldUI },
   };
-  oldProject.files['generators/audio.generator.lisp'] =
+  oldProject.files['examples/generators/audio.generator.lisp'] =
     '(init! :sound-wave "sine") (init! :sound-pitch 440) (init! :sound-end 880) (init! :sound-duration 0.3) (init! :sound-gain 0.35)\n' +
-    oldProject.files['generators/audio.generator.lisp'];
+    oldProject.files['examples/generators/audio.generator.lisp'];
   await page.locator('#file-input').setInputFiles({
     name: 'old-project.json',
     mimeType: 'application/json',
@@ -696,7 +701,7 @@ try {
   );
   assert.equal(await page.evaluate(() => window.aioli.sources['main-backup-1.lisp']), oldEditor);
   assert.equal(
-    await page.evaluate(() => window.aioli.sources['ui/components-backup-1.lisp']),
+    await page.evaluate(() => window.aioli.sources['editor/ui/components-backup-1.lisp']),
     oldUI,
   );
   await openFiles();
@@ -771,7 +776,8 @@ try {
     applicationState: {},
     files: {
       ...project.files,
-      'generators/audio.generator.lisp': oldProject.files['generators/audio.generator.lisp'],
+      'examples/generators/audio.generator.lisp':
+        oldProject.files['examples/generators/audio.generator.lisp'],
       'game.lisp': lifecycleGame,
       'main.lisp': project.files['main.lisp'],
       'scene.lisp': '(unused-error)',

@@ -60,18 +60,20 @@ export function engineServices({
   };
   services.attach = (runtime) => {
     runtime.global['active-scene'] = () => runtime.state['active-scene'] ?? '';
-    runtime.drawFrame = (width = 320, height = 240) => {
+    runtime.drawFrame = (width = 320, height = 240, name = 'draw', args = []) => {
       frameDraw = new DrawList(width, height);
       try {
-        if (typeof runtime.global.draw === 'function') runtime.call('draw');
+        if (typeof runtime.global[name] === 'function') runtime.call(name, ...args);
         return frameDraw;
       } finally {
         frameDraw = null;
       }
     };
-    runtime.collectSound = () => {
+    runtime.collectSound = (name = 'sound', ...args) => {
       patch = [];
-      if (typeof runtime.global.sound === 'function') runtime.call('sound');
+      if (name !== 'sound' && runtime.global[name]?.hook?.kind !== 'sound')
+        throw new Error(`Missing sound hook ${name}`);
+      if (typeof runtime.global[name] === 'function') runtime.call(name, ...args);
       return patch;
     };
     return runtime;

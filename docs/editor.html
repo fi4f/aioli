@@ -10,9 +10,12 @@
     <header>
       <a class="brand" href="../">aioli <span>all in one lisp</span></a>
       <nav aria-label="Documentation">
-        <a href="./">Start</a><a href="language.html">Language</a><a href="api.html">APIs</a
-        ><a href="editor.html" aria-current="page">Editor</a
-        ><a href="contributing.html">Contribute</a> <a href="projects.html">Projects</a>
+        <a href="./">Start</a>
+        <a href="language.html">Language</a>
+        <a href="api.html">APIs</a>
+        <a href="editor.html" aria-current="page">Editor</a>
+        <a href="projects.html">Projects</a>
+        <a href="contributing.html">Contribute</a>
       </nav>
     </header>
     <main>
@@ -25,17 +28,17 @@
       <h2>The workspace</h2>
       <p>
         <strong>View → Code pane</strong> shows or hides source.
-        <strong>View → Scene inspector</strong> opens graphics/sound controls.
+        <strong>View → Scene inspector</strong> views and edits live game/scene state.
         <strong>Project → Run / Evaluate</strong> evaluates the current project. On a narrow screen,
         hide Code to see the game at a useful size.
       </p>
       <p>
-        Source tabs initially include <code>scene</code>, <code>game</code>, <code>audio</code>,
-        <code>editor</code> and <code>ui</code>. Clicking any source in the Files pane opens a tab,
-        or selects its existing tab. Each buffer retains its cursor, selection, scroll position and
-        undo history while switching. Close a tab with its x; the source remains in the project.
-        Overflow arrows browse tabs that do not fit. A star marks a draft that differs from the
-        accepted source. The open tab list and selected tab are saved with the project.
+        Source tabs initially contain <code>main.lisp</code> and <code>game.lisp</code>. Clicking
+        any source in the Files pane opens a tab, or selects its existing tab. Each buffer retains
+        its cursor, selection, scroll position and undo history while switching. Close a tab with
+        its x; the source remains in the project. Overflow arrows browse tabs that do not fit. A
+        star marks a draft that differs from the accepted source. The open tab list and selected tab
+        are saved with the project.
       </p>
       <p>
         Clicking an image opens a preview with drag-to-pan, wheel zoom, +/- controls, Fit and 1:1.
@@ -44,10 +47,10 @@
         <a href="projects.html#previews">asset previews</a>.
       </p>
       <p>
-        The root <code>main.lisp</code> and <code>ui/components.lisp</code> import the editor
-        modules. <code>ui/</code> holds reusable controls; <code>editor/</code> holds complete panes
-        and widgets. Open these files from the explorer and edit them live. Browser edits belong to
-        the saved project rather than changing the repository on disk.
+        The root <code>main.lisp</code> and <code>editor/ui/components.lisp</code> import the editor
+        modules. <code>editor/ui/</code> holds reusable controls; <code>editor/</code> holds
+        complete panes and widgets. Open these files from the explorer and edit them live. Browser
+        edits belong to the saved project rather than changing the repository on disk.
       </p>
       <h2 id="menus">The menu bar</h2>
       <p>
@@ -56,17 +59,18 @@
       </p>
       <ul>
         <li>
-          <strong>File:</strong> new source, open/save project JSON, import resources,
-          download/rename/delete selected files, export the game PNG. Entry files cannot be renamed
-          or deleted.
+          <strong>File:</strong> new project, new/open/save individual files, open/save project
+          JSON, import resources, download/rename/delete selected files, export the game PNG. Entry
+          files cannot be renamed or deleted.
         </li>
         <li>
-          <strong>Project:</strong> run/evaluate, play/pause, reset state, next demo scene, adopt
-          the latest editor while in recovery.
+          <strong>Project:</strong> run/evaluate, play/pause, reset state, toggle automatic
+          re-evaluation, adopt the latest editor while in recovery.
         </li>
         <li>
-          <strong>View:</strong> code/files panes, scene inspector, image/audio generators, command
-          palette, compiled WGSL, recovery shell; return to the project editor while recovering.
+          <strong>View:</strong> code/files panes, scene inspector, image/audio/text generator
+          inspectors, command palette, compiled WGSL, recovery shell; return to the project editor
+          while recovering.
         </li>
         <li>
           <strong>Edit:</strong> undo/redo, cut/copy/paste, select all. Undo history belongs to each
@@ -95,10 +99,11 @@
         while you type.
       </p>
       <p>
-        A short pause in typing triggers evaluation. Press <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> +
-        <kbd>Enter</kbd> or Run to evaluate immediately. All source buffers are checked together.
-        Valid changes replace the working runtime and shader; failed changes leave them running and
-        show an error in the status bar. Click an error to open its full diagnostic text.
+        With Project → Automatic re-evaluation enabled, a 500 ms pause in typing triggers
+        evaluation. Press <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Enter</kbd> or Run to evaluate
+        immediately. All source buffers are checked together. Valid changes replace the working
+        runtime and shader; failed changes leave them running and show an error in the status bar.
+        Click an error to open its full diagnostic text.
       </p>
       <p class="note">
         A visible unfinished string is valid editor text, but it is not yet valid code. Finish its
@@ -125,24 +130,76 @@
       </p>
       <h2>Scene inspector and playback</h2>
       <p>
-        View → Scene inspector displays live state from the active scene and its application. It
-        supports sliders, choices, booleans, colors and editable text. Optional
+        View → Scene inspector displays fields belonging to the currently running scene, including
+        its imports and fields created by its hooks. If no scene is active, it inspects game.lisp
+        instead. Values left in shared state by earlier scenes and unrelated game.lisp fields are
+        hidden. It supports sliders, choices, booleans, colors and editable text. Optional
         <code>init!</code> annotations supply labels, limits, steps, or choices:
       </p>
       <pre><code>(init! :radius 20 ["Radius" 5 80 0.5])
 (init! :mode "round" ["Mode" ["round" "square"]])
 (init! :enabled true ["Enabled"])</code></pre>
       <p>
-        Values update the running application immediately. Editor state remains separate.
-        Unannotated fields receive inferred controls; fields created by hooks appear too. Use the
-        mouse wheel or draggable scrollbar for more fields. Arrows at the top and bottom indicate
-        hidden content. Text edits use Apply; colors open a picker.
+        Values update the running scene immediately. Shared game state retains earlier values for
+        transitions; inspector visibility is scoped to the active scene. Editor state remains
+        separate. Unannotated fields receive inferred controls; fields created by hooks appear too.
+        Use the mouse wheel or draggable scrollbar for more fields. Arrows at the top and bottom
+        indicate hidden content. Text edits use Apply; colors open a picker.
       </p>
       <p>
         A controller marks game.lisp, gears mark generators, and movie clappers mark scenes. Click a
-        scene's play button to switch the preview; click game.lisp's play button to restart with
-        fresh state. Failed scenes keep the last working preview. Browse the editable scenes in
-        examples/; playback never rewrites source.
+        scene's play button to switch the preview; main.lisp's run button executes the whole project
+        like Ctrl+Enter. Click game.lisp's play button to restart with fresh state. Failed scenes
+        keep the last working preview. Browse the editable scenes in examples/; playback never
+        rewrites source.
+      </p>
+      <h2>Creating files and scrolling the tree</h2>
+      <p>
+        File → New file offers None, Script, Scene, Command and Generator. Script adds
+        <code>.lisp</code>; Scene, Command and Generator add their role suffix. Existing Lisp
+        suffixes are replaced rather than doubled. None keeps the exact name and creates an empty
+        buffer. Generators offer Image, Audio and Text starters. The dialog shows the final filename
+        before creation.
+      </p>
+      <p>
+        The Files pane scrolls vertically with the wheel and horizontally with Shift+wheel or a
+        trackpad's horizontal gesture. Drag either scrollbar when its content overflows. Long names
+        and deep indentation scroll together; folder expansion, selection and scroll position
+        survive collapsing and restoring the pane.
+      </p>
+      <h2>Text generators</h2>
+      <p>
+        Text recipes declare <code>(generator :text "Title" "levels/generated.csv")</code> and
+        return a string from <code>generate-text</code>. Annotated fields drive the preview.
+        Generate explicitly reruns the hook, Keep stores its UTF-8 output, and Download stores and
+        downloads it. Click a kept text resource to inspect it in a read-only source view. See the
+        <a href="projects.html#text-generators">text generator guide</a> for examples and limits.
+      </p>
+      <h2>Folders and evaluation</h2>
+      <p>
+        Right-click a file, folder or blank area in Files to create a folder. Folder menus also
+        offer Rename folder, Move folder and Delete folder, with a count of contained files. Enter a
+        full project path to rename or move a folder, or drag it onto another folder or the Project
+        files header. Empty folders persist in project saves. Moves update child paths, relative
+        imports, literal asset/scene references and open tabs together; destinations are never
+        overwritten. Delete removes all descendants. If a required import or active scene would
+        become invalid, deletion keeps the original folder and reports the reference that must be
+        changed first. These actions change project data, rather than directories on disk.
+      </p>
+      <p>
+        Project / Automatic re-evaluation controls whether source edits execute after the usual
+        debounce. It is enabled by default and saved with the project. Turning it off cancels a
+        pending evaluation; Ctrl+Enter, Run / Evaluate and the main.lisp run button still execute
+        explicitly. Turning it back on evaluates pending edits.
+      </p>
+      <h2>Previewing individual hooks</h2>
+      <p>
+        Declare a composable drawing function with <code>defdraw</code> or a sound effect with
+        <code>defsound</code>. The code pane's Hooks button lists these declarations. Drawing
+        previews run the selected function on a fresh canvas; sound previews offer waveform seeking,
+        play/pause, stop and a one-second forward button. Edit preview arguments as a JSON array and
+        click Preview. Inspection uses a private state copy and leaves gameplay running
+        independently. See <a href="api.html#preview-hooks">hook syntax and examples</a>.
       </p>
       <h2>Extending the editor</h2>
       <p>

@@ -1,4 +1,4 @@
-/* The editor's appearance and layout live in editor.lisp and ui/components.lisp. */
+/* The editor's appearance and layout live in main.lisp and editor/ui/components.lisp. */
 :root {
   color-scheme: dark;
 }

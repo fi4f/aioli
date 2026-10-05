@@ -1,4 +1,16 @@
-import { inspectorFields, liveFields, fieldRow } from './inspector-fields.js';
+import { textOutput, textMime } from './text-generator.js';
+import { newFilePath, newFileCode } from './file-templates.js';
+import {
+  savedFolders,
+  folderPaths,
+  validateFolderPath,
+  planFolderMove,
+  filePaths,
+  insideFolder,
+} from './folder-operations.js';
+import { sourceHooks } from './hook-definitions.js';
+import { previewHook } from './hook-preview.js';
+import { inspectorFields, liveFields, fieldRow, referencedStateKeys } from './inspector-fields.js';
 import { launchApplication } from './application.js';
 import { engineServices } from './engine-services.js';
 import { applicationFiles } from './application-files.js';
@@ -18,7 +30,7 @@ import { editorSourcePaths } from './editor-sources.js';
 import { openTab, closeTab, renameTab, tabLayout } from './code-tabs.js';
 import { AssetPreview } from './asset-preview.js';
 import { stageScene, callHook, callLifecycle, isScenePath, selectScene } from './scenes.js';
-import { normalizeSource } from './source-text.js';
+import { normalizeSource, displaySource } from './source-text.js';
 import { assetKind, isCommandFile, projectTree, toggleFolder } from './file-tree.js';
 import { generatorSources } from './generators.js';
 import { stageGenerators, fieldValue } from './generator-inspector.js';
@@ -64,7 +76,8 @@ const sources = Object.assign(Object.create(null), defaults);
 let resources = Object.assign(Object.create(null), bundledResources),
   generatedSound;
 let generatorPrograms = [],
-  sceneFields = [];
+  sceneFields = [],
+  sceneStateKeys = new Set();
 let sceneColorKey = null;
 const selectedGenerator = (programs, target) =>
   programs.find((program) => program.path === target['active-generator']) ?? programs[0];
@@ -75,7 +88,7 @@ const outputGenerator = (programs, target, output) => {
     : (programs.find((program) => program.path === target[`${output}-generator-path`]) ??
         programs.find((program) => program.output === output));
 };
-const transientBuffers = { __palette: '', __path: 'lib/new.lisp' };
+const transientBuffers = { __palette: '', __path: 'lib/new.lisp', __hookArgs: '[]' };
 Object.assign(sources, transientBuffers);
 const resourceRows = (sourceStore = sources, resourceStore = resources) => [
   ...Object.keys(sourceStore)
@@ -132,7 +145,7 @@ const guide = `AIOLI / all in one lisp
 The editor is an aioli app.
 Edit main.lisp for editor layout and behavior.
 Edit game.lisp for the embedded application.
-Edit ui/components.lisp for button and slider implementations.
+Edit editor/ui/components.lisp for button and slider implementations.
 Every visible element is a WebGPU pixel primitive.
 
 Ctrl/Cmd+Enter  Evaluate all programs
@@ -170,7 +183,7 @@ compile into WGSL. (param :key) reads shared state.
 The editor emits an ordered drawing stream that
 WebGPU evaluates per pixel on a fullscreen quad.
 
-Widgets in ui/components.lisp are ordinary Lisp functions.
+Widgets in editor/ui/components.lisp are ordinary Lisp functions.
 You can change their shape, colors, layout, and
 interaction logic while the app is running.
 
@@ -247,6 +260,35 @@ setInterval(() => {
 }, 1500);
 window.addEventListener('focus', () => void refreshAssetsFromDisk());
 
+let hookPreview = null;
+async function inspectHook(path, name, args) {
+  const stores = applicationFiles(sources, state['editor-owned-files']);
+  const files = path in stores.game ? stores.game : stores.editor;
+  const result = previewHook({
+    files,
+    path,
+    name,
+    state: path in stores.game ? applicationState : state,
+    args,
+    entry: path in stores.game ? 'game.lisp' : undefined,
+    resource: (path) => resources[resolvePath(path)]?.data ?? '',
+  });
+  if (result.pcm)
+    result.resource = {
+      mime: 'audio/wav',
+      data: await asDataURL(new Blob([wav(result.pcm)], { type: 'audio/wav' })),
+    };
+  hookPreview = result;
+  sources.__hookArgs = JSON.stringify(result.args);
+  code.forgetBuffer('__hookArgs');
+  if (result.kind === 'sound') {
+    state['preview-path'] = `Sound hook / ${result.title}`;
+    await assetPreview.open(state['preview-path'], result.resource, 'audio');
+    state.window = 'hook-sound';
+  } else state.window = 'hook-draw';
+  report(`Preview / ${result.title}`);
+}
+
 function report(text, isError = false) {
   message = text;
   error = isError;
@@ -300,7 +342,11 @@ const code = new CodeInput($('text-input'), sources, (tab) => {
   if (tab.startsWith('__')) return;
   revision++;
   clearTimeout(timer);
-  timer = setTimeout(() => evaluate(), 500);
+  if (state['auto-evaluate'] !== false)
+    timer = setTimeout(() => {
+      if (state['auto-evaluate'] !== false) evaluate();
+    }, 500);
+  else report('Edits pending / Ctrl+Enter to run');
 });
 
 const assetPreview = new AssetPreview(
@@ -310,6 +356,19 @@ const assetPreview = new AssetPreview(
 function previewAsset(path) {
   const resource = resources[path];
   const kind = assetKind(path, 'asset', resource?.mime);
+  if (
+    resource &&
+    (/^text\//.test(resource.mime) || /^application\/(json|xml)(;|$)/.test(resource.mime))
+  ) {
+    const encoded = resource.data.slice(resource.data.indexOf(',') + 1);
+    sources.__textResource = new TextDecoder().decode(
+      Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0)),
+    );
+    state['preview-path'] = path;
+    state.window = 'text-asset';
+    code.forgetBuffer('__textResource');
+    return;
+  }
   if (kind !== 'image' && kind !== 'audio') {
     report(`${path} • ${resource?.mime ?? 'asset'}`);
     return;
@@ -352,8 +411,18 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       if (patch.length >= 16) throw new Error('Maximum 16 voices');
       patch.push(validateVoice(...args));
     },
-    playSound: () => {
-      if (live()) playPatch().catch((e) => report(e.message, true));
+    playSound: (name = 'sound', ...args) => {
+      if (live()) {
+        try {
+          const pcm =
+            name === 'sound'
+              ? (refreshAudio(), samples)
+              : synthesize(result.collectSound(name, ...args));
+          playSamples(pcm).catch((e) => report(e.message, true));
+        } catch (e) {
+          report(e.message, true);
+        }
+      }
     },
     exportWav: () => {
       if (live()) exportWav();
@@ -399,6 +468,40 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       'screen-height': () => innerHeight,
       'edit-buffer': actions((action) => code.edit(action)),
       'can-edit-buffer?': (action) => code.canEdit(action),
+      'toggle-auto-evaluate': actions(() => {
+        state['auto-evaluate'] = state['auto-evaluate'] === false;
+        clearTimeout(timer);
+        dirty = true;
+        if (
+          state['auto-evaluate'] &&
+          Object.entries(sources).some(
+            ([key, text]) => !key.startsWith('__') && text !== committedSources[key],
+          )
+        )
+          runProject();
+      }),
+      'prepare-folder-path': actions((operation = 'create') => {
+        const path = state['context-path'] ?? '';
+        const parent =
+          state['context-kind'] === 'folder'
+            ? path + '/'
+            : path.slice(0, path.lastIndexOf('/') + 1);
+        sources.__path = operation === 'create' ? parent + 'new-folder' : path;
+        state['folder-source'] = path;
+        state['file-operation'] = 'folder-' + operation;
+        state['file-context'] = false;
+        state.window = 'file-path';
+        state['file-path-editing'] = false;
+      }),
+      'apply-folder-path': actions((path) =>
+        state['file-operation'] === 'folder-create'
+          ? createProjectFolder(path)
+          : moveProjectFolder(state['folder-source'], path),
+      ),
+      'folder-file-count': (path) =>
+        filePaths(visibleSources(), visibleResources()).filter((file) => insideFolder(file, path))
+          .length,
+      'delete-folder': actions((path) => deleteProjectFolder(path)),
       'prepare-file-path': actions((rename = false) => {
         const contextPath = state['context-path'] ?? '';
         const folder =
@@ -409,6 +512,10 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
               : '';
         sources.__path = rename ? state['selected-file'] : folder + 'new.lisp';
         state['file-operation'] = rename ? 'rename' : 'create';
+        if (!rename) {
+          state['new-file-type'] = 'script';
+          state['new-generator-output'] = 'image';
+        }
         state['file-path-editing'] = false;
         state['file-context'] = false;
         state.window = 'file-path';
@@ -422,9 +529,11 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       },
       'active-scene': () => (result.applicationState ?? applicationState)['active-scene'] ?? '',
       'playable-file?': (path) =>
-        (path === 'game.lisp' || isScenePath(path)) && sourceKey(path) in visibleSources(),
+        (['main.lisp', 'game.lisp'].includes(path) || isScenePath(path)) &&
+        sourceKey(path) in visibleSources(),
       'play-file': actions(async (path) => {
         path = resolvePath(path);
+        if (path === 'main.lisp') return runProject();
         if (path !== 'game.lisp' && !isScenePath(path))
           throw new Error('Expected game.lisp or a scene file');
         if (await evaluate(path === 'game.lisp' ? { restart: true } : { scene: path })) {
@@ -450,13 +559,16 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         liveFields(
           result.sceneFields ?? sceneFields,
           result.applicationState ?? applicationState,
+          result.sceneStateKeys ?? sceneStateKeys,
         ).map(fieldRow),
       'scene-field-value': (key) => (result.applicationState ?? applicationState)[key],
       'set-scene-field': (key, value) => {
         const data = result.applicationState ?? applicationState;
-        const field = liveFields(result.sceneFields ?? sceneFields, data).find(
-          (field) => field.key === key,
-        );
+        const field = liveFields(
+          result.sceneFields ?? sceneFields,
+          data,
+          result.sceneStateKeys ?? sceneStateKeys,
+        ).find((field) => field.key === key);
         if (!field) throw new Error('Unknown scene field');
         data[key] = fieldValue(field, value);
         dirty = true;
@@ -465,6 +577,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         const field = liveFields(
           result.sceneFields ?? sceneFields,
           result.applicationState ?? applicationState,
+          result.sceneStateKeys ?? sceneStateKeys,
         ).find((field) => field.key === key);
         const region = items.findLast((region) => region.key === '__scene-' + key);
         if (region && field) region.step = field.step;
@@ -473,9 +586,12 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         liveFields(
           result.sceneFields ?? sceneFields,
           result.applicationState ?? applicationState,
+          result.sceneStateKeys ?? sceneStateKeys,
         ).find((field) => field.key === target['scene-edit-key'])?.kind ?? '',
       'edit-scene-field': actions((key) => {
-        const field = liveFields(sceneFields, applicationState).find((field) => field.key === key);
+        const field = liveFields(sceneFields, applicationState, sceneStateKeys).find(
+          (field) => field.key === key,
+        );
         if (!field) throw new Error('Unknown scene field');
         state['scene-edit-key'] = key;
         sources.__sceneValue = String(applicationState[key]);
@@ -488,7 +604,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         }
       }),
       'apply-scene-field': actions(() => {
-        const field = liveFields(sceneFields, applicationState).find(
+        const field = liveFields(sceneFields, applicationState, sceneStateKeys).find(
           (field) => field.key === state['scene-edit-key'],
         );
         if (field) applicationState[field.key] = fieldValue(field, sources.__sceneValue);
@@ -520,13 +636,41 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           resourceKind: kind,
           assetKind,
         }),
-      'project-tree-offset': () => treeOffset(target, rowsForTarget()),
-      'project-tree': () =>
-        projectTree(rowsForTarget(), target['open-folders']).slice(
-          treeOffset(target, rowsForTarget()),
-          treeOffset(target, rowsForTarget()) + 64,
+      'project-tree-offset': (capacity) => treeOffset(target, rowsForTarget(), capacity),
+      'project-tree-width': () =>
+        Math.max(
+          0,
+          ...projectTree(
+            rowsForTarget(),
+            target['open-folders'],
+            savedFolders(target['project-folders']),
+          ).map(
+            (row) =>
+              row[4] * 14 +
+              (isCommandFile(row[0]) ||
+              ['main.lisp', 'game.lisp'].includes(row[0]) ||
+              isScenePath(row[0])
+                ? 58
+                : 36) +
+              displaySource(row[3]).length * 8 +
+              8,
+          ),
         ),
-      'project-tree-count': () => projectTree(rowsForTarget(), target['open-folders']).length,
+      'project-tree': (capacity) =>
+        projectTree(
+          rowsForTarget(),
+          target['open-folders'],
+          savedFolders(target['project-folders']),
+        ).slice(
+          treeOffset(target, rowsForTarget(), capacity),
+          treeOffset(target, rowsForTarget(), capacity) + 64,
+        ),
+      'project-tree-count': () =>
+        projectTree(
+          rowsForTarget(),
+          target['open-folders'],
+          savedFolders(target['project-folders']),
+        ).length,
       'toggle-folder': actions((path) => {
         state['open-folders'] = toggleFolder(state['open-folders'], path);
         state['file-offset'] = 0;
@@ -565,6 +709,51 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       'code-tabs-before?': () => tabs.before,
       'code-tabs-after?': () => tabs.after,
       'active-code-path': () => sourcePath(target.tab ?? ''),
+      'source-hooks': () => {
+        try {
+          return sourceHooks(
+            parse(
+              visibleSources()[
+                sourceKey(
+                  target.window === 'hooks' ? target['hook-path'] : sourcePath(target.tab ?? ''),
+                )
+              ] ?? '',
+            ),
+          ).map((h) => [h.name, h.kind, h.title]);
+        } catch {
+          return [];
+        }
+      },
+      'open-hooks': actions(() => {
+        state['hook-path'] = sourcePath(state.tab);
+        state['hook-offset'] = 0;
+        state.window = 'hooks';
+      }),
+      'inspect-hook': actions((name) => inspectHook(state['hook-path'], name)),
+      'hook-title': () => hookPreview?.title ?? 'Source hooks',
+      'hook-parameters': () => hookPreview?.params.join(', ') ?? '',
+      'hook-draw-preview': (origin, size) => {
+        if (hookPreview?.draw) {
+          const canvas = hookPreview.draw;
+          const scale = Math.min(size[0] / canvas.width, size[1] / canvas.height);
+          draw.composite(
+            canvas,
+            [
+              origin[0] + (size[0] - canvas.width * scale) / 2,
+              origin[1] + (size[1] - canvas.height * scale) / 2,
+            ],
+            [canvas.width * scale, canvas.height * scale],
+          );
+        }
+      },
+      'refresh-hook-preview': actions(() =>
+        inspectHook(hookPreview.path, hookPreview.name, JSON.parse(sources.__hookArgs)),
+      ),
+      'back-to-hooks': actions(() => {
+        assetPreview.close();
+        state.window = 'hooks';
+      }),
+
       'open-file': actions((path) => {
         path = resolvePath(path);
         const key = sourceKey(path);
@@ -575,6 +764,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
                 state.window = 'generator';
                 state['selected-file'] = path;
                 state['inspector-offset'] = 0;
+                state['text-preview-offset'] = state['text-preview-x'] = 0;
               }
             });
           openTab(state, sources, key);
@@ -588,13 +778,14 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           return previewAsset(path);
         } else throw new Error(`Missing file ${path}`);
       }),
+      'new-file-path': newFilePath,
+      'new-file-code': newFileCode,
       'create-file': actions((path, text = '; New project module\n') => {
         path = resolvePath(path);
+        assertFileDestination(path);
         if (path.startsWith('__'))
           throw new Error('Names beginning with __ are reserved for input buffers');
         const key = sourceKey(path);
-        if (!path.endsWith('.lisp') && !isScenePath(path))
-          throw new Error('Source files must end in .lisp');
         if (key in sources || path in resources) throw new Error(`File already exists: ${path}`);
         if (Object.keys(sources).length >= 258) throw new Error('Maximum 256 source files');
         if (typeof text !== 'string' || text.length > 100000)
@@ -611,6 +802,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       'rename-file': actions((oldPath, newPath) => {
         oldPath = resolvePath(oldPath);
         newPath = resolvePath(newPath);
+        assertFileDestination(newPath);
         if (newPath.startsWith('__'))
           throw new Error('Names beginning with __ are reserved for input buffers');
         if (['main.lisp', 'game.lisp'].includes(oldPath))
@@ -710,6 +902,43 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         )?.kind ?? '',
       'generator-output': () =>
         selectedGenerator(result.generators ?? generatorPrograms, target)?.output ?? '',
+      'generator-text': () =>
+        textOutput(selectedGenerator(result.generators ?? generatorPrograms, target)).text,
+      'generator-text-error': () =>
+        textOutput(selectedGenerator(result.generators ?? generatorPrograms, target)).error,
+      'generator-text-line-count': () =>
+        textOutput(selectedGenerator(result.generators ?? generatorPrograms, target)).lines.length,
+      'generator-filename': () =>
+        selectedGenerator(result.generators ?? generatorPrograms, target)?.filename ??
+        'generated.txt',
+      'generate-text-preview': actions(() => {
+        textOutput(selectedGenerator(generatorPrograms, state), true);
+        dirty = true;
+      }),
+      'text-preview': (origin, size) => {
+        const output = textOutput(
+          selectedGenerator(result.generators ?? generatorPrograms, target),
+        );
+        const lines = output.lines;
+        const offset = target['text-preview-offset'] ?? 0;
+        const first = Math.floor(offset / 18);
+        draw.scope();
+        draw.clip(origin, size);
+        draw.fill(output.error ? '#e8ac94' : target['ui-text']);
+        for (let i = first; i < Math.min(lines.length, first + Math.ceil(size[1] / 18) + 1); i++)
+          draw.text(
+            [origin[0] + 4 - ((target['text-preview-x'] ?? 0) % 8), origin[1] + i * 18 - offset],
+            displaySource(
+              lines[i].slice(
+                Math.floor((target['text-preview-x'] ?? 0) / 8),
+                Math.floor((target['text-preview-x'] ?? 0) / 8) + Math.ceil(size[0] / 8) + 1,
+              ),
+            ),
+          );
+        draw.restore();
+      },
+      'export-text': actions(() => exportGeneratedText(true)),
+      'save-text-resource': actions(() => exportGeneratedText(false)),
       'generator-fields': () =>
         (selectedGenerator(result.generators ?? generatorPrograms, target)?.fields ?? []).map(
           (field) => [
@@ -743,6 +972,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         if (await evaluateGeneratorSelection(path)) {
           state.window = 'generator';
           state['inspector-offset'] = 0;
+          state['text-preview-offset'] = state['text-preview-x'] = 0;
         }
       }),
       'edit-generator-field': actions((key) => {
@@ -892,7 +1122,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
             size,
             tab,
             text,
-            !(tab in visibleSources()),
+            tab === '__textResource' || !(tab in visibleSources()),
             performance.now(),
           );
           if ((tab === '__palette' && focusPalette) || (tab === '__path' && focusPath)) {
@@ -931,7 +1161,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       },
       status: () => message,
       'error?': () => error,
-      'evaluate-project': actions(() => evaluate()),
+      'evaluate-project': actions(() => runProject()),
       'reset-project': actions(() => evaluate({ reset: true })),
       'recovery?': () => recovery,
       'leave-recovery': actions(() => {
@@ -1022,9 +1252,11 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       draw = null;
     }
   };
-  result.collectSound = () => {
+  result.collectSound = (name = 'sound', ...args) => {
     patch = [];
-    if (typeof result.global.sound === 'function') result.call('sound');
+    if (name !== 'sound' && result.global[name]?.hook?.kind !== 'sound')
+      throw new Error(`Missing sound hook ${name}`);
+    if (typeof result.global[name] === 'function') result.call(name, ...args);
     return patch;
   };
   result.collectGeneratedSound = () => {
@@ -1034,6 +1266,12 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
   };
   return result;
 }
+/** Whole-project execution shared by Ctrl+Enter and the main.lisp run button. */
+function runProject() {
+  clearTimeout(timer);
+  return evaluate();
+}
+
 /** Stage all sources and a GPU pipeline, then commit only the newest valid edit. */
 async function evaluate({
   reset = false,
@@ -1099,8 +1337,17 @@ async function evaluate({
             defer(() => evaluate({ scene: path }));
           else if (staged) staged.initialScene = path;
         },
-        playSound: () => {
-          const play = () => playPatch().catch((e) => report(e.message, true));
+        playSound: (name = 'sound', ...args) => {
+          const play = () => {
+            try {
+              if (name === 'sound') return playPatch().catch((e) => report(e.message, true));
+              return playSamples(synthesize(staged.collectSound(name, ...args))).catch((e) =>
+                report(e.message, true),
+              );
+            } catch (e) {
+              report(e.message, true);
+            }
+          };
           if (staged === gameRuntime || staged === activeScene?.runtime) play();
           else if (staged?.captureActions) staged.pendingActions.push(play);
         },
@@ -1162,12 +1409,12 @@ async function evaluate({
     gameTarget['active-scene'] = scenePath;
     candidate.scene = nextScene;
     const declared = new Map();
-    for (const module of resolveModules(stores.game, [
-      'game.lisp',
-      ...(scenePath ? [scenePath] : []),
-    ]))
+    candidate.sceneStateKeys = (nextScene?.runtime ?? gameCandidate).stateKeys;
+    for (const module of resolveModules(stores.game, [scenePath || 'game.lisp'])) {
+      referencedStateKeys(module.forms, candidate.sceneStateKeys);
       for (const field of inspectorFields(module.path, module.forms))
         declared.set(field.key, field);
+    }
     candidate.sceneFields = [...declared.values()];
     if (sceneChanged) {
       target['scene-inspector-offset'] = 0;
@@ -1224,13 +1471,17 @@ async function evaluate({
     runtime = candidate;
     gameRuntime = gameCandidate;
     sceneFields = candidate.sceneFields;
+    sceneStateKeys = candidate.sceneStateKeys;
     applicationState = gameTarget;
     activeScene = nextScene;
     if (sceneChanged) sceneTime = 0;
     compiled = shader;
     for (const key of Object.keys(sources)) if (!key.startsWith('__')) delete sources[key];
     Object.assign(sources, candidateSources);
-    if (imported) resources = imported.resources ?? Object.create(null);
+    if (imported) {
+      resources = imported.resources ?? Object.create(null);
+      hookPreview = null;
+    }
     committedSources = { ...candidateSources };
     if (pipeline) gpu.commit(pipeline, shader);
     if (imagePipeline) gpu.commitImage(imagePipeline, imageShader);
@@ -1331,6 +1582,7 @@ const asDataURL = (blob) =>
   });
 async function storeGenerated(path, blob, shouldDownload) {
   path = resolvePath(path);
+  assertFileDestination(path);
   if (sourceKey(path) in sources) throw new Error('A source file already uses that path');
   if (blob.size > 6000000) throw new Error('Resource exceeds 6MB');
   if (!(path in resources) && Object.keys(resources).length >= 256)
@@ -1345,6 +1597,16 @@ async function exportGeneratedImage(path, shouldDownload) {
   // Submit current GUI parameters before reading back, even between frames.
   gpu.draw(lastDraw, activeScene ? sceneTime : time, applicationState, state);
   await storeGenerated(path, await gpu.snapshot(true), shouldDownload);
+}
+async function exportGeneratedText(shouldDownload) {
+  const program = selectedGenerator(generatorPrograms, state);
+  const output = textOutput(program);
+  if (output.error) throw new Error(output.error);
+  await storeGenerated(
+    program.filename,
+    new Blob([output.text], { type: textMime(program.filename) }),
+    shouldDownload,
+  );
 }
 async function exportGeneratedSound(path, shouldDownload) {
   refreshAudio();
@@ -1383,7 +1645,7 @@ function accessibility() {
         state[r.key] = Number(control.value);
         if (r.key.startsWith('__scene-')) {
           const key = r.key.slice(8);
-          const field = liveFields(sceneFields, applicationState).find(
+          const field = liveFields(sceneFields, applicationState, sceneStateKeys).find(
             (field) => field.key === key,
           );
           if (field) applicationState[key] = fieldValue(field, Number(control.value));
@@ -1412,9 +1674,16 @@ function accessibility() {
   }
 }
 // Clamp to the visible viewport after collapse, delete, resize or import.
-function treeOffset(target, rows = resourceRows()) {
-  const capacity = Math.min(64, Math.max(1, Math.floor((innerHeight - 125) / 26)));
-  const total = projectTree(rows, target['open-folders']).length;
+function treeOffset(
+  target,
+  rows = resourceRows(),
+  capacity = Math.min(64, Math.max(1, Math.floor((innerHeight - 136) / 26))),
+) {
+  const total = projectTree(
+    rows,
+    target['open-folders'],
+    savedFolders(target['project-folders']),
+  ).length;
   return Math.max(0, Math.min(Math.max(0, total - capacity), target['file-offset'] ?? 0));
 }
 function openFileContext(row, x, y) {
@@ -1446,8 +1715,15 @@ function downloadFile(path) {
     a.click();
   } else throw new Error('Missing file');
 }
+function assertFileDestination(path) {
+  if (folderPaths(sources, resources, savedFolders(state['project-folders'])).has(path))
+    throw new Error('A folder already uses that path');
+  if (filePaths(sources, resources).some((file) => path.startsWith(file + '/')))
+    throw new Error('A file already uses a parent path');
+}
 async function moveProjectFile(oldPath, newPath) {
   if (oldPath === newPath) return;
+  assertFileDestination(newPath);
   const plan = planFileMove(sources, resources, oldPath, newPath);
   const before = {
     sources: { ...sources },
@@ -1480,6 +1756,123 @@ async function moveProjectFile(oldPath, newPath) {
     resources = before.resources;
     replace(state, before.state);
     replace(applicationState, before.applicationState);
+  }
+}
+function createProjectFolder(path) {
+  const folders = savedFolders(state['project-folders']);
+  path = validateFolderPath(sources, resources, folders, path);
+  const persisted = new Set(folders);
+  const ancestors = path.split('/');
+  for (let i = 1; i <= ancestors.length; i++) persisted.add(ancestors.slice(0, i).join('/'));
+  if (persisted.size > 256) throw new Error('Maximum 256 explicit folders');
+  state['project-folders'] = JSON.stringify([...persisted]);
+  const expanded = new Set(savedFolders(state['open-folders']));
+  const parts = path.split('/');
+  for (let i = 1; i <= parts.length; i++) expanded.add(parts.slice(0, i).join('/'));
+  state['open-folders'] = JSON.stringify([...expanded]);
+  state.window = '';
+  state['file-offset'] = 0;
+  dirty = true;
+  report(`Created folder ${path}`);
+}
+const replaceStore = (target, values) => {
+  for (const key of Object.keys(target)) delete target[key];
+  Object.assign(target, values);
+};
+async function moveProjectFolder(oldPath, newPath) {
+  if (oldPath === newPath) {
+    state.window = '';
+    return;
+  }
+  const plan = planFolderMove(
+    sources,
+    resources,
+    savedFolders(state['project-folders']),
+    oldPath,
+    newPath,
+  );
+  const before = {
+    sources: { ...sources },
+    resources,
+    state: { ...state },
+    applicationState: { ...applicationState },
+  };
+  replaceStore(sources, plan.sources);
+  resources = plan.resources;
+  for (const [from, to] of plan.moves)
+    if (sourceKey(from) in before.sources)
+      renameTab(state, sources, sourceKey(from), sourceKey(to));
+  const pathFields = [
+    'selected-file',
+    'preview-path',
+    'active-generator',
+    'image-generator-path',
+    'audio-generator-path',
+    'text-generator-path',
+    'context-path',
+    'hook-path',
+  ];
+  for (const key of pathFields)
+    if (typeof state[key] === 'string') state[key] = plan.remap(state[key]);
+  for (const key of ['open-folders', 'editor-file-paths'])
+    if (state[key]) state[key] = JSON.stringify(savedFolders(state[key]).map(plan.remap));
+  for (const [key, value] of Object.entries(applicationState))
+    if (typeof value === 'string') applicationState[key] = plan.remap(value);
+  state['project-folders'] = JSON.stringify(plan.folders);
+  const expanded = new Set(savedFolders(state['open-folders']));
+  const parts = newPath.split('/');
+  for (let i = 1; i <= parts.length; i++) expanded.add(parts.slice(0, i).join('/'));
+  state['open-folders'] = JSON.stringify([...expanded]);
+  state.window = '';
+  state['file-context'] = false;
+  state['file-offset'] = 0;
+  if (await evaluate()) {
+    for (const [from, to] of plan.moves)
+      if (sourceKey(from) in before.sources) code.renameBuffer(sourceKey(from), sourceKey(to));
+    report(`Moved folder ${oldPath} to ${newPath}`);
+  } else {
+    replaceStore(sources, before.sources);
+    resources = before.resources;
+    replaceStore(state, before.state);
+    replaceStore(applicationState, before.applicationState);
+  }
+}
+async function deleteProjectFolder(path) {
+  path = resolvePath(path);
+  if (!folderPaths(sources, resources, savedFolders(state['project-folders'])).has(path))
+    throw new Error('Missing folder');
+  const before = {
+    sources: { ...sources },
+    resources,
+    state: { ...state },
+    applicationState: { ...applicationState },
+  };
+  const removed = filePaths(sources, resources).filter((file) => insideFolder(file, path));
+  resources = { ...resources };
+  for (const file of removed) {
+    const key = sourceKey(file);
+    if (key in sources) {
+      closeTab(state, sources, key);
+      delete sources[key];
+    }
+    delete resources[file];
+  }
+  for (const key of ['project-folders', 'open-folders'])
+    state[key] = JSON.stringify(
+      savedFolders(state[key]).filter((folder) => !insideFolder(folder, path)),
+    );
+  state['file-context'] = false;
+  state.window = '';
+  if (await evaluate()) {
+    for (const file of removed) code.forgetBuffer(sourceKey(file));
+    report(`Deleted folder ${path} / ${removed.length} files`);
+  } else {
+    replaceStore(sources, before.sources);
+    resources = before.resources;
+    replaceStore(state, before.state);
+    replaceStore(applicationState, before.applicationState);
+    state['file-context'] = false;
+    report(`Folder still in use: ${message}`, true);
   }
 }
 let fileDrag = null;
@@ -1540,11 +1933,11 @@ canvas.addEventListener('pointerdown', (e) => {
     !state.window &&
     !state.menu &&
     !state['file-context'] &&
-    pointer.target?.resourcePath &&
-    pointer.target.resourceKind !== 'folder'
+    pointer.target?.resourcePath
   ) {
     fileDrag = {
       path: pointer.target.resourcePath,
+      kind: pointer.target.resourceKind,
       x: pointer.x,
       y: pointer.y,
       active: false,
@@ -1585,12 +1978,12 @@ canvas.addEventListener('pointerup', () => {
       updateFileDrag();
       if (drag.folder !== null)
         defer(() =>
-          moveProjectFile(
+          (drag.kind === 'folder' ? moveProjectFolder : moveProjectFile)(
             drag.path,
             (drag.folder ? drag.folder + '/' : '') + drag.path.split('/').at(-1),
           ),
         );
-    } else activations.add('file-' + drag.path);
+    } else activations.add((drag.kind === 'folder' ? 'folder-' : 'file-') + drag.path);
   }
   release();
 });
@@ -1606,10 +1999,22 @@ canvas.addEventListener(
       !state.menu &&
       !state['file-context'] &&
       (state.window === '' ||
-        (state.window === 'generator' && scroll.id === 'generator-inspector-scroll'))
+        (state.window === 'generator' &&
+          ['generator-inspector-scroll', 'generator-text-scroll'].includes(scroll.id)))
     ) {
       e.preventDefault();
       const delta = e.deltaY * (e.deltaMode === 1 ? 18 : e.deltaMode === 2 ? scroll.size[1] : 1);
+      if (
+        scroll.id === 'generator-text-scroll' &&
+        (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY))
+      ) {
+        e.preventDefault();
+        state['text-preview-x'] = Math.max(
+          0,
+          (state['text-preview-x'] ?? 0) + (e.deltaX || e.deltaY),
+        );
+        return;
+      }
       state[scroll.scrollKey] = Math.max(
         0,
         Math.min(scroll.scrollLimit, state[scroll.scrollKey] + delta),
@@ -1646,8 +2051,20 @@ canvas.addEventListener(
       inBox(e.clientX, e.clientY, tree.origin, tree.size)
     ) {
       e.preventDefault();
+      if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        const max = Math.max(0, runtime.call('project-tree-width') - tree.size[0] + 12);
+        const delta =
+          (e.deltaX || e.deltaY) * (e.deltaMode === 1 ? 18 : e.deltaMode === 2 ? tree.size[0] : 1);
+        state['file-scroll-x'] = Math.max(0, Math.min(max, (state['file-scroll-x'] ?? 0) + delta));
+        dirty = true;
+        return;
+      }
       const rows = Math.min(64, Math.max(1, Math.floor(tree.size[1] / 26)));
-      const count = projectTree(resourceRows(), state['open-folders']).length;
+      const count = projectTree(
+        resourceRows(),
+        state['open-folders'],
+        savedFolders(state['project-folders']),
+      ).length;
       state['file-offset'] = Math.max(
         0,
         Math.min(Math.max(0, count - rows), (state['file-offset'] ?? 0) + Math.sign(e.deltaY) * 3),
@@ -1773,7 +2190,7 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     clearTimeout(timer);
     if (state.window === 'palette') defer(() => runInstruction(sources.__palette));
-    else evaluate();
+    else runProject();
     return;
   }
   if (e.key === 'F2') {
@@ -1824,6 +2241,7 @@ $('open-file-input').onchange = async (event) => {
     if (!file) return;
     const path = resolvePath(file.name),
       key = sourceKey(path);
+    assertFileDestination(path);
     if (file.size > 6000000) throw new Error('File exceeds 6MB');
     if (key in sources || path in resources) throw new Error(`File already exists: ${path}`);
     if (path.endsWith('.lisp') || isScenePath(path)) {
@@ -1881,7 +2299,7 @@ $('resource-input').onchange = async (event) => {
 
 $('generator-color').addEventListener('input', (event) => {
   if (sceneColorKey) {
-    const field = liveFields(sceneFields, applicationState).find(
+    const field = liveFields(sceneFields, applicationState, sceneStateKeys).find(
       (field) => field.key === sceneColorKey,
     );
     if (field) applicationState[field.key] = fieldValue(field, event.target.value);
@@ -1930,7 +2348,11 @@ function frame(now) {
         focusPalette = visibleWindow === 'palette';
         focusPath = visibleWindow === 'file-path';
       }
-      if (state.window === 'image-asset' || state.window === 'audio-asset') {
+      if (['hook-draw', 'hook-sound'].includes(state.window) && !hookPreview)
+        state.window = 'hooks';
+      if (state.window === 'hook-sound' && hookPreview?.resource) {
+        assetPreview.open(state['preview-path'], hookPreview.resource, 'audio');
+      } else if (state.window === 'image-asset' || state.window === 'audio-asset') {
         const resource = resources[state['preview-path']];
         assetPreview.open(
           state['preview-path'],
@@ -2028,6 +2450,18 @@ window.aioli = {
   },
   get sources() {
     return { ...sources };
+  },
+  get hookPreview() {
+    return (
+      hookPreview && {
+        name: hookPreview.name,
+        kind: hookPreview.kind,
+        args: hookPreview.args,
+        state: structuredClone(hookPreview.state),
+        commands: hookPreview.draw?.commands,
+        samples: hookPreview.pcm?.length,
+      }
+    );
   },
   get preview() {
     return {

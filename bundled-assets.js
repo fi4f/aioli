@@ -3,6 +3,8 @@ import { readAssetSource } from './linked-assets.js';
 export const bundledResourcePaths = [
   'audio',
   'image',
+  'generator',
+  'command',
   'code',
   'file',
   'folder',
@@ -10,7 +12,7 @@ export const bundledResourcePaths = [
   'game',
   'main',
   'scene',
-].map((name) => `assets/editor-icons/${name}.png`);
+].map((name) => `editor/icon/${name}.png`);
 export async function loadBundledResources() {
   const entries = await Promise.all(
     bundledResourcePaths.map(async (path) => {

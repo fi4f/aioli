@@ -31,13 +31,15 @@ try {
     );
   }
   const initial = await page.evaluate(() => window.aioli.resources);
-  assert.equal(Object.keys(initial).filter((p) => p.startsWith('assets/editor-icons/')).length, 9);
+  assert.equal(Object.keys(initial).filter((p) => p.startsWith('editor/icon/')).length, 11);
   await click('view');
   await click('files');
-  await click('folder-assets');
-  await click('folder-assets/editor-icons');
+  await click('folder-examples');
+  await click('folder-examples/commands');
   await page.waitForFunction(() => {
-    const row = window.aioli.regions.find((r) => r.id === 'file-assets/editor-icons/image.png');
+    const row = window.aioli.regions.find(
+      (r) => r.id === 'file-examples/commands/export-audio.command.lisp',
+    );
     return (
       row &&
       window.aioli.commands.some(
@@ -48,7 +50,38 @@ try {
       )
     );
   });
-  await click('file-assets/editor-icons/code.png');
+  await click('folder-examples/commands');
+  await click('folder-examples/generators');
+  await page.waitForFunction(() => {
+    const row = window.aioli.regions.find(
+      (r) => r.id === 'file-examples/generators/image.generator.lisp',
+    );
+    return (
+      row &&
+      window.aioli.commands.some(
+        (c) =>
+          c.meta[0] === 7 &&
+          c.bounds[0] === row.origin[0] + 42 &&
+          c.bounds[1] === row.origin[1] + 5,
+      )
+    );
+  });
+  await click('folder-examples/generators');
+  await click('folder-editor');
+  await click('folder-editor/icon');
+  await page.waitForFunction(() => {
+    const row = window.aioli.regions.find((r) => r.id === 'file-editor/icon/image.png');
+    return (
+      row &&
+      window.aioli.commands.some(
+        (c) =>
+          c.meta[0] === 7 &&
+          c.bounds[0] === row.origin[0] + 42 &&
+          c.bounds[1] === row.origin[1] + 5,
+      )
+    );
+  });
+  await click('file-editor/icon/code.png');
   await page.waitForFunction(() => window.aioli.preview.ready);
   assert.equal(await page.evaluate(() => window.aioli.preview.width), 64);
   assert.equal(await page.evaluate(() => window.aioli.state.window), 'image-asset');
@@ -57,34 +90,33 @@ try {
   await click('close-window');
   await page.waitForFunction(() =>
     JSON.parse(localStorage.getItem('aioli.project.v3')).state['open-folders']?.includes(
-      'assets/editor-icons',
+      'editor/icon',
     ),
   );
   const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project.v3')));
-  assert.equal(project.version, 12);
-  project.resources['assets/editor-icons/code.png'] = initial['assets/editor-icons/play.png'];
-  delete project.resources['assets/editor-icons/folder.png'];
+  assert.equal(project.version, 17);
+  project.resources['editor/icon/code.png'] = initial['editor/icon/play.png'];
+  delete project.resources['editor/icon/folder.png'];
   await page.locator('#file-input').setInputFiles({
     name: 'changed-icons.aioli.json',
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(project)),
   });
   await page.waitForFunction(
-    (data) =>
-      !window.aioli.pending && window.aioli.resources['assets/editor-icons/code.png'].data === data,
-    initial['assets/editor-icons/play.png'].data,
+    (data) => !window.aioli.pending && window.aioli.resources['editor/icon/code.png'].data === data,
+    initial['editor/icon/play.png'].data,
   );
   await page.reload();
   await page.waitForFunction(() => window.aioli?.running);
   assert.equal(
-    await page.evaluate(() => window.aioli.resources['assets/editor-icons/folder.png']),
+    await page.evaluate(() => window.aioli.resources['editor/icon/folder.png']),
     undefined,
   );
   assert.equal(
-    await page.evaluate(() => window.aioli.resources['assets/editor-icons/code.png'].data),
-    initial['assets/editor-icons/play.png'].data,
+    await page.evaluate(() => window.aioli.resources['editor/icon/code.png'].data),
+    initial['editor/icon/play.png'].data,
   );
-  await click('file-assets/editor-icons/code.png');
+  await click('file-editor/icon/code.png');
   await page.waitForFunction(() => window.aioli.preview.ready);
   await page.screenshot({ path: 'artifacts/editor-icon-resource-replaced.png' });
   assert.deepEqual(errors, []);
