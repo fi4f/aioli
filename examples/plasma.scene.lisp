@@ -51,7 +51,8 @@
            (* (get :volume) 0.25))))
 
 ; Direct shader math + immediate drawing.
-(defpixel render [p time]
+(defdraw render []
+  (pixels [p time]
   (let [wave (+ (sin (+ (* p.x 0.04) time))
                (cos (- (* p.y 0.05) time)))
         rings (sin (- (* (length (- p [160 120]))
@@ -70,4 +71,4 @@
         (rotate (* i 0.7854))
         (rect [30 -1] [55 2]))))
   (fill "#ecedc3")
-  (circle [(param :x) (param :y)] 4))
+  (circle [(param :x) (param :y)] 4)))

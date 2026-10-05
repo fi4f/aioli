@@ -191,6 +191,10 @@ export function createRuntime(state, host = {}) {
       if (hook) env[args[0].name].hook = hook;
       return null;
     }
+    if (name === 'pixels') {
+      if (!host.pixels) throw new Error('pixels requires a drawing host');
+      return host.pixels(args, env, ev);
+    }
     if (name === 'do') return body(args);
     if (name === 'scope') {
       host.beginScope?.();

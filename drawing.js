@@ -176,6 +176,14 @@ export class DrawList {
       });
     }
   }
+  pixels(program) {
+    // The full logical canvas is a material surface. Scope/clip can bound it.
+    const origin = this.point([0, 0]);
+    const previous = this.commands.length;
+    this.emit(8, [...origin, this.width * this.state.scale, this.height * this.state.scale],
+      [this.width, this.height, this.state.opacity, 0]);
+    if (this.commands.length > previous) this.commands.at(-1).pixel = program;
+  }
   primitives() {
     return {
       background: (color) => {

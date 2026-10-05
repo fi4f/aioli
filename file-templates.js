@@ -19,18 +19,19 @@ export function newFileCode(type = 'script', output = 'image') {
     return '; Runs in the editor. get/set! access editor state.\n; Use game-get/game-set! to access the active game or scene.\n';
   if (type === 'scene')
     return `(init! :radius 32 ["Radius" 1 120 1])
-(defpixel render [p time]
+(defdraw render []
   (background "#101613")
   (fill "#bbd6a6")
-  (circle [160 120] (param :radius)))
+  (circle [160 120] (get :radius)))
 `;
   if (type === 'generator' && output === 'image')
     return `(generator :image "New image")
 (init! :radius 32 ["Radius" 1 120 1])
-(defpixel image [p time]
+(defdraw render []
+  (pixels [p time]
   (background "#101613")
   (fill "#bbd6a6")
-  (circle [160 120] (param :radius)))
+  (circle [160 120] (get :radius))))
 `;
   if (type === 'generator' && output === 'audio')
     return `(generator :audio "New sound")

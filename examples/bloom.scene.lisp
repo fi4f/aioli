@@ -51,7 +51,8 @@
            (* (get :volume) 0.25))))
 
 ; A procedural bloom: transform, mix, glow.
-(defpixel render [p time]
+(defdraw render []
+  (pixels [p time]
   (background "#101b25")
   (translate [160 120])
   (scope
@@ -68,4 +69,4 @@
   (fill (param :accent))
   (circle [0 0] (param :moon))
   (fill "#101b25")
-  (circle [4 -4] (* (param :moon) 0.7)))
+  (circle [4 -4] (* (param :moon) 0.7))))

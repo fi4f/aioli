@@ -189,7 +189,8 @@
         (rect [(- column 4) (+ top (* h 0.87))] [8 (* h 0.08)])))))
 (defn doom-label [x y size value]
   (scope (translate [x y]) (scale size) (text [0 0] value)))
-(defn draw []
+(defdraw render []
+  (background "#181e2d")
   (clip [0 0] [320 240])
   (fill "#181e2d") (rect [0 0] [320 100])
   (fill "#303137") (rect [0 100] [320 110])
@@ -225,5 +226,4 @@
     (fill "#ffe1a2") (doom-label 62 76 1 (if (get :doom-won) "CRYPT CLEARED!" "YOU WERE EATEN"))
     (fill "#b6c6bd") (doom-label 80 104 0.75 "PRESS R TO RESTART")))
 
-; The required pixel hook supplies the background; CPU draw overlays the world.
-(defpixel render [p time] (background "#181e2d"))
+

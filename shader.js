@@ -28,7 +28,7 @@ export function rgba(value) {
  * CPU functions are intentionally not evaluated here. Emitted expressions carry
  * their WGSL type; the browser validates the remaining GPU overload constraints.
  */
-export function compileShader(forms, state = {}) {
+export function compileShader(forms, state = {}, { pixelResult = false } = {}) {
   const def = forms.find((n) => Array.isArray(n) && isSym(n[0], 'defpixel'));
   if (!def || forms.length !== 1 || !isSym(def[1]) || def[2]?.type !== 'vector')
     throw new Error('Scene must contain one (defpixel name [p time] ...)');
@@ -178,6 +178,7 @@ export function compileShader(forms, state = {}) {
     return nodes
       .map((n) => {
         if (++statements > 4096) throw new Error('Shader expansion exceeds 4096 statements');
+        if (pixelResult && (!Array.isArray(n) || !isSym(n[0]))) return `d.color = ${color(n, locals)};`;
         if (!Array.isArray(n) || !isSym(n[0]))
           throw new Error(`Expected drawing expression, got ${print(n)}`);
         const [h, ...a] = n,
@@ -253,6 +254,7 @@ export function compileShader(forms, state = {}) {
           }
           return `{ ${declarations.join('\n')}\n${body(a.slice(1), local)}\n}`;
         }
+        if (pixelResult) return `d.color = ${color(n, locals)};`;
         throw new Error(`Unknown drawing command ${name}`);
       })
       .join('\n');
@@ -281,5 +283,5 @@ fn composite(d: ptr<function, Draw>, coverage: f32) {
   ${drawing}
   return d.color;
 }`;
-  return { code, params, primitives };
+  return { code, params, primitives, pixelBody: drawing };
 }

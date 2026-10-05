@@ -27,6 +27,11 @@ export const editorSourcePaths = [
 
 /** Exact prior stock components upgrade on load; customized source stays intact. */
 export const editorSourceMigrations = {
+  'examples/doom.scene.lisp': [138826617],
+  'examples/plasma.scene.lisp': [1367942336],
+  'examples/bloom.scene.lisp': [292730382],
+  'examples/garden.scene.lisp': [-1110729354],
+  'main': [-577017002],
   'editor/ui/tabs.lisp': [-1016406017, 1306263099],
   'editor/asset-preview.lisp': [-1239360938, -1437414313],
   'editor/about.lisp': [-311452947, 1708480550],

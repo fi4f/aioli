@@ -1,3 +1,4 @@
+import { applicationRender } from './render-hooks.js';
 import { inspectorFields } from './inspector-fields.js';
 import { isSym } from './lisp.js';
 import { sourceRole } from './source-roles.js';
@@ -10,7 +11,7 @@ export function generatorDescriptor(path, forms) {
   const declaration = declarations[0];
   const output =
     declaration?.[1]?.name?.replace(/^:/, '') ??
-    (forms.some((form) => isSym(form?.[0], 'defpixel') && isSym(form[1], 'image'))
+    (forms.some((form) => (isSym(form?.[0], 'defpixel') && isSym(form[1], 'image')) || (isSym(form?.[0], 'defdraw') && isSym(form[1], 'render')))
       ? 'image'
       : forms.some((form) => isSym(form?.[0], 'defn') && isSym(form[1], 'generate-text'))
         ? 'text'
@@ -58,7 +59,7 @@ export function stageGenerators(sources, application, makeRuntime) {
             'generate-text',
             'enter',
             'exit',
-            'editor',
+            'editor', 'render', 'draw',
           ].includes(name) &&
           !(name in runtime.global)
         )
@@ -68,8 +69,9 @@ export function stageGenerators(sources, application, makeRuntime) {
         throw new Error(`${path}: missing (defn generate-sound [] ...)`);
       if (descriptor.output === 'text' && typeof runtime.global['generate-text'] !== 'function')
         throw new Error(`${path}: missing (defn generate-text [] ...)`);
-      const render = descriptor.output === 'image' ? pixelHook(modules, 'image') : null;
-      return { ...descriptor, runtime, render };
+      const unified = descriptor.output === 'image' && runtime.global.render?.hook?.kind === 'draw';
+      const render = descriptor.output === 'image' ? (unified ? applicationRender(modules) : pixelHook(modules, 'image')) : null;
+      return { ...descriptor, runtime, render, unified };
     });
 }
 

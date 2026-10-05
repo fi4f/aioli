@@ -1,3 +1,4 @@
+import { pixelBlock } from './pixel-block.js';
 import { canvasSize } from './canvas-size.js';
 import { textOutput, textMime } from './text-generator.js';
 import { newFilePath, newFileCode } from './file-templates.js';
@@ -287,6 +288,7 @@ async function inspectHook(path, name, args) {
   hookPreview = result;
   sources.__hookArgs = JSON.stringify(result.args);
   code.forgetBuffer('__hookArgs');
+  if (result.kind === 'draw' && gpu) await gpu.preparePixels(result.draw);
   if (result.kind === 'sound') {
     state['preview-path'] = `Sound hook / ${result.title}`;
     await assetPreview.open(state['preview-path'], result.resource, 'audio');
@@ -411,6 +413,10 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
   const result = createRuntime(target, {
     budget: 100000,
     key: (k) => code.focus === 'world' && keys.has(k),
+    pixels: (args, env, evaluate) => {
+      if (!draw) throw new Error('pixels requires a draw hook');
+      draw.pixels(pixelBlock(args, env, evaluate, target));
+    },
     beginScope: () => draw?.scope(),
     endScope: () => draw?.restore(),
     voice: (...args) => {
@@ -1080,7 +1086,11 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           );
         }
       },
-      'image-preview': (origin, size) => draw.surface(origin, size, 5),
+      'image-preview': (origin, size) => {
+        draw.surface(origin, size, 5);
+        const program = outputGenerator(result.generators ?? generatorPrograms, target, 'image');
+        if (program?.unified) draw.composite(program.runtime.drawFrame(), origin, size);
+      },
       'export-image': actions((path = 'assets/generated.png') => exportGeneratedImage(path, true)),
       'save-image-resource': actions((path = 'assets/generated.png') =>
         exportGeneratedImage(path, false),
@@ -1142,8 +1152,8 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         draw.surface(origin, size);
         const application = result.gameRuntime ?? gameRuntime;
         const scene = 'scene' in result ? result.scene : activeScene;
-        if (application) draw.composite(application.drawFrame(...canvasSize(state)), origin, size);
-        if (scene) draw.composite(scene.runtime.drawFrame(...canvasSize(state)), origin, size);
+        if (application) draw.composite(application.drawFrame(...canvasSize(target)), origin, size);
+        if (scene) draw.composite(scene.runtime.drawFrame(...canvasSize(target)), origin, size);
         items.push({ id: 'world', label: 'Game viewport', origin, size });
       },
       'buffer-open': (origin, size, tab) => {
@@ -1284,7 +1294,11 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       'export-png': actions(async () => {
         try {
           if (!gpu) throw new Error('WebGPU is unavailable');
-          download(await gpu.snapshot(), 'image/png', 'aioli.png');
+          const size = canvasSize(state), list = new DrawList(...size);
+          list.surface([0, 0], size);
+          list.composite(gameRuntime.drawFrame(...size), [0, 0], size);
+          if (activeScene) list.composite(activeScene.runtime.drawFrame(...size), [0, 0], size);
+          download(await gpu.snapshot(false, list, activeScene ? sceneTime : time, applicationState, state), 'image/png', 'aioli.png');
         } catch (e) {
           report(e.message, true);
         }
@@ -1292,11 +1306,16 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
     },
   });
   result.pendingActions = [];
+  result.drawFrame = (width = 320, height = 240, name = 'render', args = []) => {
+    const outer = draw;
+    draw = new DrawList(width, height);
+    try { result.call(name, ...args); return draw; } finally { draw = outer; }
+  };
   result.drawEditor = () => {
     draw = new DrawList(innerWidth, innerHeight);
     items = [];
     try {
-      result.call(typeof result.global.draw === 'function' ? 'draw' : 'editor');
+      result.call(result.global.render?.hook?.kind === 'draw' ? 'render' : typeof result.global.draw === 'function' ? 'draw' : 'editor');
       return { draw, regions: items };
     } finally {
       draw = null;
@@ -1499,7 +1518,8 @@ async function evaluate({
       }
     const imageGenerator = outputGenerator(nextGenerators, target, 'image');
     const audioGenerator = outputGenerator(nextGenerators, target, 'audio');
-    candidate.drawEditor();
+    const stagedDraw = candidate.drawEditor().draw;
+    if (gpu) await gpu.preparePixels(stagedDraw);
     gameCandidate.collectSound();
     const shader = compileShader(nextScene?.render ?? gameCandidate.render(), gameTarget),
       imageShader = compileShader(
@@ -1657,7 +1677,14 @@ async function exportGeneratedImage(path, shouldDownload) {
   if (!gpu || !lastDraw) throw new Error('WebGPU is unavailable');
   // Submit current GUI parameters before reading back, even between frames.
   gpu.draw(lastDraw, activeScene ? sceneTime : time, applicationState, state);
-  await storeGenerated(path, await gpu.snapshot(true), shouldDownload);
+  const program = outputGenerator(generatorPrograms, state, 'image');
+  let list;
+  if (program?.unified) {
+    list = new DrawList(320, 240);
+    list.surface([0, 0], [320, 240], 5);
+    list.composite(program.runtime.drawFrame(), [0, 0], [320, 240]);
+  }
+  await storeGenerated(path, await gpu.snapshot(true, list, 0, applicationState, state), shouldDownload);
 }
 async function exportGeneratedText(shouldDownload) {
   const program = selectedGenerator(generatorPrograms, state);

@@ -1,3 +1,4 @@
+import { pixelBlock } from './pixel-block.js';
 import { DrawList } from './drawing.js';
 import { createRuntime } from './lisp.js';
 import { validateVoice } from './audio.js';
@@ -13,7 +14,7 @@ export function engineServices({
   draw = () => null,
 } = {}) {
   let patch = [],
-    frameDraw;
+    frameDraw, runtimeState;
   const currentDraw = () => frameDraw ?? draw();
   const services = {
     budget: 100000,
@@ -23,6 +24,11 @@ export function engineServices({
       patch.push(validateVoice(...args));
     },
     playSound,
+    pixels: (args, env, evaluate) => {
+      const list = currentDraw();
+      if (!list) throw new Error('pixels requires a draw hook');
+      list.pixels(pixelBlock(args, env, evaluate, runtimeState));
+    },
     beginScope: () => currentDraw()?.scope(),
     endScope: () => currentDraw()?.restore(),
     primitives: {
@@ -61,8 +67,10 @@ export function engineServices({
     },
   };
   services.attach = (runtime) => {
+    runtimeState = runtime.state;
     runtime.global['active-scene'] = () => runtime.state['active-scene'] ?? '';
-    runtime.drawFrame = (width = 320, height = 240, name = 'draw', args = []) => {
+    runtime.drawFrame = (width = 320, height = 240, name = null, args = []) => {
+      name ??= runtime.global.render?.hook?.kind === 'draw' ? 'render' : 'draw';
       frameDraw = new DrawList(width, height);
       try {
         if (typeof runtime.global[name] === 'function') runtime.call(name, ...args);

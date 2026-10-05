@@ -1,8 +1,8 @@
-import { pixelHook } from './render-hooks.js';
+import { applicationRender } from './render-hooks.js';
 import { resolvePath, resolveModules, cpuForms } from './module-loader.js';
 
 export const isScenePath = (path) => typeof path === 'string' && /\.scene(?:\.lisp)?$/.test(path);
-const sceneHooks = ['init', 'enter', 'exit', 'reload', 'update', 'sound'];
+const sceneHooks = ['init', 'enter', 'exit', 'reload', 'update', 'sound', 'render', 'draw'];
 
 /** Entry requests select startup scenes and react to edits. Unrelated reloads
  * preserve transitions requested by gameplay or commands. */
@@ -24,7 +24,7 @@ export function stageScene(sources, path, application, makeRuntime) {
   for (const [name, value] of Object.entries(application.global))
     if (!sceneHooks.includes(name) && !(name in runtime.global)) runtime.global[name] = value;
   for (const module of modules) runtime.load(cpuForms(module.forms));
-  return { path, runtime, render: pixelHook(modules, 'render') };
+  return { path, runtime, render: applicationRender(modules, 'render') };
 }
 
 export function callHook(runtime, name, ...args) {

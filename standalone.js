@@ -114,6 +114,9 @@ export async function startApplication(project, canvas) {
       }
       target['active-scene'] = path;
       const shader = compileShader(next?.render ?? root.render(), target);
+      const stagedDraw = root.drawFrame(...logicalSize);
+      if (next) stagedDraw.composite(next.runtime.drawFrame(...logicalSize), [0, 0], logicalSize);
+      await gpu.preparePixels(stagedDraw);
       const pipeline = await gpu.prepare(shader);
       for (const [key, value] of Object.entries(runtime.state))
         if (value !== baseline[key] && target[key] === baseline[key]) target[key] = value;

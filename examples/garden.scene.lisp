@@ -52,7 +52,8 @@
 
 ; One quad. A whole midnight garden.
 ; Drawing state belongs to each pixel.
-(defpixel render [p time]
+(defdraw render []
+  (pixels [p time]
   (background "#111c30")
 
   ; A little grain in the sky.
@@ -119,4 +120,4 @@
     (circle [0 -12] 5)
     (fill "#243b35")
     (rect [-2 -14] [2 2])
-    (rect [2 -14] [2 2])))
+    (rect [2 -14] [2 2]))))
