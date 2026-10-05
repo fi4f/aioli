@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Language · aioli</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="../">aioli <span>all in one lisp</span></a>
+      <nav aria-label="Documentation">
+        <a href="./">Start</a><a href="language.html" aria-current="page">Language</a
+        ><a href="api.html">APIs</a><a href="editor.html">Editor</a
+        ><a href="contributing.html">Contribute</a> <a href="projects.html">Projects</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">Language</p>
+      <h1>Expressions all the way down.</h1>
+      <p class="lead">
+        Gameplay, audio recipes, and editor functions share one Lisp. Pixel shaders use a checked
+        subset with the same reader and syntax.
+      </p>
+      <div class="toc">
+        <p>On this page</p>
+        <ul>
+          <li><a href="#syntax">Syntax and values</a></li>
+          <li><a href="#functions">Functions and local bindings</a></li>
+          <li><a href="#state">Shared state</a></li>
+          <li><a href="#control">Control flow and repetition</a></li>
+          <li><a href="#math">Math and collections</a></li>
+          <li><a href="#shaders">The shader subset</a></li>
+        </ul>
+      </div>
+      <h2 id="syntax">Syntax and values</h2>
+      <pre><code>; A semicolon starts a comment through the end of the line.
+(+ 2 3)                 ; a call: operator first, then arguments
+[20 40]                 ; a vector
+"Hello"                 ; a string
+"Say \"hello\"\n"        ; JSON-style string escapes
+:moon                    ; a keyword, evaluated as the string "moon"
+true false nil           ; CPU booleans and null</code></pre>
+      <p>
+        Numbers may be integers, decimals, or scientific notation: <code>12</code>,
+        <code>-0.5</code>, <code>.25</code>, <code>1e2</code>. Evaluated vectors contain evaluated
+        items, so <code>[(+ 10 5) 20]</code> becomes a pair of numbers.
+      </p>
+      <p>
+        Symbols refer to names in the current environment. Keywords are convenient string keys, so
+        <code>:moon</code> and <code>"moon"</code> identify the same state entry. There is no
+        quote/list literal form, macro system, or module syntax yet. Empty <code>()</code> is not a
+        valid expression; empty <code>[]</code> is a valid CPU vector.
+      </p>
+      <p>
+        The source view shows incomplete expressions while you type, including an unfinished string.
+        Evaluation still requires balanced syntax and a closing quote. A rejected edit leaves the
+        last working program running.
+      </p>
+      <h2 id="functions">Functions and local bindings</h2>
+      <pre><code>(defn double [value]
+  (* value 2))
+
+(defn move-player [dt]
+  (let [distance (* (get :speed) dt)
+        next-x (+ (get :x) distance)]
+    (set! :x next-x)))</code></pre>
+      <p>
+        <code>defn</code> defines or replaces a function. Its argument vector lists names, and a
+        call must supply exactly that many values. Body expressions run in order; the final
+        expression is the return value. Functions capture their lexical environment.
+      </p>
+      <p>
+        <code>let</code> introduces local bindings in name/value pairs. Bindings are evaluated left
+        to right, so later values may use earlier names. <code>do</code> runs several expressions
+        where a single expression is expected. There is no general local assignment form;
+        <code>set!</code> writes shared state.
+      </p>
+      <h2 id="state">Shared state</h2>
+      <pre><code>(init! :speed 75)        ; assign only if the key is absent
+(init! :x 160)
+(get :x)                 ; read; missing keys are an error
+(set! :x 200)            ; write and return the value
+(set! :accent "#bbd6a6")</code></pre>
+      <p>
+        Shared state connects gameplay, procedural controls, and shaders. It stores finite numbers,
+        strings, and booleans, rather than vectors or functions. <code>init!</code> avoids resetting
+        existing values on a hot edit. Editing an initialization value will therefore affect a fresh
+        state, not an already initialized one: use <code>set!</code> or
+        <strong>Project → Reset state</strong> to change that value immediately.
+      </p>
+      <p>
+        A shader reads shared state with <code>(param :key)</code>. Its parameters must already
+        exist when the scene compiles. Numeric values and booleans become scalar uniforms; color
+        strings become RGBA uniforms. Other strings are not shader parameters.
+      </p>
+      <h2 id="control">Control flow and repetition</h2>
+      <pre><code>(if (&gt; (get :x) 300)
+  (set! :x 300)
+  (set! :x (+ (get :x) 1)))
+
+(when (and (key? " ") (&gt;= (get :y) 190))
+  (set! :vy -130)
+  (play-sound))
+
+(repeat 4 i
+  (fill "#bbd6a6")
+  (circle [(+ 20 (* i 16)) 40] 5))</code></pre>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Form</th>
+              <th>Behavior</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>(if condition yes no)</code></td>
+              <td>
+                Evaluate one branch. The false branch is optional and defaults to <code>nil</code>.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(when condition body...)</code></td>
+              <td>Run the body only when the condition is truthy.</td>
+            </tr>
+            <tr>
+              <td><code>(and expr...)</code>, <code>(or expr...)</code></td>
+              <td>Short circuit and return a boolean.</td>
+            </tr>
+            <tr>
+              <td><code>(not value)</code></td>
+              <td>Negate truthiness.</td>
+            </tr>
+            <tr>
+              <td><code>(repeat count index body...)</code></td>
+              <td>
+                Bind a zero-based index for each iteration. Count must be an integer from 0 to 64.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(scope body...)</code></td>
+              <td>
+                Temporarily change drawing state, restoring it afterward while retaining drawn
+                pixels.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        CPU truthiness follows JavaScript values: <code>false</code>, <code>nil</code>, zero, and an
+        empty string are falsey; vectors are truthy, including an empty vector. Comparisons are
+        <code>= &lt; &gt; &lt;= &gt;=</code>; <code>=</code> checks strict equality and does not
+        perform structural vector equality.
+      </p>
+      <h2 id="math">Math and collections</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>CPU API</th>
+              <th>Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>+ - * /</code></td>
+              <td>
+                Numeric arithmetic. Unary <code>-</code> negates; use two or more operands for
+                division.
+              </td>
+            </tr>
+            <tr>
+              <td><code>sin cos abs floor round</code></td>
+              <td>Standard numeric functions; angles are radians.</td>
+            </tr>
+            <tr>
+              <td><code>min max</code></td>
+              <td>Minimum or maximum of numeric arguments.</td>
+            </tr>
+            <tr>
+              <td><code>(clamp value low high)</code></td>
+              <td>Restrict a number to an interval.</td>
+            </tr>
+            <tr>
+              <td><code>(mod value divisor)</code></td>
+              <td>Wrapped remainder; use a positive divisor.</td>
+            </tr>
+            <tr>
+              <td><code>(str values...)</code></td>
+              <td>Concatenate string representations.</td>
+            </tr>
+            <tr>
+              <td><code>(count collection)</code></td>
+              <td>Length of a vector or string.</td>
+            </tr>
+            <tr>
+              <td><code>(nth collection index)</code></td>
+              <td>Zero-based element; an out-of-bounds index is an error.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        CPU arithmetic checks finite numbers and rejects non-finite results, including division by
+        zero. Vector arithmetic is supported in shaders, not in these CPU numeric functions.
+      </p>
+      <h2 id="shaders">The shader subset</h2>
+      <pre><code>(defpixel example [p time]
+  (background "#101613")
+  (let [pulse (+ 20 (* 5 (sin time)))]
+    (fill (rgb 0.7 0.8 0.6))
+    (circle [160 120] pulse)))</code></pre>
+      <p>
+        A scene and its imports contain exactly one <code>defpixel</code> hook with arguments
+        <code>[p time]</code>. The compiler translates only that hook to WGSL. Ordinary CPU Lisp
+        forms may live alongside it; see
+        <a href="projects.html#imports">imports and scene hooks</a>. Each invocation evaluates one
+        pixel, accumulating color as drawing commands run. <code>p</code>, <code>p.x</code>, and
+        <code>p.y</code> read the current transformed pixel position; <code>time</code> is seconds;
+        <code>width</code> and <code>height</code> are 320 and 240.
+      </p>
+      <p>
+        Shader bodies support drawing commands, <code>let</code>, <code>scope</code>, and
+        <code>repeat</code>. Repetition requires a literal count and expands during compilation.
+        They do not support CPU <code>defn</code> calls, <code>if</code>, <code>when</code>, state
+        mutation, text, or editor input.
+      </p>
+      <p>
+        Shader expressions include
+        <code
+          >+ - * / sin cos abs floor fract length noise min max pow mod clamp mix step smoothstep
+          vec2 vec3 rgb rgba</code
+        >, <code>(position)</code>, and <code>(param :key)</code>. Two-, three-, and four-component
+        numeric vectors are supported. Vector lengths must match; arithmetic can combine a scalar
+        and a vector. Other functions require compatible WGSL argument types: for example, use
+        <code>(pow [0.2 0.4 0.6] [2 2 2])</code>, not a vector and scalar exponent.
+      </p>
+      <p>
+        <code>noise</code> is currently a deterministic hash of a 2D position producing a value in
+        [0, 1); it is not smooth interpolated noise. See
+        <a href="api.html#shader-math">the shader math reference</a> for signatures and examples.
+      </p>
+      <p class="note">
+        The CPU and shader contexts share syntax and drawing concepts, but their supported forms
+        differ. A WebGPU validation error keeps the previous shader active. CPU functions cannot yet
+        be called from shaders.
+      </p>
+    </main>
+    <footer>
+      <span>aioli · all in one lisp</span><a href="api.html">Next: API reference →</a>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Contributing and hosting · aioli</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="../">aioli <span>all in one lisp</span></a>
+      <nav aria-label="Documentation">
+        <a href="./">Start</a><a href="language.html">Language</a><a href="api.html">APIs</a
+        ><a href="editor.html">Editor</a
+        ><a href="contributing.html" aria-current="page">Contribute</a>
+        <a href="projects.html">Projects</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">Contributing</p>
+      <h1>Small modules. Readable changes.</h1>
+      <p class="lead">
+        The editor is Lisp source; JavaScript supplies the browser services it needs. Choose the
+        smallest layer that can express your change.
+      </p>
+      <h2>Run locally</h2>
+      <pre><code>npm ci
+npm start</code></pre>
+      <p>
+        Open <a href="../">the workshop</a> and <a href="./">these docs</a>. Node.js 20 or later is
+        sufficient. The application has no browser package dependencies; Prettier is a development
+        tool for consistent source formatting.
+      </p>
+      <h2>Where to make a change</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Change</th>
+              <th>Start here</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Editor layout or actions</td>
+              <td><code>editor.lisp</code></td>
+            </tr>
+            <tr>
+              <td>Widgets, controls, source painting</td>
+              <td><code>ui.lisp</code></td>
+            </tr>
+            <tr>
+              <td>Source input, caret/selection data</td>
+              <td><code>code-input.js</code></td>
+            </tr>
+            <tr>
+              <td>Highlighting incomplete source</td>
+              <td><code>source-tokens.js</code></td>
+            </tr>
+            <tr>
+              <td>Language forms or CPU functions</td>
+              <td><code>lisp.js</code></td>
+            </tr>
+            <tr>
+              <td>Shader expressions or commands</td>
+              <td><code>shader.js</code></td>
+            </tr>
+            <tr>
+              <td>Drawing primitives and clipping</td>
+              <td><code>drawing.js</code></td>
+            </tr>
+            <tr>
+              <td>WebGPU bindings and uploads</td>
+              <td><code>gpu.js</code></td>
+            </tr>
+            <tr>
+              <td>Procedural synthesis</td>
+              <td><code>audio.js</code></td>
+            </tr>
+            <tr>
+              <td>Browser bindings, saving, evaluation</td>
+              <td><code>app.js</code></td>
+            </tr>
+            <tr>
+              <td>User documentation</td>
+              <td>Static HTML files in <code>docs/</code></td>
+            </tr>
+            <tr>
+              <td>Project modules, imports and migrations</td>
+              <td><code>project.js</code></td>
+            </tr>
+            <tr>
+              <td>Default generator and command source</td>
+              <td><code>generators.js</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        There is no JavaScript evaluation of user source. The strict Lisp reader handles evaluation;
+        the lossless display scanner handles incomplete text. Keep those responsibilities separate.
+        A parser error must not prevent source from being visible.
+      </p>
+      <h2>Code conventions</h2>
+      <ul>
+        <li>
+          Use readable names, ordinary control flow, and one logical operation per line. Avoid
+          compressing functions to save space.
+        </li>
+        <li>
+          Comment intent, data formats, invariants, and boundaries. Explain why a check or ordering
+          rule exists; do not merely restate each assignment.
+        </li>
+        <li>
+          Keep widget appearance and behavior in Lisp. Add a native binding when the feature needs a
+          browser service, not to move editor layout into HTML.
+        </li>
+        <li>
+          Preserve the live-edit contract: validate a candidate before replacing the working runtime
+          or GPU pipeline. Avoid triggering input/audio/file actions during validation.
+        </li>
+        <li>
+          Use drawing scopes for temporary paint/transform changes, stable region IDs for controls,
+          and ordered pixel composition.
+        </li>
+        <li>
+          Document new public forms in the language/API pages and include a small runnable example.
+        </li>
+      </ul>
+      <pre><code>npm run format
+npm run format:check
+npm test</code></pre>
+      <p>
+        Prettier formats JavaScript, JSON, HTML, CSS, and Markdown. Lisp is manually indented with
+        two spaces. Unit tests use Node's built-in test runner. Add meaningful behavior tests for
+        language, input, drawing, or synthesis changes.
+      </p>
+      <h2>Browser checks</h2>
+      <p>With the local server running, execute:</p>
+      <pre><code>node tests/browser-smoke.mjs
+node tests/browser-widgets.mjs</code></pre>
+      <p>
+        The integration test needs Playwright and a Chromium browser. Set
+        <code>PLAYWRIGHT_MODULE</code> to an installed Playwright package and
+        <code>BROWSER_EXECUTABLE</code> to the browser executable if the local bundled paths do not
+        apply. It uses a separate headless browser, not your personal browser profile.
+      </p>
+      <p>
+        Checks cover actual WebGPU programs, live source input and quote painting, Lisp widgets,
+        recovery, exports, saved-project migration, documentation links, and a simulated repository
+        subpath. Screenshots are placed in the ignored <code>artifacts/</code> directory.
+      </p>
+      <h2 id="github-pages">Host on GitHub Pages</h2>
+      <p>
+        The repository is already a static site. No runtime server or bundle step is required for
+        hosting. Publish the <strong>repository root</strong> so both the workshop and its
+        <code>docs/</code> directory are included.
+      </p>
+      <ol>
+        <li>Push the repository to GitHub.</li>
+        <li>Open the repository's <strong>Settings → Pages</strong>.</li>
+        <li>
+          Choose <strong>Deploy from a branch</strong>, select your publishing branch, and select
+          <strong>/(root)</strong>.
+        </li>
+        <li>Keep the checked-in <code>.nojekyll</code> file at the publishing root.</li>
+        <li>After deployment, open the site URL shown by GitHub.</li>
+      </ol>
+      <p>
+        A typical project URL is <code>https://USER.github.io/REPOSITORY/</code>. Its docs live at
+        <code>https://USER.github.io/REPOSITORY/docs/</code>. Publishing only the repository's
+        <code>/docs</code> folder would publish the documentation alone and omit the workshop.
+      </p>
+      <p>
+        All application assets and documentation links are relative to their own directory,
+        including Lisp source fetches and the documentation action. Do not introduce root-relative
+        <code>/app.js</code> or <code>/docs/</code> links: those would target the user-site root
+        rather than the project directory.
+      </p>
+      <p>
+        To simulate a project subpath locally, run the server with
+        <code>BASE_PATH=/aioli/</code> and optionally <code>PORT=4174</code> in your shell
+        environment. The server redirects directory URLs to a trailing slash, matching static-site
+        directory behavior.
+      </p>
+      <p>
+        Publishing-source options and the <code>.nojekyll</code> behavior are documented in GitHub's
+        <a
+          href="https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site"
+          >publishing source guide</a
+        >
+        and
+        <a
+          href="https://docs.github.com/en/pages/getting-started-with-github-pages/creating-a-github-pages-site"
+          >site creation guide</a
+        >. GitHub Pages provides HTTPS; the workshop still requires a browser/device with WebGPU
+        support.
+      </p>
+    </main>
+    <footer><span>aioli · all in one lisp</span><a href="../">Back to the workshop</a></footer>
+  </body>
+</html>

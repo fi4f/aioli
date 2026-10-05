@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>aioli · all in one lisp</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <canvas
+      id="app"
+      tabindex="0"
+      aria-label="aioli fullscreen editor. Use Tab to reach accessible controls. Click the game to use A/D and Space."
+    ></canvas>
+    <textarea
+      id="text-input"
+      spellcheck="false"
+      autocapitalize="off"
+      autocomplete="off"
+      aria-label="Lisp source input"
+    ></textarea>
+    <input id="file-input" type="file" accept="application/json,.json" hidden />
+    <input id="resource-input" type="file" accept=".lisp,image/*,audio/*" multiple hidden />
+    <div id="accessibility" class="sr-only"></div>
+    <div id="status" class="sr-only" role="status" aria-live="polite">Starting aioli…</div>
+    <div id="startup" hidden></div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>API reference · aioli</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="../">aioli <span>all in one lisp</span></a>
+      <nav aria-label="Documentation">
+        <a href="./">Start</a><a href="language.html">Language</a
+        ><a href="api.html" aria-current="page">APIs</a><a href="editor.html">Editor</a
+        ><a href="contributing.html">Contribute</a> <a href="projects.html">Projects</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">API reference</p>
+      <h1>Draw, interact, compose.</h1>
+      <p class="lead">
+        The public Lisp APIs, grouped by what you are making. CPU APIs run in gameplay/editor/audio
+        functions; shader APIs run inside a pixel program.
+      </p>
+      <div class="toc">
+        <p>On this page</p>
+        <ul>
+          <li><a href="#drawing">Drawing primitives</a></li>
+          <li><a href="#shader-math">Shader math</a></li>
+          <li><a href="#gameplay">Gameplay and state</a></li>
+          <li><a href="#widgets">Lisp widget library</a></li>
+          <li><a href="#input">Editor input</a></li>
+          <li><a href="#buffers">Source buffers</a></li>
+          <li><a href="#audio">Procedural audio</a></li>
+          <li><a href="#actions">Editor actions</a></li>
+        </ul>
+      </div>
+      <h2 id="drawing">Drawing primitives</h2>
+      <p>
+        Positions are <code>[x y]</code>, sizes are <code>[width height]</code>, and colors are
+        <code>"#RRGGBB"</code>, <code>"#RRGGBBAA"</code>, RGB vectors, or RGBA vectors with
+        components in [0, 1]. CPU drawing is available while the editor function runs. Coordinates
+        begin at the top left; x grows right and y grows down.
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Call</th>
+              <th>Context</th>
+              <th>Behavior</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>(background color)</code></td>
+              <td>CPU + shader</td>
+              <td>Paint the background. Normally called at the beginning of the frame/program.</td>
+            </tr>
+            <tr>
+              <td><code>(fill color)</code></td>
+              <td>CPU + shader</td>
+              <td>Set the paint for subsequent primitives.</td>
+            </tr>
+            <tr>
+              <td><code>(rect origin size)</code></td>
+              <td>CPU + shader</td>
+              <td>Evaluate a filled rectangle's coverage.</td>
+            </tr>
+            <tr>
+              <td><code>(circle center radius)</code></td>
+              <td>CPU + shader</td>
+              <td>Evaluate coverage within the radius. Edges are crisp.</td>
+            </tr>
+            <tr>
+              <td><code>(line start end width)</code></td>
+              <td>CPU + shader</td>
+              <td>Draw a thick segment with round ends.</td>
+            </tr>
+            <tr>
+              <td><code>(opacity amount)</code></td>
+              <td>CPU + shader</td>
+              <td>Set opacity, clamped to [0, 1].</td>
+            </tr>
+            <tr>
+              <td><code>(blend :over)</code></td>
+              <td>CPU + shader</td>
+              <td>
+                Alpha-over, the default. Also supports <code>:add</code> and <code>:multiply</code>.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(translate offset)</code></td>
+              <td>CPU + shader</td>
+              <td>Move subsequent drawing by a 2D offset.</td>
+            </tr>
+            <tr>
+              <td><code>(scale amount)</code></td>
+              <td>CPU + shader</td>
+              <td>
+                CPU: a positive scalar. Shader: a scalar or 2D vector; use nonzero components.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(rotate radians)</code></td>
+              <td>Shader</td>
+              <td>Rotate around the current origin.</td>
+            </tr>
+            <tr>
+              <td><code>(scope body...)</code></td>
+              <td>CPU + shader</td>
+              <td>
+                Restore position/transform, fill, opacity, and blend settings after the body.
+                Already drawn pixels remain.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(text origin value)</code></td>
+              <td>CPU editor</td>
+              <td>
+                Draw fixed-width text. Current glyph coverage is ASCII 32–126; other characters
+                display as <code>?</code>. Newlines and tabs are supported.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(clip origin size)</code></td>
+              <td>CPU editor</td>
+              <td>
+                Intersect the current clipping rectangle. Use <code>scope</code> to restore it.
+                Specify bounds in the editor's screen coordinate system.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(surface origin size)</code></td>
+              <td>CPU editor</td>
+              <td>
+                Composite the 320 × 240 game texture with nearest-neighbor sampling. Also declare
+                its game-input region.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(waveform origin size)</code></td>
+              <td>CPU editor</td>
+              <td>Draw the synthesized audio patch's min/max amplitude using the current paint.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <pre><code>; Inside a scene's defpixel body:
+(scope
+  (translate [160 120])
+  (rotate (* time 0.2))
+  (blend :add)
+  (opacity 0.5)
+  (fill "#bbd6a6")
+  (rect [-20 -20] [40 40]))</code></pre>
+      <p>
+        Shader drawing updates local state for each pixel invocation. CPU editor drawing emits
+        ordered primitives that are also evaluated per pixel. Neither submits geometry for each
+        shape. CPU state mutations such as <code>set!</code> are not undone by a drawing scope.
+      </p>
+      <h2 id="shader-math">Shader math</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Expression</th>
+              <th>Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>p</code>, <code>p.x</code>, <code>p.y</code>, <code>(position)</code></td>
+              <td>Current transformed pixel position.</td>
+            </tr>
+            <tr>
+              <td><code>time</code>, <code>width</code>, <code>height</code></td>
+              <td>Seconds and logical scene dimensions.</td>
+            </tr>
+            <tr>
+              <td><code>(param :key)</code></td>
+              <td>Read an initialized state value as a uniform.</td>
+            </tr>
+            <tr>
+              <td><code>(vec2 x y)</code>, <code>(vec3 x y z)</code></td>
+              <td>
+                Construct a numeric vector. Literal <code>[x y z w]</code> can construct four
+                components.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(rgb r g b)</code>, <code>(rgba r g b a)</code></td>
+              <td>Color vectors. RGB is made opaque when used as a paint.</td>
+            </tr>
+            <tr>
+              <td><code>+ - * /</code></td>
+              <td>Scalar or compatible vector arithmetic.</td>
+            </tr>
+            <tr>
+              <td><code>sin cos abs floor fract</code></td>
+              <td>Component-wise math; <code>fract</code> is the fractional part.</td>
+            </tr>
+            <tr>
+              <td><code>(length vector)</code></td>
+              <td>Vector magnitude.</td>
+            </tr>
+            <tr>
+              <td><code>(noise vec2)</code></td>
+              <td>A deterministic 2D hash in [0, 1), not smooth noise.</td>
+            </tr>
+            <tr>
+              <td><code>(min a b)</code>, <code>(max a b)</code>, <code>(pow a b)</code></td>
+              <td>Component-wise functions with compatible types.</td>
+            </tr>
+            <tr>
+              <td><code>(mod a b)</code></td>
+              <td><code>a - b * floor(a / b)</code>.</td>
+            </tr>
+            <tr>
+              <td><code>(clamp value low high)</code></td>
+              <td>Restrict components to a range.</td>
+            </tr>
+            <tr>
+              <td><code>(mix a b amount)</code></td>
+              <td>Linear interpolation. Does not automatically clamp amount.</td>
+            </tr>
+            <tr>
+              <td><code>(step edge value)</code></td>
+              <td>Zero below the edge, one at or above it.</td>
+            </tr>
+            <tr>
+              <td><code>(smoothstep low high value)</code></td>
+              <td>Smooth transition from zero to one.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <pre><code>(defpixel grain [p time]
+  (background "#101613")
+  (fill (mix [0.1 0.2 0.15] [0.7 0.8 0.6]
+             (noise (* p 0.1))))
+  (rect [0 0] [width height]))</code></pre>
+      <p>
+        The compiler supports a maximum of 63 state parameters and bounded shader expansion.
+        Expressions must satisfy WGSL type rules; errors keep the previous shader active.
+      </p>
+      <h2 id="gameplay">Gameplay and state</h2>
+      <p>
+        Define <code>(defn update [dt] ...)</code> in <code>game</code>. It runs each unpaused
+        frame, with <code>dt</code> measured in seconds and capped at 0.04 after a long browser
+        frame. <code>init!</code>, <code>set!</code>, and <code>get</code> are described in
+        <a href="language.html#state">the language guide</a>.
+      </p>
+      <pre><code>(init! :x 160)
+(init! :speed 75)
+(defn update [dt]
+  (when (key? "d")
+    (set! :x (+ (get :x) (* (get :speed) dt)))))</code></pre>
+      <p>
+        <code>(key? name)</code> returns true for a held gameplay key while the game view has focus.
+        Currently captured keys are <code>"a" "d" "w" " " "ArrowLeft" "ArrowRight" "ArrowUp"</code>.
+        Letter keys are lowercase. Source typing does not drive gameplay.
+      </p>
+      <h2 id="widgets">Lisp widget library</h2>
+      <p>
+        These are normal functions defined in <code>ui.lisp</code>, not special language forms. Call
+        them from <code>editor</code>; changing their definitions changes the editor live.
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Signature</th>
+              <th>Use</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>(ui-button id caption origin size active)</code></td>
+              <td>
+                Paint and register a button. Returns true on pointer press or accessible activation.
+                <code>active</code> selects its highlighted appearance.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(ui-tab id caption x active-tab)</code></td>
+              <td>Draw the stock source tab at y=58 and update <code>:tab</code> on activation.</td>
+            </tr>
+            <tr>
+              <td><code>(ui-slider id caption key x y width low high)</code></td>
+              <td>
+                Bind a slider to a numeric state key; the stock value display is a percentage.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(ui-number-slider id caption key x y width low high)</code></td>
+              <td>Same binding, displaying a number to two decimal places.</td>
+            </tr>
+            <tr>
+              <td><code>(ui-toggle id caption key x y width)</code></td>
+              <td>Toggle a boolean state key.</td>
+            </tr>
+            <tr>
+              <td><code>(ui-choice id caption key choices x y width)</code></td>
+              <td>Cycle through a vector of choices.</td>
+            </tr>
+            <tr>
+              <td><code>(code-editor origin size tab)</code></td>
+              <td>Paint source text, syntax colors, selection, and caret from buffer data.</td>
+            </tr>
+            <tr>
+              <td><code>(graphics-tools x y width)</code></td>
+              <td>The stock graphics parameter controls.</td>
+            </tr>
+            <tr>
+              <td><code>(sound-tools x y width)</code></td>
+              <td>The stock audio patch controls and waveform preview.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <pre><code>; Add inside the existing editor function:
+(when (ui-button :center "Center" [24 100] [100 32] false)
+  (set! :x 160))
+
+(ui-number-slider :my-radius "Radius" :moon
+                  24 160 220 4 40)</code></pre>
+      <p>
+        Use a stable, unique ID per control. Initialize slider/toggle/choice keys before drawing.
+        Hit regions use screen coordinates; drawing transforms do not automatically transform input
+        bounds.
+      </p>
+      <h2 id="input">Editor input</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Call</th>
+              <th>Behavior</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>(screen-width)</code>, <code>(screen-height)</code></td>
+              <td>Editor viewport dimensions in CSS pixels.</td>
+            </tr>
+            <tr>
+              <td><code>(pointer-x)</code>, <code>(pointer-y)</code></td>
+              <td>Screen pointer position.</td>
+            </tr>
+            <tr>
+              <td><code>(pointer-pressed?)</code></td>
+              <td>True during the frame that consumes a pointer press.</td>
+            </tr>
+            <tr>
+              <td><code>(pointer-down?)</code></td>
+              <td>True while the pointer remains held.</td>
+            </tr>
+            <tr>
+              <td><code>(hit? origin size)</code></td>
+              <td>Pointer is inside the bounds and not covered by a higher interaction region.</td>
+            </tr>
+            <tr>
+              <td><code>(capture! id)</code>, <code>(captured? id)</code></td>
+              <td>Keep a drag assigned to a control until release.</td>
+            </tr>
+            <tr>
+              <td><code>(region id label origin size)</code></td>
+              <td>
+                Declare interaction/accessibility bounds. Regions later in painter order take
+                priority.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(region id label origin size key low high)</code></td>
+              <td>Declare a numeric slider region with an accessible state binding.</td>
+            </tr>
+            <tr>
+              <td><code>(activated? id)</code></td>
+              <td>Accessible keyboard/screen-reader activation in this frame.</td>
+            </tr>
+            <tr>
+              <td><code>(focused? id)</code></td>
+              <td>Whether an accessible control has focus.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Pointer actions are suppressed while a candidate editor is being validated; evaluation
+        checks must not click controls or trigger exports. Use the widget library unless you are
+        implementing a new control.
+      </p>
+      <h2 id="buffers">Source buffers</h2>
+      <p>
+        Most projects should call <code>code-editor</code>. The following primitives allow an
+        alternative source widget. They supply data only; <code>ui.lisp</code> paints the visible
+        content.
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Call</th>
+              <th>Returned data</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>(buffer-open origin size tab)</code></td>
+              <td>
+                Select the source and lay out its input region. Tabs:
+                <code>scene game audio editor ui</code>; read-only buffers:
+                <code>wgsl guide diagnostic</code>.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(buffer-rows)</code></td>
+              <td>
+                Vector of <code>[number-position number-text segments]</code>. Each segment is
+                <code>[position text kind]</code>.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(buffer-selections)</code></td>
+              <td>Vector of <code>[origin size]</code> selection rectangles.</td>
+            </tr>
+            <tr>
+              <td><code>(buffer-caret)</code></td>
+              <td>A position, or <code>nil</code> while hidden/blinking off.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Token kinds are <code>comment string keyword number delimiter symbol whitespace</code>.
+        <code>(token-color kind)</code> in <code>ui.lisp</code> chooses colors. Buffer text is
+        displayed even when it cannot yet be evaluated.
+      </p>
+      <h2 id="audio">Procedural audio</h2>
+      <pre><code>(defn sound []
+  (voice :sine 440 880 0.3 0.35)
+  (voice :triangle 220 440 0.3 0.08))</code></pre>
+      <p>
+        <code>(voice waveform start-hz end-hz duration gain)</code> adds a voice to the current
+        patch. Waveforms: <code>:sine :triangle :square :sawtooth :noise</code>, or equivalent
+        strings. Frequencies must be 1–20000 Hz, duration 0.01–5 seconds, and gain 0–1. A
+        <code>sound</code> function must emit 1–16 voices.
+      </p>
+      <p>
+        Voices sweep frequency linearly, apply a short attack/release, and mix into mono audio at
+        44.1 kHz with soft clipping. Noise is seeded and reproducible.
+        <code>(play-sound)</code> auditions the current patch; <code>(export-wav)</code> downloads
+        it as PCM WAV. Playback may require a browser gesture first: click the game or Play control.
+      </p>
+      <pre><code>(init! :pitch 440)
+(defn sound []
+  (voice :sine (get :pitch) 880 0.3 0.35))</code></pre>
+      <p>
+        A Lisp slider bound to <code>:pitch</code> and a code edit both change the same recipe. The
+        <strong>Sound</strong> tool supplies controls for waveform, frequencies, duration, gain, and
+        an overtone.
+      </p>
+      <h2 id="actions">Editor actions</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Call</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>(evaluate-project)</code></td>
+              <td>Evaluate all source buffers and compile the scene.</td>
+            </tr>
+            <tr>
+              <td><code>(reset-project)</code></td>
+              <td>Evaluate with fresh state.</td>
+            </tr>
+            <tr>
+              <td><code>(export-project)</code>, <code>(import-project)</code></td>
+              <td>Save/open project JSON, including sources and state.</td>
+            </tr>
+            <tr>
+              <td><code>(export-png)</code></td>
+              <td>Download the game image, excluding editor chrome.</td>
+            </tr>
+            <tr>
+              <td><code>(next-scene)</code></td>
+              <td>Cycle supplied scene presets.</td>
+            </tr>
+            <tr>
+              <td><code>(open-docs)</code></td>
+              <td>Open this documentation site in a new tab.</td>
+            </tr>
+            <tr>
+              <td><code>(status)</code>, <code>(error?)</code></td>
+              <td>Current status text and error flag.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        These actions take effect for the active editor rather than during validation. The stock
+        editor also uses shared keys such as <code>:tab</code>, <code>:show-code</code>,
+        <code>:show-tools</code>, <code>:tool</code>, <code>:menu</code>, and <code>:paused</code>.
+        Set them in an editor action to control the stock layout.
+      </p>
+      <h2>Named files, generators and commands</h2>
+      <p>
+        See the <a href="projects.html#apis">project API reference</a> for file operations,
+        generator previews and exports, and palette commands. Use
+        <code>(set! :window "files")</code>, <code>"image"</code>, <code>"audio"</code>, or
+        <code>"palette"</code> to open a stock tool window; use <code>""</code> to close it.
+      </p>
+    </main>
+    <footer>
+      <span>aioli · all in one lisp</span><a href="editor.html">Next: using the editor →</a>
+    </footer>
+  </body>
+</html>

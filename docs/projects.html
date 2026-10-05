@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Projects and tools · aioli</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="../">aioli <span>all in one lisp</span></a>
+      <nav aria-label="Documentation">
+        <a href="./">Start</a><a href="language.html">Language</a><a href="api.html">APIs</a
+        ><a href="editor.html">Editor</a><a href="projects.html" aria-current="page">Projects</a
+        ><a href="contributing.html">Contribute</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">Projects and tools</p>
+      <h1>More files. More ways to make things.</h1>
+      <p class="lead">
+        A project contains named Lisp files, imported assets, generated images and sounds, and
+        shared state. All four tool windows are live Lisp widgets in <code>ui.lisp</code>.
+      </p>
+      <h2 id="files">File explorer</h2>
+      <p>
+        Use <strong>Files</strong> in the toolbar, or <strong>Project → File explorer</strong>.
+        Select a path, then Open to edit Lisp, Save to download it, or Delete to remove it. Asset
+        Open reports its type and size in the status bar. Use the arrows to page through resources.
+        Paths keep directories visible, for example <code>lib/math.lisp</code> and
+        <code>assets/generated.png</code>.
+      </p>
+      <p>
+        The path field creates a source file or supplies the destination for Rename. Create starts
+        with an empty commented module. Import accepts local <code>.lisp</code>, image and audio
+        files under <code>assets/</code>. Existing paths are not overwritten by imports. Rename does
+        not rewrite imports: update the affected source references yourself. If that makes
+        evaluation fail, the working program continues while you repair the draft.
+      </p>
+      <p>
+        The five original tabs are shortcuts to entry files, rather than the whole project. Their
+        names remain <code>scene.lisp</code>, <code>game.lisp</code>, <code>audio.lisp</code>,
+        <code>ui.lisp</code>, and <code>editor.lisp</code>. Entry files and the stock
+        generator/command filenames cannot be removed or renamed. Other files can be created,
+        renamed and deleted.
+      </p>
+      <h2 id="imports">Import resolution</h2>
+      <pre><code>; game.lisp
+(import "./lib/movement.lisp")
+(defn update [dt]
+  (move-player dt))</code></pre>
+      <pre><code>; lib/movement.lisp
+(import "../lib/math.lisp")
+(defn move-player [dt]
+  (set! :x (+ (get :x) (twice dt))))</code></pre>
+      <pre><code>; lib/math.lisp
+(defn twice [value] (* value 2))</code></pre>
+      <p>
+        <code>import</code> is a top-level form with one literal string. Paths resolve relative to
+        the importing file. A leading slash resolves from the project root:
+        <code>(import "/lib/math.lisp")</code>. Include the extension; there is no extension
+        guessing, package search, or network fetch. Normalization accepts <code>.</code> and
+        <code>..</code> but rejects paths that escape the project, URLs and Windows paths.
+      </p>
+      <p>
+        Dependencies load first, once per evaluation, in import order. Missing files and cycles
+        report the affected paths. Imported CPU definitions share one global environment; there are
+        no namespaces or automatic exports, so choose distinct function names. Only files reachable
+        from an entry are loaded automatically. An unused library or command file is retained in the
+        project without being executed.
+      </p>
+      <h2 id="scenes">A scene is ordinary Lisp with one pixel hook</h2>
+      <pre><code>(import "./lib/math.lisp")
+(init! :scene-radius 20)
+
+; Optional CPU hook, called after gameplay update when the game is not paused.
+(defn scene-update [dt]
+  (set! :scene-radius (clamp (+ (get :scene-radius) dt) 20 60)))
+
+; Only this form is compiled to WGSL.
+(defpixel scene [p time]
+  (background "#101613")
+  (fill "#bbd6a6")
+  (circle [160 120] (param :scene-radius)))</code></pre>
+      <p>
+        The scene and its imports must contain exactly one <code>defpixel</code>. It may live in a
+        separate render file. Top-level <code>init!</code>, <code>defn</code> and ordinary CPU
+        expressions evaluate in the shared environment. The optional
+        <code>scene-update [dt]</code> runs beside <code>update [dt]</code>; both receive a
+        zero-duration validation call. CPU functions are callable by other CPU functions and
+        commands, but are not callable inside <code>defpixel</code>. Pass values into the pixel hook
+        through <code>param</code>. The <a href="language.html#shaders">shader subset</a> still
+        applies inside that hook.
+      </p>
+      <h2 id="generators">Image and audio generators</h2>
+      <p>
+        Open either generator from Project, or the Image/Audio buttons in Files. Each window
+        combines its own editable source, preview, and GUI controls. Changes evaluate live with the
+        project. The image generator uses <code>generators/image.lisp</code>, with its own WebGPU
+        texture and exactly one <code>defpixel</code>. Its preview is 320 × 240 at time zero and
+        does not replace the game shader. The stock recipe draws a circle, square or line; change
+        position, radius and color with the GUI, or rewrite the hook for a more elaborate image. GUI
+        parameters matter only when your recipe reads them.
+      </p>
+      <p>
+        The audio generator uses <code>generators/audio.lisp</code> and
+        <code>(defn generate-sound [] ...)</code>. It mixes <code>voice</code> calls like the
+        gameplay audio patch, with independent waveform, start/end frequency, duration and gain
+        controls. Play auditions the current buffer. Waveform previews and exports use that same
+        generated buffer. Its <code>:sound-*</code> parameters are separate from gameplay sound
+        settings.
+      </p>
+      <p>
+        <strong>Keep</strong> stores an image or audio asset in the project. <strong>PNG</strong> or
+        <strong>WAV</strong> stores it and downloads it. Default paths are
+        <code>assets/generated.png</code> and <code>assets/generated.wav</code>; repeated generation
+        replaces those assets. Custom paths are available through the Lisp APIs below. Existing
+        imported assets are stored and downloadable; direct gameplay sampling of arbitrary imported
+        images/audio is not yet exposed.
+      </p>
+      <h2 id="commands">Command palette</h2>
+      <p>
+        Open Commands, Project → Command palette, or <strong>Ctrl/Cmd+Shift+P</strong>. Type part of
+        a path to filter saved commands under <code>commands/</code>, then click a result to execute
+        it. Or type a Lisp program and press Run Lisp or Ctrl/Cmd+Enter. Palette text is transient:
+        it is not saved as a project file and is never evaluated just because you type it.
+      </p>
+      <pre><code>; A command can automate state changes and exports.
+(set! :x 160)
+(set! :y 190)
+(set! :vy 0)
+(export-image "assets/portrait.png")
+(export-sound "assets/chime.wav")</code></pre>
+      <p>
+        Create a file such as <code>commands/reset-player.lisp</code> to add your own saved command.
+        These programs run explicitly rather than during normal live evaluation. Commands share the
+        active CPU functions and state and can import helpers relative to <code>commands/</code>.
+        Typed programs resolve imports as though they are in that directory too. Use
+        <code>set!</code> for immediate state edits, or <code>reset-project</code> to rebuild all
+        state from defaults.
+      </p>
+      <p>
+        Each loaded module uses the normal evaluation budget. Execution is sequential: effects
+        before an error remain. Browser file/audio actions are deferred until the command finishes
+        its synchronous forms, and report errors in the status bar. Drawing primitives belong inside
+        editor or pixel hooks; commands should call services and change state.
+      </p>
+      <h2 id="apis">Project and generator APIs</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Call</th>
+              <th>Behavior</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>(project-files)</code><br /><code>(project-file-count)</code></td>
+              <td>
+                Current page of up to 12 resource rows <code>[path type buffer-key]</code>; type is
+                <code>"lisp"</code> or <code>"asset"</code>. Uses <code>:file-offset</code>. Count
+                includes all files and assets.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(open-file path)</code></td>
+              <td>Open a source in the code pane, or report asset information.</td>
+            </tr>
+            <tr>
+              <td><code>(create-file path)</code><br /><code>(create-file path source)</code></td>
+              <td>
+                Create a named Lisp file and open it. Reject an existing path. Source is an optional
+                string.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>(rename-file old-path new-path)</code><br /><code>(delete-file path)</code>
+              </td>
+              <td>
+                Move or remove a project resource. Entry and stock filenames are protected. Rename
+                keeps imports unchanged.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(import-resource)</code><br /><code>(download-resource path)</code></td>
+              <td>Open the native resource picker; download any project source or asset.</td>
+            </tr>
+            <tr>
+              <td><code>(image-preview origin size)</code></td>
+              <td>Paint the generated image texture in the editor.</td>
+            </tr>
+            <tr>
+              <td>
+                <code>(save-image-resource)</code><br /><code>(save-image-resource path)</code
+                ><br /><code>(export-image)</code><br /><code>(export-image path)</code>
+              </td>
+              <td>
+                Keep the generated PNG in the project; export also downloads it. Default
+                <code>assets/generated.png</code>.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>(play-generated-sound)</code><br /><code>(waveform origin size true)</code>
+              </td>
+              <td>
+                Audition generated audio or paint its waveform; omit <code>true</code> for gameplay
+                audio.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>(save-sound-resource)</code><br /><code>(save-sound-resource path)</code
+                ><br /><code>(export-sound)</code><br /><code>(export-sound path)</code>
+              </td>
+              <td>
+                Keep the generated WAV; export also downloads it. Default
+                <code>assets/generated.wav</code>.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(palette-query)</code><br /><code>(palette-commands)</code></td>
+              <td>Current transient input; up to eight matching saved command paths.</td>
+            </tr>
+            <tr>
+              <td><code>(run-command path)</code><br /><code>(run-instruction)</code></td>
+              <td>Run a saved command or the current palette program.</td>
+            </tr>
+            <tr>
+              <td><code>(path-input)</code></td>
+              <td>
+                Current transient explorer path field. Input buffer names beginning with
+                <code>__</code> are reserved.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <h2 id="recovery">Keeping the current editor</h2>
+      <p>
+        F2 opens the latest recovery shell without replacing your project’s editor source. Creating
+        or renaming files, editing gameplay or generators, and resetting state keep that shell
+        active, including after reload. Accepting an edit to <code>editor.lisp</code> or
+        <code>ui.lisp</code> returns to the project editor.
+      </p>
+      <p>
+        In recovery, <strong>Use latest editor</strong> adopts the bundled editor and widget library
+        permanently. Changed project sources are kept as <code>editor-backup-1.lisp</code> and
+        <code>ui-backup-1.lisp</code> (with increasing numbers if needed). The control appears in
+        the toolbar on wide screens and in Project on every screen.
+        <strong>Project → Project editor</strong> explicitly leaves recovery without upgrading.
+      </p>
+      <p>
+        Custom editors can use <code>(recovery?)</code>, <code>(upgrade-editor)</code>, and
+        <code>(leave-recovery)</code>. Recovery mode is saved with the project, while recognized
+        unmodified stock source is upgraded by content even if the project already uses version 3.
+      </p>
+      <h2 id="storage">Project format and persistence</h2>
+      <p>
+        Version 3 JSON has <code>files</code> (named source strings), <code>resources</code> (MIME
+        type and base64 data URL per asset), and <code>state</code>. Source drafts are included in a
+        manual Save project; automatic browser persistence retains accepted source. Resource changes
+        are saved with the project. v1/v2 saves migrate without losing custom source or state; stock
+        editor/widget definitions receive the new tools. F2 opens the latest recovery shell if a
+        custom editor has no controls for them.
+      </p>
+      <p>
+        Limits are 256 source files, 100,000 characters per source, 256 assets, and 6 MB per
+        imported/generated asset; project imports allow 16 MB total. Browser-local storage has its
+        own quota. If a large project exceeds it, use Save project to preserve it as JSON. Five
+        entry names are currently fixed; additional files are unlimited in role within the stated
+        file count. All source and assets are project data, so GitHub Pages hosting still requires
+        only static repository files.
+      </p>
+    </main>
+    <footer>
+      <span>aioli · all in one lisp</span><a href="contributing.html">Contributing →</a>
+    </footer>
+  </body>
+</html>

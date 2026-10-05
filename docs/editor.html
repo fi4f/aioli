@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Editor guide · aioli</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="../">aioli <span>all in one lisp</span></a>
+      <nav aria-label="Documentation">
+        <a href="./">Start</a><a href="language.html">Language</a><a href="api.html">APIs</a
+        ><a href="editor.html" aria-current="page">Editor</a
+        ><a href="contributing.html">Contribute</a> <a href="projects.html">Projects</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">Editor guide</p>
+      <h1>The workshop is your program too.</h1>
+      <p class="lead">
+        Start with the game and its source. Open tools when you need them. Change the editor using
+        the same workflow as changing gameplay.
+      </p>
+      <h2>The workspace</h2>
+      <p>
+        <strong>Code</strong> shows or hides the source pane. <strong>Tools</strong> opens
+        graphics/sound controls. <strong>Run</strong> evaluates the current project. On a narrow
+        screen, hide Code to see the game at a useful size.
+      </p>
+      <p>
+        The five entry shortcuts are <code>scene</code>, <code>game</code>, <code>audio</code>,
+        <code>editor</code>, and <code>ui</code>. Projects can contain additional named Lisp files,
+        binary resources and shared state. Use
+        <a href="projects.html">Files, generator windows and Commands</a> to manage them. The files
+        <code>editor.lisp</code> and <code>ui.lisp</code> in this repository supply the initial
+        editor; edits in the browser belong to the project, rather than writing those files on disk.
+      </p>
+      <h2>Typing and live evaluation</h2>
+      <p>
+        Click inside the source pane to focus it. Standard text selection, arrow navigation,
+        clipboard shortcuts, and browser input composition use a hidden textarea. Source text,
+        syntax highlighting, selections, and the blinking caret are painted by the Lisp source
+        widget on the WebGPU canvas. Unsupported glyphs currently display as <code>?</code>.
+      </p>
+      <p>
+        Wheel scrolls vertically; <kbd>Shift</kbd> + wheel scrolls horizontally.
+        <kbd>Tab</kbd> inserts two spaces. Opening quotes and incomplete expressions remain visible
+        while you type.
+      </p>
+      <p>
+        A short pause in typing triggers evaluation. Press <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> +
+        <kbd>Enter</kbd> or Run to evaluate immediately. All source buffers are checked together.
+        Valid changes replace the working runtime and shader; failed changes leave them running and
+        show an error in the status bar. Click an error to open its full diagnostic text.
+      </p>
+      <p class="note">
+        A visible unfinished string is valid editor text, but it is not yet valid code. Finish its
+        quote before evaluation can succeed.
+      </p>
+      <h2>Playing the example</h2>
+      <p>
+        Click the game view before using A/D or Left/Right to move. Space, Up, or W jumps. The Pause
+        control freezes game time and gameplay; the editor remains interactive. Source typing never
+        drives game input.
+      </p>
+      <p>
+        <strong>Project → Next scene</strong> cycles the midnight garden, electric bloom, and liquid
+        pixels examples. It replaces the current scene source; export your project first if you want
+        to retain an edited scene. Gameplay and shared parameters continue across a scene change.
+      </p>
+      <h2>Procedural tools</h2>
+      <p>
+        <strong>Graphics</strong> offers moon radius, wind, glow, movement speed, palette cycling,
+        and centering the player. The sliders write shared state, which the scene reads as shader
+        parameters. Modify the recipe in scene code to add new effects.
+      </p>
+      <p>
+        <strong>Sound</strong> lets you choose an oscillator, sweep frequencies, adjust
+        duration/gain, and mix an overtone. Play auditions the patch; Save WAV exports it. Edit the
+        <code>sound</code> function in the audio tab to change or add voices. These controls are
+        Lisp functions you can customize in <code>ui</code>.
+      </p>
+      <h2>Extending the editor</h2>
+      <p>
+        Start with a small edit in <code>editor</code>. Add this inside its existing
+        <code>editor</code> function:
+      </p>
+      <pre><code>(scope
+  (fill "#bbd6a6")
+  (circle [400 24] 5)
+  (text [416 16] "My workshop"))</code></pre>
+      <p>For an action, use a function from the widget library:</p>
+      <pre><code>(when (ui-button :reset-moon "Reset moon" [24 100] [140 32] false)
+  (set! :moon 20))</code></pre>
+      <p>
+        Use unique IDs and screen-space bounds. Place controls after the pane/background they should
+        appear above: drawing order is painter order. Change <code>ui-button</code> in
+        <code>ui</code> to change the appearance or interaction of every button. Change
+        <code>token-color</code> to customize source colors.
+      </p>
+      <p>
+        The theme is initialized with keys such as <code>:ui-bg</code>, <code>:ui-panel</code>,
+        <code>:ui-text</code>, <code>:ui-muted</code>, and <code>:ui-accent</code>. To change an
+        existing theme without resetting state, evaluate a <code>set!</code> form rather than only
+        modifying its <code>init!</code> default.
+      </p>
+      <h2>Recovery</h2>
+      <p>
+        Press <kbd>F2</kbd> if an editor edit hides the controls or breaks its frame. The stock
+        editor opens in recovery mode with your editor source available. Your draft remains intact.
+        Repair it and evaluate again to return to your custom editor.
+      </p>
+      <p>
+        An invalid saved project also opens a recovery shell on startup. Gameplay and audio errors
+        are reported separately from editor drawing errors. Fix the corresponding source and
+        evaluate to resume. Escape closes menus/tools and releases gameplay keys.
+      </p>
+      <h2>Saving and exporting</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Project menu action</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Save project</td>
+              <td>Download editable JSON containing source drafts and state.</td>
+            </tr>
+            <tr>
+              <td>Open project</td>
+              <td>
+                Validate and load project JSON; rejected imports retain the current working program.
+              </td>
+            </tr>
+            <tr>
+              <td>Save image</td>
+              <td>Download a 320 × 240 PNG of the game view.</td>
+            </tr>
+            <tr>
+              <td>Reset state</td>
+              <td>Rerun the current source with fresh initial values.</td>
+            </tr>
+            <tr>
+              <td>View WGSL</td>
+              <td>Inspect the compiled scene as a read-only source buffer.</td>
+            </tr>
+            <tr>
+              <td>Documentation</td>
+              <td>Open the language, API, and editor documentation.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        The browser also stores accepted source and shared state in local storage. Invalid drafts do
+        not overwrite accepted source there. Storage belongs to the browser origin: moving from
+        localhost to a hosted site does not automatically move projects. Save/Open JSON transfers
+        projects between hosts. Existing saves from the original Pixel Lisp name are migrated when
+        present on the same origin.
+      </p>
+    </main>
+    <footer>
+      <span>aioli · all in one lisp</span><a href="contributing.html">Next: contributing →</a>
+    </footer>
+  </body>
+</html>

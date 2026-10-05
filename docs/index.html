@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>aioli documentation</title>
+    <meta
+      name="description"
+      content="Learn aioli's Lisp language, pixel drawing APIs, and live fullscreen editor."
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="../">aioli <span>all in one lisp</span></a>
+      <nav aria-label="Documentation">
+        <a href="./" aria-current="page">Start</a><a href="language.html">Language</a
+        ><a href="api.html">APIs</a><a href="editor.html">Editor</a
+        ><a href="contributing.html">Contribute</a> <a href="projects.html">Projects</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">Documentation / 0.1</p>
+      <h1>One language for your game and its tools.</h1>
+      <p class="lead">
+        aioli is a live, pixel-first game workshop. Write gameplay, synthesize sounds, draw with
+        shaders, and change the editor itself in Lisp.
+      </p>
+      <p>
+        The editor is a fullscreen app written in the same language as your gameplay. Its buttons,
+        source view, and tool controls paint pixels on a WebGPU canvas. Editing the editor is part
+        of the normal workflow.
+      </p>
+      <div class="cards">
+        <a class="card" href="language.html"
+          ><strong>The language</strong>
+          <p>Expressions, functions, state, and the shader subset.</p></a
+        ><a class="card" href="api.html"
+          ><strong>The APIs</strong>
+          <p>Pixel drawing, input, editor widgets, sound, and project actions.</p></a
+        ><a class="card" href="editor.html"
+          ><strong>The editor</strong>
+          <p>Source tabs, live evaluation, procedural tools, saving, and recovery.</p></a
+        ><a class="card" href="contributing.html"
+          ><strong>Contributing</strong>
+          <p>Local setup, code conventions, testing, and GitHub Pages hosting.</p></a
+        >
+        <a class="card" href="projects.html"
+          ><strong>Projects and tools</strong>
+          <p>Named files, imports, scene hooks, generators and commands.</p></a
+        >
+      </div>
+      <h2>Start with a small pixel program</h2>
+      <pre><code>(defpixel hello [p time]
+  (background "#101613")
+  (fill "#bbd6a6")
+  (circle [160 120] (+ 24 (* 4 (sin time)))))</code></pre>
+      <p>
+        <a href="../">Open the workshop</a>, select the <strong>scene</strong> tab, replace its
+        source with this program, and press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> (or <kbd>Cmd</kbd> +
+        <kbd>Enter</kbd>). The game view renders a 320 × 240 surface. Drawing coordinates begin at
+        the top left.
+      </p>
+      <h2>Five editable sources</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Tab</th>
+              <th>Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>scene</code></td>
+              <td>A per-pixel program compiled into WGSL.</td>
+            </tr>
+            <tr>
+              <td><code>game</code></td>
+              <td>State initialization and <code>(defn update [dt] ...)</code>.</td>
+            </tr>
+            <tr>
+              <td><code>audio</code></td>
+              <td>A <code>sound</code> function that emits procedural voices.</td>
+            </tr>
+            <tr>
+              <td><code>editor</code></td>
+              <td>The fullscreen layout, drawing, and editor actions.</td>
+            </tr>
+            <tr>
+              <td><code>ui</code></td>
+              <td>Ordinary Lisp functions implementing widgets and source painting.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <h2>Browser requirements</h2>
+      <p>
+        The workshop requires a browser and device with WebGPU support, served over HTTPS or
+        localhost. These documentation pages work without WebGPU and need no JavaScript.
+      </p>
+      <p class="note">
+        This is a focused prototype. The Lisp shader subset is smaller than the gameplay language.
+        The procedural tools edit recipes through code and controls; full node graphs and persistent
+        GPU feedback are not available yet.
+      </p>
+    </main>
+    <footer><span>aioli · all in one lisp</span><a href="../">Back to the workshop</a></footer>
+  </body>
+</html>
