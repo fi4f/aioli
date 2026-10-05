@@ -41,6 +41,21 @@ const menuRoutes = {
   wgsl: 'view',
 };
 async function click(id) {
+  if (id.startsWith('tab-')) {
+    // Bring offscreen tabs into view through the actual overflow controls.
+    for (let i = 0; i < 256; i++) {
+      const ids = await page.evaluate(() => window.aioli.regions.map((r) => r.id));
+      if (ids.includes(id)) break;
+      if (!ids.includes('tabs-prev')) break;
+      await click('tabs-prev');
+    }
+    for (let i = 0; i < 256; i++) {
+      const ids = await page.evaluate(() => window.aioli.regions.map((r) => r.id));
+      if (ids.includes(id) || !ids.includes('tabs-next')) break;
+      await click('tabs-next');
+    }
+  }
+
   if (
     menuRoutes[id] &&
     !(await page.evaluate((id) => window.aioli.regions.some((region) => region.id === id), id))
@@ -124,6 +139,13 @@ try {
   await type('(defn twice [value] (* value 2))');
   await page.keyboard.press('Control+Enter');
   await ready();
+  assert.ok(
+    await page.evaluate(() =>
+      JSON.parse(window.aioli.state['open-tabs']).includes('lib/math.lisp'),
+    ),
+  );
+  await click('tab-scene');
+  await click('tab-lib/math.lisp');
   const mathSource = await page.evaluate(() => window.aioli.sources['lib/math.lisp']);
   await click('edit');
   await click('undo');
@@ -170,8 +192,28 @@ try {
     () => !window.aioli.pending && window.aioli.sources['lib/actors/player.lisp'],
   );
   await click('folder-lib/actors');
+  await page.waitForFunction(() =>
+    window.aioli.regions.some((r) => r.id === 'file-lib/actors/player.lisp'),
+  );
+
   await click('file-lib/actors/player.lisp');
   assert.equal(await page.evaluate(() => window.aioli.state.tab), 'lib/actors/player.lisp');
+  await click('close-tab-lib/actors/player.lisp');
+  await page.waitForFunction(
+    () => !JSON.parse(window.aioli.state['open-tabs']).includes('lib/actors/player.lisp'),
+  );
+  assert.ok(await page.evaluate(() => window.aioli.sources['lib/actors/player.lisp']));
+  await click('file-lib/actors/player.lisp');
+  await click('file-lib/actors/player.lisp');
+  assert.equal(
+    await page.evaluate(
+      () =>
+        JSON.parse(window.aioli.state['open-tabs']).filter((k) => k === 'lib/actors/player.lisp')
+          .length,
+    ),
+    1,
+  );
+
   await page.waitForFunction(() =>
     JSON.parse(localStorage.getItem('aioli.project.v3')).state['open-folders'].includes(
       'lib/actors',
@@ -181,6 +223,11 @@ try {
   await page.waitForFunction(() => window.aioli?.running);
   await page.waitForFunction(() =>
     window.aioli.regions.some((region) => region.id === 'file-lib/actors/player.lisp'),
+  );
+  assert.ok(
+    await page.evaluate(() =>
+      JSON.parse(window.aioli.state['open-tabs']).includes('lib/actors/player.lisp'),
+    ),
   );
   await page.screenshot({ path: 'artifacts/file-pane.png' });
   // The explorer is navigation only, with pixel icons and contextual file actions.
@@ -248,6 +295,7 @@ try {
     recovery: false,
   }));
   const manyFiles = structuredClone(treeProject);
+  manyFiles.state.tab = 'scroll-49.lisp';
   for (let i = 0; i < 50; i++)
     manyFiles.files[`scroll-${String(i).padStart(2, '0')}.lisp`] = '; fixture';
   await page.locator('#file-input').setInputFiles({
@@ -257,6 +305,11 @@ try {
   });
   await page.waitForFunction(
     () => !window.aioli.pending && window.aioli.regions.some((r) => r.id === 'files-scroll'),
+  );
+  await page.waitForFunction(
+    () =>
+      window.aioli.state.tab === 'scroll-49.lisp' &&
+      JSON.parse(window.aioli.state['open-tabs']).includes('scroll-49.lisp'),
   );
   await page.mouse.move(100, 250);
   await page.mouse.wheel(0, 500);
@@ -330,7 +383,7 @@ try {
   await openFiles();
   await click('audio-generator');
   await type(
-    '(defn generate-sound [] (voice :triangle (get :sound-pitch) 220 (get :sound-duration) (get :sound-gain)))',
+    '(defn generate-sound [] (voice :triangle (get :sound-pitch) 220 1.5 (get :sound-gain)))',
   );
   await page.keyboard.press('Control+Enter');
   await ready();
@@ -362,6 +415,56 @@ try {
     'image',
   );
   await page.screenshot({ path: 'artifacts/file-assets.png' });
+  await click('file-assets/generated.png');
+  await page.waitForFunction(
+    () => window.aioli.preview.ready && window.aioli.preview.width === 320,
+  );
+  assert.equal(await page.evaluate(() => window.aioli.state.window), 'image-asset');
+  assert.ok(await page.evaluate(() => window.aioli.commands.some((c) => c.meta[0] === 6)));
+  const area = await page.evaluate(() =>
+    window.aioli.regions.find((r) => r.id === 'asset-image-area'),
+  );
+  await page.mouse.move(area.origin[0] + 80, area.origin[1] + 80);
+  await page.mouse.wheel(0, -300);
+  await page.waitForFunction(() => window.aioli.state['preview-zoom'] > 1);
+  const pan = await page.evaluate(() => window.aioli.state['preview-pan-x']);
+  await page.mouse.down();
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+  await page.mouse.move(area.origin[0] + 140, area.origin[1] + 100);
+  await page.waitForFunction((pan) => window.aioli.state['preview-pan-x'] > pan + 30, pan);
+  await page.mouse.up();
+  await click('asset-fit');
+  await page.waitForFunction(
+    () => window.aioli.state['preview-zoom'] === 1 && window.aioli.state['preview-pan-x'] === 0,
+  );
+  await page.screenshot({ path: 'artifacts/image-asset-preview.png' });
+  await click('close-window');
+  await click('file-assets/generated.wav');
+  await page.waitForFunction(() => window.aioli.preview.ready && window.aioli.preview.duration > 1);
+  assert.equal(await page.evaluate(() => window.aioli.state.window), 'audio-asset');
+  await click('asset-play');
+  await page.waitForFunction(
+    () => window.aioli.preview.playing && window.aioli.preview.position > 0.05,
+  );
+  await click('asset-play');
+  await page.waitForFunction(
+    () => !window.aioli.preview.playing && window.aioli.preview.position > 0,
+  );
+  const seek = await page.evaluate(() => window.aioli.regions.find((r) => r.id === 'asset-seek'));
+  await page.mouse.click(seek.origin[0] + seek.size[0] / 2, seek.origin[1] + 20);
+  await page.waitForFunction(
+    () => window.aioli.preview.position > window.aioli.preview.duration * 0.45,
+  );
+  await page.screenshot({ path: 'artifacts/audio-asset-preview.png' });
+  await click('asset-stop');
+  await page.waitForFunction(() => window.aioli.preview.position === 0);
+  await click('asset-play');
+  await page.waitForFunction(() => window.aioli.preview.playing);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !window.aioli.preview.playing && !window.aioli.preview.ready);
+
   await click('audio-generator');
 
   await click('close-window');
@@ -486,9 +589,7 @@ try {
       !window.aioli.state['show-files'] &&
       window.aioli.regions.some((region) => region.id === 'source'),
   );
-  await page.keyboard.press('Control+Shift+p');
-  await type('(set! :x 19)');
-  await page.keyboard.press('Control+Enter');
+  await palette('(set! :x 19)');
   await page.waitForFunction(() => window.aioli.state.x === 19);
   await page.keyboard.press('Escape');
   await click('project');
@@ -504,7 +605,7 @@ try {
   );
   assert.deepEqual(errors, []);
   console.log(
-    'PASS: named files, imports, mixed scene hook, palette commands, independent generator previews, PNG/WAV resources, v3 export/import/reload, narrow widgets.',
+    'PASS: source tabs, live component modules, image pan/zoom, audio waveform/playback/seek, named files, imports, commands, generators, persistence and narrow widgets.',
   );
 } catch (error) {
   console.log(

@@ -1,4 +1,5 @@
 import { parse, isSym } from './lisp.js';
+import { normalizeSource } from './source-text.js';
 
 // The short keys keep existing editor tabs and v1/v2 projects compatible. All
 // external paths and v3 saves use actual filenames rather than these aliases.
@@ -92,7 +93,7 @@ export function projectSnapshot(sources, state, resources = {}, recovery = false
     files: Object.fromEntries(
       Object.entries(sources)
         .filter(([key]) => !key.startsWith('__'))
-        .map(([key, text]) => [sourcePath(key), text]),
+        .map(([key, text]) => [sourcePath(key), normalizeSource(text)]),
     ),
     resources,
     state,
@@ -125,7 +126,7 @@ export function readProject(project, defaults) {
       throw new Error(`Invalid source ${name}`);
     const key = sourceKey(path);
     if (key in sources) throw new Error(`Duplicate file ${path}`);
-    sources[key] = text;
+    sources[key] = normalizeSource(text);
   }
   if (project.version === 1) {
     sources.editor = defaults.editor;
@@ -139,20 +140,20 @@ export function readProject(project, defaults) {
     editorHash = (Math.imul(editorHash, 31) + character.charCodeAt(0)) | 0;
   // A v2 editor may already have been saved inside a v3 project. Recognize the
   // unmodified stock source by content, rather than gating on project version.
-  if ([2134464155, 1024998020, -1720971964, -191853367].includes(editorHash))
+  if ([1398298294, 2134464155, 1024998020, -1720971964, -191853367].includes(editorHash))
     sources.editor = defaults.editor;
   // The stock widget library can be upgraded independently of a custom shell.
   let uiHash = 0;
   for (const character of sources.ui.replaceAll('\r\n', '\n'))
     uiHash = (Math.imul(uiHash, 31) + character.charCodeAt(0)) | 0;
   if (
-    [-1490889629, 982880566, -1492819819].includes(uiHash) ||
+    [1938375303, -1490889629, 982880566, -1492819819].includes(uiHash) ||
     sources.ui.trim() === defaults.ui.split('; Shared window shell')[0].trim()
   )
     sources.ui = defaults.ui;
   sources.editor = sources.editor.replace('(text [24 18] "pixel lisp")', '(text [24 18] "aioli")');
   for (const [key, value] of Object.entries(defaults))
-    if (key.includes('/') && !(key in sources)) sources[key] = value;
+    if (key.includes('/') && !(key in sources)) sources[key] = normalizeSource(value);
   if (Object.keys(project.state).length > 256) throw new Error('Too many state fields');
   for (const [key, value] of Object.entries(project.state)) {
     if (
@@ -181,5 +182,6 @@ export function readProject(project, defaults) {
   }
   if (project.recovery !== undefined && typeof project.recovery !== 'boolean')
     throw new Error('Invalid recovery flag');
+  for (const key of Object.keys(sources)) sources[key] = normalizeSource(sources[key]);
   return { sources, state: project.state, resources, recovery: project.recovery ?? false };
 }

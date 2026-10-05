@@ -18,6 +18,7 @@ struct Command { bounds: vec4f, color: vec4f, detail: vec4f, flags: vec4f, clip:
 @group(0) @binding(3) var glyphs: texture_2d<f32>;
 @group(0) @binding(4) var scene: texture_2d<f32>;
 @group(0) @binding(5) var image: texture_2d<f32>;
+@group(0) @binding(6) var asset: texture_2d<f32>;
 ${quad}
 ${pixelCoverageWGSL}
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
@@ -54,6 +55,11 @@ ${pixelCoverageWGSL}
       let scenePosition = clamp(vec2i(relative / command.bounds.zw * vec2f(320, 240)), vec2i(0), vec2i(319, 239));
       if (kind == 4u) { paint = textureLoad(scene, scenePosition, 0); }
       else { paint = textureLoad(image, scenePosition, 0); }
+    }
+    if (kind == 6u) {
+      let dimensions = textureDimensions(asset);
+      let coordinate = clamp(vec2u(relative / command.bounds.zw * vec2f(dimensions)), vec2u(0), dimensions - vec2u(1));
+      paint = textureLoad(asset, vec2i(coordinate), 0);
     }
 
     let alpha = clamp(paint.a, 0.0, 1.0);
@@ -103,6 +109,15 @@ export class GPUHost {
         GPUTextureUsage.RENDER_ATTACHMENT |
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.COPY_SRC,
+    });
+    // A valid placeholder binding exists before any project image is opened.
+    r.assetTexture = device.createTexture({
+      size: [1, 1],
+      format: 'rgba8unorm',
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
     });
     r.imageUniform = device.createBuffer({
       size: 1024,
@@ -165,6 +180,7 @@ export class GPUHost {
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: {} },
         { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: {} },
         { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: {} },
       ],
     });
     r.uiPipeline = await device.createRenderPipelineAsync({
@@ -173,6 +189,26 @@ export class GPUHost {
       fragment: { module, entryPoint: 'fs', targets: [{ format: r.format }] },
     });
     return r;
+  }
+  uploadAssetImage(bitmap) {
+    const limit = this.device.limits.maxTextureDimension2D;
+    if (bitmap.width > limit || bitmap.height > limit)
+      throw new Error(`Image exceeds the GPU texture limit (${limit}px)`);
+    const texture = this.device.createTexture({
+      size: [bitmap.width, bitmap.height],
+      format: 'rgba8unorm',
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    this.device.queue.copyExternalImageToTexture({ source: bitmap }, { texture }, [
+      bitmap.width,
+      bitmap.height,
+    ]);
+    this.assetTexture.destroy();
+    this.assetTexture = texture;
+    this.bindDirty = true;
   }
   async prepare(shader) {
     // A rejected live shader is a normal edit error, not a lost device. Capture
@@ -237,6 +273,7 @@ export class GPUHost {
           { binding: 3, resource: this.atlas.createView() },
           { binding: 4, resource: this.sceneTexture.createView() },
           { binding: 5, resource: this.imageTexture.createView() },
+          { binding: 6, resource: this.assetTexture.createView() },
         ],
       });
       this.bindDirty = false;

@@ -1,5 +1,7 @@
+import { sourcePath } from './project.js';
 import { GLYPH_WIDTH } from './drawing.js';
 import { tokenizeSourceLine } from './source-tokens.js';
+import { normalizeSource, displaySource, sourceLine } from './source-text.js';
 
 const LINE_HEIGHT = 21;
 const GUTTER_WIDTH = 40;
@@ -9,10 +11,24 @@ const MAX_SEGMENTS_PER_ROW = 64;
 
 /**
  * Native text input and source layout data. This class never paints the editor.
- * ui.lisp owns glyph colors, line numbers, selections, and caret drawing.
+ * ui/code-input.lisp owns glyph colors, line numbers, selections and caret drawing.
  * Each buffer retains its own selection and scroll position when tabs switch.
  */
 export class CodeInput {
+  // Renaming a source preserves the same editing session and undo history.
+  renameBuffer(oldKey, newKey) {
+    for (const store of [this.sessions, this.history]) {
+      if (store.has(oldKey)) {
+        store.set(newKey, store.get(oldKey));
+        store.delete(oldKey);
+      }
+    }
+    if (this.tab === oldKey) this.tab = newKey;
+  }
+  forgetBuffer(key) {
+    this.sessions.delete(key);
+    this.history.delete(key);
+  }
   constructor(input, sources, onEdit) {
     this.input = input;
     this.sources = sources;
@@ -128,6 +144,9 @@ export class CodeInput {
   }
 
   switch(tab, text, readOnly = false) {
+    // Native textarea offsets must address the same LF text as source layout.
+    text = normalizeSource(text);
+    if (!readOnly && tab in this.sources) this.sources[tab] = text;
     if (this.tab === tab && this.session()?.text === text) return;
     let session = this.sessions.get(tab);
     if (!session || session.text !== text) {
@@ -139,7 +158,7 @@ export class CodeInput {
     this.input.value = text;
     this.input.readOnly = readOnly;
     this.input.setSelectionRange(session.start, session.end);
-    this.input.setAttribute('aria-label', `${tab}.lisp source`);
+    this.input.setAttribute('aria-label', `${sourcePath(tab)} source`);
   }
 
   /** Convert a canvas click/drag to a native textarea selection offset. */
@@ -152,12 +171,14 @@ export class CodeInput {
       lines.length - 1,
       Math.max(0, Math.floor((y - bounds.y) / LINE_HEIGHT) + session.scroll),
     );
+    const line = sourceLine(lines[row]);
     const column = Math.min(
-      lines[row].length,
+      line.width,
       Math.max(0, Math.round((x - bounds.x - GUTTER_WIDTH) / GLYPH_WIDTH) + session.col),
     );
     const index =
-      lines.slice(0, row).reduce((offset, line) => offset + line.length + 1, 0) + column;
+      lines.slice(0, row).reduce((offset, line) => offset + line.length + 1, 0) +
+      line.offsetAtColumn(column);
     if (!drag) this.anchor = index;
     session.start = Math.min(this.anchor, index);
     session.end = Math.max(this.anchor, index);
@@ -183,6 +204,7 @@ export class CodeInput {
   layout(origin, size, tab, text, readOnly, now) {
     this.switch(tab, text, readOnly);
     const session = this.session();
+    text = session.text;
     const [x, y] = origin;
     const [width, height] = size;
     this.box = { x, y, w: width, h: height };
@@ -197,7 +219,7 @@ export class CodeInput {
     const caret = this.input.selectionDirection === 'backward' ? session.start : session.end;
     const beforeCaret = text.slice(0, caret).split('\n');
     const caretRow = beforeCaret.length - 1;
-    const caretColumn = beforeCaret.at(-1).length;
+    const caretColumn = sourceLine(lines[caretRow]).columnAtOffset(beforeCaret.at(-1).length);
 
     // Follow keyboard navigation/typing, but let an explicit wheel scroll stand.
     if (session.follow) {
@@ -223,6 +245,7 @@ export class CodeInput {
     for (let row = session.scroll; row < endRow; row++) {
       const top = y + (row - session.scroll) * LINE_HEIGHT;
       const line = lines[row];
+      const mapping = sourceLine(line);
       const textX = x + GUTTER_WIDTH;
 
       if (
@@ -231,8 +254,11 @@ export class CodeInput {
         session.end > lineOffset &&
         session.start <= lineOffset + line.length
       ) {
-        const start = Math.max(0, session.start - lineOffset);
-        const end = Math.min(line.length + 1, session.end - lineOffset);
+        const start = mapping.columnAtOffset(Math.max(0, session.start - lineOffset));
+        const end =
+          session.end > lineOffset + line.length
+            ? mapping.width + 1
+            : mapping.columnAtOffset(session.end - lineOffset);
         result.selections.push([
           [textX + (start - session.col) * GLYPH_WIDTH, top],
           [Math.max(2, (end - start) * GLYPH_WIDTH), LINE_HEIGHT],
@@ -242,17 +268,18 @@ export class CodeInput {
       const segments = [];
       let column = 0;
       for (const token of tokenizeSourceLine(line)) {
+        const display = displaySource(token.text);
         const start = Math.max(session.col, column);
-        const end = Math.min(session.col + visibleColumns, column + token.text.length);
+        const end = Math.min(session.col + visibleColumns, column + display.length);
         if (end > start) {
           segments.push([
             [textX + (start - session.col) * GLYPH_WIDTH, top],
-            token.text.slice(start - column, end - column),
+            display.slice(start - column, end - column),
             token.kind,
           ]);
         }
-        // Count every character, including unfinished quotes and escapes.
-        column += token.text.length;
+        // Painting, scrolling and selection all count the same display cells.
+        column += display.length;
       }
       result.rows.push([
         [x, top],

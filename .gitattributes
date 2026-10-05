@@ -1,0 +1,2 @@
+# Keep browser source files independent of a contributor's core.autocrlf setting.
+* text=auto eol=lf

@@ -3,9 +3,24 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parse, createRuntime } from '../lisp.js';
 import { DrawList, binCommands } from '../drawing.js';
+import { resolveModules, cpuForms } from '../project.js';
+import { editorSourcePaths } from '../editor-sources.js';
+import { tabLayout } from '../code-tabs.js';
 import { defaults } from '../examples.js';
 const uiSource = readFileSync(new URL('../ui.lisp', import.meta.url), 'utf8');
 const editorSource = readFileSync(new URL('../editor.lisp', import.meta.url), 'utf8');
+const sources = {
+  ...defaults,
+  ui: uiSource,
+  editor: editorSource,
+  ...Object.fromEntries(
+    editorSourcePaths.map((path) => [
+      path,
+      readFileSync(new URL('../' + path, import.meta.url), 'utf8'),
+    ]),
+  ),
+};
+
 function editor(width = 1440, height = 900) {
   const draw = new DrawList(width, height),
     state = {},
@@ -27,6 +42,10 @@ function editor(width = 1440, height = 900) {
       region: (id, label, origin, size) => regions.push({ id, label, origin, size }),
       surface: (p, s) => draw.surface(p, s),
       'buffer-open': () => {},
+      'code-tabs': (width) => tabLayout(state, sources, sources, width).rows,
+      'code-tabs-before?': () => false,
+      'code-tabs-after?': () => false,
+      'active-code-path': () => state.tab + '.lisp',
       'buffer-rows': () => [],
       'buffer-selections': () => [],
       'buffer-caret': () => null,
@@ -46,8 +65,7 @@ function editor(width = 1440, height = 900) {
     },
   });
   r.load(parse(defaults.game));
-  r.load(parse(uiSource));
-  r.load(parse(editorSource));
+  resolveModules(sources, ['ui', 'editor']).forEach((module) => r.load(cpuForms(module.forms)));
   return { r, state, draw, regions };
 }
 test('fullscreen editor app draws pixels and defines its controls in Lisp', () => {
@@ -139,5 +157,5 @@ test('small viewports retain the fullscreen editor and code controls', () => {
   r.call('editor');
   assert.deepEqual(draw.commands[0].bounds, [0, 0, 390, 844]);
   assert.ok(regions.find((r) => r.id === 'project').origin[0] < 100);
-  assert.ok(regions.some((r) => r.id === 'tab-editor'));
+  assert.ok(regions.some((r) => r.id === 'tab-scene'));
 });

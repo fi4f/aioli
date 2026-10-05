@@ -21,6 +21,7 @@ export function toggleFolder(value, path) {
  * older assets that were saved without MIME metadata. Icons are painted in Lisp.
  */
 export function assetKind(path, kind, mime = '') {
+  mime = typeof mime === 'string' ? mime : '';
   if (kind === 'lisp') return 'code';
   if (mime.startsWith('image/')) return 'image';
   if (mime.startsWith('audio/')) return 'audio';

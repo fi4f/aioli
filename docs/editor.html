@@ -30,12 +30,24 @@
         hide Code to see the game at a useful size.
       </p>
       <p>
-        The five entry shortcuts are <code>scene</code>, <code>game</code>, <code>audio</code>,
-        <code>editor</code>, and <code>ui</code>. Projects can contain additional named Lisp files,
-        binary resources and shared state. Use
-        <a href="projects.html">Files, generator windows and Commands</a> to manage them. The files
-        <code>editor.lisp</code> and <code>ui.lisp</code> in this repository supply the initial
-        editor; edits in the browser belong to the project, rather than writing those files on disk.
+        Source tabs initially include <code>scene</code>, <code>game</code>, <code>audio</code>,
+        <code>editor</code> and <code>ui</code>. Clicking any source in the Files pane opens a tab,
+        or selects its existing tab. Each buffer retains its cursor, selection, scroll position and
+        undo history while switching. Close a tab with its x; the source remains in the project.
+        Overflow arrows browse tabs that do not fit. A star marks a draft that differs from the
+        accepted source. The open tab list and selected tab are saved with the project.
+      </p>
+      <p>
+        Clicking an image opens a preview with drag-to-pan, wheel zoom, +/- controls, Fit and 1:1.
+        Clicking audio opens a waveform with Play/Pause, Stop and click/drag seeking. Closing the
+        preview (or Escape) stops audio playback. See
+        <a href="projects.html#previews">asset previews</a>.
+      </p>
+      <p>
+        The root <code>editor.lisp</code> and <code>ui.lisp</code> import the editor modules.
+        <code>ui/</code> holds reusable controls; <code>editor/</code> holds complete panes and
+        widgets. Open these files from the explorer and edit them live. Browser edits belong to the
+        saved project rather than changing the repository on disk.
       </p>
       <h2 id="menus">The menu bar</h2>
       <p>

@@ -20,16 +20,17 @@
       <h1>More files. More ways to make things.</h1>
       <p class="lead">
         A project contains named Lisp files, imported assets, generated images and sounds, and
-        shared state. The file pane and tool windows are live Lisp widgets in <code>ui.lisp</code>.
+        shared state. The file pane and tool windows are live Lisp widgets in <code>editor/</code>,
+        composed from <code>ui/</code> controls.
       </p>
       <h2 id="files">File explorer</h2>
       <p>
         Use <strong>View → Files pane</strong> to dock the folder tree beside code and the game.
         Click a folder row to expand or collapse it. Nesting and expansion are saved with the
         project. Icons distinguish folders, code, images, audio and generic assets. Click a source
-        to open it; clicking an asset reports its type and size in the status bar. Scroll with the
-        mouse wheel or by dragging the scrollbar. Collapsed descendants consume no scroll space. On
-        narrow screens, opening a source returns to the code pane.
+        to open its code tab; clicking an image or audio asset opens its preview window. Scroll with
+        the mouse wheel or by dragging the scrollbar. Collapsed descendants consume no scroll space.
+        On narrow screens, opening a source returns to the code pane.
       </p>
       <p>
         Right-click a file, folder or empty tree area for file actions. Shift+F10 opens the selected
@@ -42,11 +43,27 @@
         repair the draft.
       </p>
       <p>
-        The five tabs are shortcuts to entry files: <code>scene.lisp</code>, <code>game.lisp</code>,
+        The initial tabs open entry files: <code>scene.lisp</code>, <code>game.lisp</code>,
         <code>audio.lisp</code>, <code>ui.lisp</code> and <code>editor.lisp</code>. Entry and stock
         generator filenames cannot be renamed or deleted. Built-in generator recipes belong to their
         widgets; they are retained in project saves but omitted from the file tree. Generated assets
         appear in the tree like other resources.
+      </p>
+      <h2 id="previews">Asset previews</h2>
+      <p>
+        Click an image resource to open its WebGPU preview. Drag inside the checkerboard to pan; use
+        the mouse wheel to zoom around the pointer. The +/- controls zoom around the center; Fit
+        resets pan/zoom and fits large images to the viewport without enlarging small ones. 1:1
+        displays one image pixel per screen pixel. Transparency shows through the checkerboard.
+        Previewing never modifies the asset.
+      </p>
+      <p>
+        Click an audio resource to decode it with the browser's supported audio formats. The
+        waveform preserves peaks across channels. Play/Pause resumes from the current position; Stop
+        returns to the beginning. Click or drag the waveform to seek. The playhead and elapsed time
+        update during playback. Closing the window, Escape, or switching to another widget stops
+        asset playback. Preview playback is independent of procedural generator controls. A decode
+        error appears inside the window and leaves the editor usable.
       </p>
       <h2 id="imports">Import resolution</h2>
       <pre><code>; game.lisp

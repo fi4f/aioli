@@ -119,7 +119,9 @@
               <td>CPU editor</td>
               <td>
                 Draw fixed-width text. Current glyph coverage is ASCII 32–126; other characters
-                display as <code>?</code>. Newlines and tabs are supported.
+                display as <code>?</code>. Newlines and tabs are supported. The source editor
+                retains Unicode in its buffer and clipboard; each fallback character occupies one
+                displayed cell, and a tab occupies four.
               </td>
             </tr>
             <tr>
@@ -263,8 +265,9 @@
       </p>
       <h2 id="widgets">Lisp widget library</h2>
       <p>
-        These are normal functions defined in <code>ui.lisp</code>, not special language forms. Call
-        them from <code>editor</code>; changing their definitions changes the editor live.
+        These are normal functions imported by <code>ui.lisp</code> from <code>ui/</code>, not
+        special language forms. Call them from <code>editor</code>; changing their definitions
+        changes the editor live.
       </p>
       <div class="table-scroll">
         <table>
@@ -394,8 +397,8 @@
       <h2 id="buffers">Source buffers</h2>
       <p>
         Most projects should call <code>code-editor</code>. The following primitives allow an
-        alternative source widget. They supply data only; <code>ui.lisp</code> paints the visible
-        content.
+        alternative source widget. They supply data only; <code>ui/code-input.lisp</code> paints the
+        visible content.
       </p>
       <div class="table-scroll">
         <table>
@@ -434,8 +437,8 @@
       </div>
       <p>
         Token kinds are <code>comment string keyword number delimiter symbol whitespace</code>.
-        <code>(token-color kind)</code> in <code>ui.lisp</code> chooses colors. Buffer text is
-        displayed even when it cannot yet be evaluated.
+        <code>(token-color kind)</code> in <code>ui/code-input.lisp</code> chooses colors. Buffer
+        text is displayed even when it cannot yet be evaluated.
       </p>
       <h2 id="audio">Procedural audio</h2>
       <pre><code>(defn sound []
@@ -530,8 +533,40 @@
         <code>(menu-region id label origin size enabled checked)</code> declares a menu
         interaction/accessibility region. Pass <code>nil</code> for an ordinary item, or a boolean
         checked state for a checkbox item. <code>(pointer-moved?)</code> is true for one frame after
-        pointer movement. The stock menu helpers in <code>ui.lisp</code> paint headings, items,
-        separators and the dismissible dropdown.
+        pointer movement. The stock menu helpers in <code>ui/menu.lisp</code> and
+        <code>editor/menu-bar.lisp</code> paint headings, items, separators and the dismissible
+        dropdown.
+      </p>
+      <h2 id="tabs">Code tabs</h2>
+      <p>
+        <code>(open-code-tab key)</code> selects or adds a buffer;
+        <code>(close-code-tab key)</code> closes its tab without deleting its source. Use short keys
+        for the five entry files, or a full project path for other sources.
+        <code>(code-tabs width)</code> returns visible rows
+        <code>[key label x-offset width draft?]</code> and updates overflow metadata.
+        <code>(code-tabs-before?)</code> / <code>(code-tabs-after?)</code> query that metadata;
+        <code>(scroll-code-tabs delta)</code> browses overflow.
+        <code>(active-code-path)</code> returns the selected buffer's project path. Shared state
+        <code>:open-tabs</code> stores a JSON array of keys; <code>:tab</code> remains the active
+        key. Selecting a key with Lisp also opens its tab.
+      </p>
+      <h2 id="asset-preview">Asset preview services</h2>
+      <p>
+        <code>(open-file path)</code> opens source tabs or image/audio preview windows.
+        <code>(asset-ready?)</code> and <code>(asset-status)</code> report decode readiness/errors;
+        <code>(asset-width)</code> / <code>(asset-height)</code> give decoded image dimensions.
+        <code>(asset-image origin size)</code> samples the decoded image in the pixel drawing
+        stream. The stock window uses <code>:preview-path</code>, <code>:preview-zoom</code> and
+        <code>:preview-pan-x</code> / <code>:preview-pan-y</code>. Zoom multiplies the fitted size;
+        pan is measured in screen pixels.
+      </p>
+      <p>
+        <code>(asset-waveform origin size)</code> draws the decoded audio envelope with the current
+        fill color. <code>(asset-duration)</code> and <code>(asset-time)</code> return seconds;
+        <code>(asset-playing?)</code> reports transport state. <code>(play-asset)</code>,
+        <code>(pause-asset)</code>, <code>(stop-asset)</code> and
+        <code>(seek-asset seconds)</code> control playback. <code>(close-asset-preview)</code> stops
+        playback and closes the window. These services do not modify project resources.
       </p>
     </main>
     <footer>

@@ -1,0 +1,12 @@
+; The code pane hosts the tab strip and one shared native input buffer.
+(defn code-pane [x width height]
+  (fill (get :ui-panel)) (rect [x 51] [width (- height 81)])
+  (code-tab-strip (+ x 8) 58 (- width 16))
+  (fill (get :ui-muted))
+  (scope (clip [(+ x 16) 94] [(- width 32) 20])
+    (text [(+ x 16) 94] (active-code-path)))
+  (if (= (get :window) "")
+    (if (= (get :tab) "")
+      (text [(+ x 24) 124] "Open a source file from Files")
+      (code-editor [(+ x 16) 120] [(- width 32) (- height 168)] (get :tab)))
+    (text [(+ x 24) 124] "Tool input active")))

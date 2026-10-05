@@ -43,6 +43,21 @@ const menuRoutes = {
   wgsl: 'view',
 };
 async function click(id) {
+  if (id.startsWith('tab-')) {
+    // Bring offscreen tabs into view through the actual overflow controls.
+    for (let i = 0; i < 256; i++) {
+      const ids = await page.evaluate(() => window.aioli.regions.map((r) => r.id));
+      if (ids.includes(id)) break;
+      if (!ids.includes('tabs-prev')) break;
+      await click('tabs-prev');
+    }
+    for (let i = 0; i < 256; i++) {
+      const ids = await page.evaluate(() => window.aioli.regions.map((r) => r.id));
+      if (ids.includes(id) || !ids.includes('tabs-next')) break;
+      await click('tabs-next');
+    }
+  }
+
   if (
     menuRoutes[id] &&
     !(await page.evaluate((id) => window.aioli.regions.some((region) => region.id === id), id))
@@ -55,6 +70,28 @@ async function click(id) {
   );
 }
 async function source(tab, text) {
+  if (
+    tab.includes('/') &&
+    !(await page.evaluate(
+      (key) => JSON.parse(window.aioli.state['open-tabs'] ?? '[]').includes(key),
+      tab,
+    ))
+  ) {
+    if (!(await page.evaluate(() => window.aioli.state['show-files']))) await click('files');
+    const parts = tab.split('/');
+    for (let i = 1; i < parts.length; i++) {
+      const folder = parts.slice(0, i).join('/');
+      if (
+        !(await page.evaluate(
+          (path) => JSON.parse(window.aioli.state['open-folders']).includes(path),
+          folder,
+        ))
+      )
+        await click('folder-' + folder);
+    }
+    await click('file-' + tab);
+  }
+
   await click(`tab-${tab}`);
   await page.waitForFunction((tab) => window.aioli.state.tab === tab, tab);
   const r = await region('source');
@@ -146,6 +183,65 @@ try {
   await source('scene', original);
   await evaluated();
 
+  // Imported CRLF, Unicode fallbacks and tabs share the textarea's true offsets.
+  const selectionFixture = ';A\u{1f642}B\tC\r\n;D\u00e9F\r\n;G\u{1f600}H';
+  await page.locator('#resource-input').setInputFiles({
+    name: 'selection.lisp',
+    mimeType: 'text/plain',
+    buffer: Buffer.from(selectionFixture),
+  });
+  await page.waitForFunction(
+    () => !window.aioli.pending && window.aioli.sources['assets/selection.lisp'],
+  );
+  assert.equal(
+    await page.evaluate(() => window.aioli.sources['assets/selection.lisp'].includes('\r')),
+    false,
+  );
+  await source('assets/selection.lisp', selectionFixture.replaceAll('\r\n', '\n'));
+  await evaluated();
+  const selectionBox = await region('source');
+  await page.mouse.click(selectionBox.origin[0] + 40 + 2 * 8, selectionBox.origin[1] + 5);
+  await page.keyboard.press('Shift+ArrowRight');
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const input = document.querySelector('#text-input');
+      return [
+        input.selectionStart,
+        input.selectionEnd,
+        input.value.slice(input.selectionStart, input.selectionEnd),
+      ];
+    }),
+    [2, 4, '\u{1f642}'],
+  );
+  await page.waitForFunction(
+    (box) =>
+      window.aioli.commands.some(
+        (c) =>
+          c.meta[0] === 0 &&
+          c.bounds[0] === box.origin[0] + 56 &&
+          c.bounds[1] === box.origin[1] &&
+          c.bounds[2] === 8 &&
+          c.bounds[3] === 21,
+      ),
+    selectionBox,
+  );
+  await page.mouse.click(selectionBox.origin[0] + 40 + 3 * 8, selectionBox.origin[1] + 21 + 5);
+  assert.equal(await page.evaluate(() => document.querySelector('#text-input').selectionStart), 11);
+  await page.mouse.click(selectionBox.origin[0] + 40 + 2 * 8, selectionBox.origin[1] + 42 + 5);
+  await page.mouse.down();
+  await page.mouse.move(selectionBox.origin[0] + 40 + 4 * 8, selectionBox.origin[1] + 42 + 5);
+  await page.mouse.up();
+  assert.equal(
+    await page.evaluate(() => {
+      const input = document.querySelector('#text-input');
+      return input.value.slice(input.selectionStart, input.selectionEnd);
+    }),
+    '\u{1f600}H',
+  );
+  await page.screenshot({ path: 'artifacts/unicode-selection.png' });
+  await click('tab-scene');
+  if (await page.evaluate(() => window.aioli.state['show-files'])) await click('files');
+
   // Use the pixel slider by dragging, not an HTML input.
   await click('tools');
   await region('moon');
@@ -163,27 +259,36 @@ try {
   assert.equal(await page.evaluate(() => window.aioli.state.moon), moon);
   await click('tools');
 
-  // Editing Lisp changes the actual fullscreen UI and its pixel output.
+  // Editing imported component files changes the actual fullscreen pixel UI.
   const editor = await page.evaluate(() => window.aioli.sources.editor);
+  const workspace = await page.evaluate(() => window.aioli.sources['editor/workspace.lisp']);
   await source(
-    'editor',
-    editor
-      .replace('(text [24 18] "aioli")', '(text [24 18] "made in lisp")')
-      .replace('(background (get :ui-bg))', '(background "#16221a")'),
+    'editor/workspace.lisp',
+    workspace.replace('(background (get :ui-bg))', '(background "#16221a")'),
   );
+  await evaluated();
+  assert.deepEqual(await page.evaluate(() => window.aioli.commands[0].color), [
+    22 / 255,
+    34 / 255,
+    26 / 255,
+    1,
+  ]);
+  await source('editor/workspace.lisp', workspace);
+  await evaluated();
+  const buttons = await page.evaluate(() => window.aioli.sources['ui/buttons.lisp']);
+  await source('ui/buttons.lisp', buttons.replace('"#191f1b"', '"#26322a"'));
   await evaluated();
   assert.ok(
     await page.evaluate(() =>
-      window.aioli.commands.some((c) => c.bounds[2] === innerWidth && c.color[0] > 0.08),
+      window.aioli.commands.some(
+        (c) => c.meta[0] === 0 && c.color[0] === 38 / 255 && c.color[1] === 50 / 255,
+      ),
     ),
   );
-  await source('editor', editor);
+  await source('ui/buttons.lisp', buttons);
   await evaluated();
-  const ui = await page.evaluate(() => window.aioli.sources.ui);
-  await source('ui', ui.replace('"#191f1b"', '"#26322a"'));
-  await evaluated();
-  await source('ui', ui);
-  await evaluated();
+
+  if (await page.evaluate(() => window.aioli.state['show-files'])) await click('files');
 
   // Recovery remains available even if a valid editor program hides all UI.
   await source('editor', '(defn editor [] (background "#101613"))');

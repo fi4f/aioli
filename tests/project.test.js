@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { normalizeSource } from '../source-text.js';
 import { createRuntime } from '../lisp.js';
 import { defaults as examples } from '../examples.js';
+import { editorSourcePaths } from '../editor-sources.js';
 import { generatorSources } from '../generators.js';
 import {
   resolvePath,
@@ -19,6 +21,12 @@ const defaults = {
   ui: readFileSync(new URL('../ui.lisp', import.meta.url), 'utf8'),
   editor: readFileSync(new URL('../editor.lisp', import.meta.url), 'utf8'),
   ...generatorSources,
+  ...Object.fromEntries(
+    editorSourcePaths.map((path) => [
+      path,
+      readFileSync(new URL('../' + path, import.meta.url), 'utf8'),
+    ]),
+  ),
 };
 test('imports resolve relative and project-root paths, deduplicating shared dependencies', () => {
   const sources = {
@@ -103,14 +111,14 @@ test('v3 saves preserve extra source files and binary assets while excluding tra
 test('a stock widget library inside an existing v3 save is upgraded by content', () => {
   const oldUI = defaults.ui.split('; Shared window shell')[0];
   const saved = projectSnapshot({ ...defaults, ui: oldUI }, { x: 4 });
-  assert.equal(readProject(saved, defaults).sources.ui, defaults.ui);
+  assert.equal(readProject(saved, defaults).sources.ui, normalizeSource(defaults.ui));
   saved.files['ui.lisp'] = oldUI + '\n; human customization';
-  assert.equal(readProject(saved, defaults).sources.ui, saved.files['ui.lisp']);
+  assert.equal(readProject(saved, defaults).sources.ui, normalizeSource(saved.files['ui.lisp']));
 });
 test('v2 migration retains custom source and state and installs generator files', () => {
   const source = { ...examples, editor: defaults.editor + '\n; customized', ui: defaults.ui };
   const migrated = readProject({ version: 2, sources: source, state: { x: 17 } }, defaults);
-  assert.equal(migrated.sources.editor, source.editor);
+  assert.equal(migrated.sources.editor, normalizeSource(source.editor));
   assert.equal(migrated.state.x, 17);
   assert.ok(migrated.sources['generators/image.lisp']);
   assert.throws(
@@ -124,5 +132,17 @@ test('v2 migration retains custom source and state and installs generator files'
         defaults,
       ),
     /escapes/,
+  );
+});
+
+test('project loading and saving normalize source newlines without replacing Unicode', () => {
+  const text = '; \u{1f642}\r\n(defn example [] "\u00e9")\r';
+  const saved = projectSnapshot({ ...defaults, 'lib/line-endings.lisp': text }, {});
+  assert.equal(saved.files['lib/line-endings.lisp'], '; \u{1f642}\n(defn example [] "\u00e9")\n');
+  saved.files['lib/line-endings.lisp'] = text;
+  const loaded = readProject(saved, defaults);
+  assert.equal(
+    loaded.sources['lib/line-endings.lisp'],
+    '; \u{1f642}\n(defn example [] "\u00e9")\n',
   );
 });

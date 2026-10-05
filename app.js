@@ -5,7 +5,11 @@ import { validateVoice, synthesize, wav } from './audio.js';
 import { DrawList } from './drawing.js';
 import { GPUHost } from './gpu.js';
 import { CodeInput } from './code-input.js';
-import { projectTree, toggleFolder } from './file-tree.js';
+import { editorSourcePaths } from './editor-sources.js';
+import { openTab, closeTab, renameTab, tabLayout } from './code-tabs.js';
+import { AssetPreview } from './asset-preview.js';
+import { normalizeSource } from './source-text.js';
+import { assetKind, projectTree, toggleFolder } from './file-tree.js';
 import { generatorSources } from './generators.js';
 import {
   entryPaths,
@@ -27,27 +31,30 @@ const $ = (id) => document.getElementById(id),
 async function loadBundledSource(filename) {
   const response = await fetch(new URL(filename, import.meta.url));
   if (!response.ok) throw new Error(`Unable to load ${filename}: HTTP ${response.status}`);
-  return response.text();
+  return normalizeSource(await response.text());
 }
 const defaults = {
   ...examples,
   editor: await loadBundledSource('editor.lisp'),
   ui: await loadBundledSource('ui.lisp'),
   ...generatorSources,
+  ...Object.fromEntries(
+    await Promise.all(editorSourcePaths.map(async (path) => [path, await loadBundledSource(path)])),
+  ),
 };
 const sources = Object.assign(Object.create(null), defaults);
 let resources = Object.create(null),
   generatedSound;
 const transientBuffers = { __palette: '', __path: 'lib/new.lisp' };
 Object.assign(sources, transientBuffers);
-const resourceRows = () => [
-  ...Object.keys(sources)
+const resourceRows = (sourceStore = sources, resourceStore = resources) => [
+  ...Object.keys(sourceStore)
     .filter(
       (key) =>
         !key.startsWith('__') && !['generators/image.lisp', 'generators/audio.lisp'].includes(key),
     )
     .map((key) => [sourcePath(key), 'lisp', key]),
-  ...Object.keys(resources).map((path) => [path, 'asset', path, resources[path].mime]),
+  ...Object.keys(resourceStore).map((path) => [path, 'asset', path, resourceStore[path].mime]),
 ];
 let state = Object.create(null),
   runtime,
@@ -237,16 +244,39 @@ const code = new CodeInput($('text-input'), sources, (tab) => {
   timer = setTimeout(() => evaluate(), 500);
 });
 
+const assetPreview = new AssetPreview(
+  () => gpu,
+  () => (audioContext ??= new AudioContext()),
+);
+function previewAsset(path) {
+  const resource = resources[path];
+  const kind = assetKind(path, 'asset', resource?.mime);
+  if (kind !== 'image' && kind !== 'audio') {
+    report(`${path} • ${resource?.mime ?? 'asset'}`);
+    return;
+  }
+  state['preview-path'] = path;
+  state['preview-zoom'] = 1;
+  state['preview-pan-x'] = state['preview-pan-y'] = 0;
+  state.window = kind + '-asset';
+  return assetPreview.open(path, resource, kind);
+}
+
 /**
  * Bind native services to one candidate's state. Validation candidates cannot
  * consume input or perform file/audio actions; only the active/recovery editor can.
  */
-function makeRuntime(target) {
+function makeRuntime(target, candidateSources = sources, candidateResources = resources) {
   let draw,
     items = [],
     patch = [],
-    buffer = { rows: [], selections: [], caret: null };
+    buffer = { rows: [], selections: [], caret: null },
+    tabs = { rows: [], before: false, after: false };
   const live = () => result === runtime || result === rescueRuntime;
+  // Candidate queries must describe the imported/draft project before commit.
+  const visibleSources = () => (live() ? sources : candidateSources);
+  const visibleResources = () => (live() ? resources : candidateResources);
+  const rowsForTarget = () => resourceRows(visibleSources(), visibleResources());
   const actions =
     (fn) =>
     (...args) => {
@@ -322,13 +352,13 @@ function makeRuntime(target) {
           resourceKind: kind,
           assetKind,
         }),
-      'project-tree-offset': () => treeOffset(target),
+      'project-tree-offset': () => treeOffset(target, rowsForTarget()),
       'project-tree': () =>
-        projectTree(resourceRows(), target['open-folders']).slice(
-          treeOffset(target),
-          treeOffset(target) + 64,
+        projectTree(rowsForTarget(), target['open-folders']).slice(
+          treeOffset(target, rowsForTarget()),
+          treeOffset(target, rowsForTarget()) + 64,
         ),
-      'project-tree-count': () => projectTree(resourceRows(), target['open-folders']).length,
+      'project-tree-count': () => projectTree(rowsForTarget(), target['open-folders']).length,
       'toggle-folder': actions((path) => {
         state['open-folders'] = toggleFolder(state['open-folders'], path);
         state['file-offset'] = 0;
@@ -349,20 +379,38 @@ function makeRuntime(target) {
       'project-file-count': () =>
         Object.keys(sources).filter((key) => !key.startsWith('__')).length +
         Object.keys(resources).length,
+      'open-code-tab': actions((key) => {
+        openTab(state, sources, key);
+        dirty = true;
+      }),
+      'close-code-tab': actions((key) => {
+        closeTab(state, sources, key);
+        dirty = true;
+      }),
+      'scroll-code-tabs': actions((delta) => {
+        state['tab-offset'] = Math.max(0, (state['tab-offset'] ?? 0) + delta);
+      }),
+      'code-tabs': (width) => {
+        tabs = tabLayout(target, visibleSources(), committedSources, width);
+        return tabs.rows;
+      },
+      'code-tabs-before?': () => tabs.before,
+      'code-tabs-after?': () => tabs.after,
+      'active-code-path': () => sourcePath(target.tab ?? ''),
       'open-file': actions((path) => {
-        const key = sourceKey(resolvePath(path));
+        path = resolvePath(path);
+        const key = sourceKey(path);
         if (key in sources) {
-          state.tab = key;
+          openTab(state, sources, key);
           state['show-code'] = true;
           if (innerWidth < 850) state['show-files'] = false;
           state['file-path-editing'] = false;
-          state['selected-file'] = resolvePath(path);
+          state['selected-file'] = path;
           state.window = '';
-        } else if (resources[path])
-          report(
-            `${path} • ${resources[path].mime ?? 'asset'} • ${Math.floor(resources[path].data.length * 0.75)} bytes`,
-          );
-        else throw new Error(`Missing file ${path}`);
+        } else if (resources[path]) {
+          state['selected-file'] = path;
+          return previewAsset(path);
+        } else throw new Error(`Missing file ${path}`);
       }),
       'create-file': actions((path, text = '; New project module\n') => {
         path = resolvePath(path);
@@ -374,8 +422,8 @@ function makeRuntime(target) {
         if (Object.keys(sources).length >= 258) throw new Error('Maximum 256 source files');
         if (typeof text !== 'string' || text.length > 100000)
           throw new Error('Invalid source text');
-        sources[key] = text;
-        state.tab = key;
+        sources[key] = normalizeSource(text);
+        openTab(state, sources, key);
         state['show-code'] = true;
         if (innerWidth < 850) state['show-files'] = false;
         state['file-path-editing'] = false;
@@ -401,7 +449,8 @@ function makeRuntime(target) {
           if (!newPath.endsWith('.lisp')) throw new Error('Source files must end in .lisp');
           sources[newKey] = sources[oldKey];
           delete sources[oldKey];
-          if (state.tab === oldKey) state.tab = newKey;
+          renameTab(state, sources, oldKey, newKey);
+          code.renameBuffer(oldKey, newKey);
         } else if (resources[oldPath]) {
           resources[newPath] = resources[oldPath];
           delete resources[oldPath];
@@ -420,9 +469,10 @@ function makeRuntime(target) {
         )
           throw new Error('Entry and stock generator/command files cannot be deleted');
         const key = sourceKey(path);
+        closeTab(state, sources, key);
+        code.forgetBuffer(key);
         delete sources[key];
         delete resources[path];
-        if (state.tab === key) state.tab = 'scene';
         evaluate();
       }),
       'import-resource': actions(() => $('resource-input').click()),
@@ -453,6 +503,32 @@ function makeRuntime(target) {
       'run-command': actions((path) => runCommand(path)),
       'run-instruction': actions(() => runInstruction(sources.__palette)),
       'path-input': () => sources.__path,
+      'asset-ready?': () => assetPreview.ready,
+      'asset-status': () => assetPreview.status,
+      'asset-width': () => assetPreview.width,
+      'asset-height': () => assetPreview.height,
+      'asset-duration': () => assetPreview.duration,
+      'asset-time': () => assetPreview.position,
+      'asset-playing?': () => assetPreview.playing,
+      'play-asset': actions(() => assetPreview.play()),
+      'pause-asset': actions(() => assetPreview.pause()),
+      'stop-asset': actions(() => assetPreview.stop()),
+      'seek-asset': actions((seconds) => assetPreview.seek(seconds)),
+      'close-asset-preview': actions(() => {
+        assetPreview.close();
+        state.window = '';
+      }),
+      'asset-image': (origin, size) => draw.surface(origin, size, 6),
+      'asset-waveform': (origin, size) => {
+        for (const [i, peak] of (assetPreview.peaks ?? []).entries()) {
+          const x = origin[0] + (i / 512) * size[0];
+          draw.line(
+            [x, origin[1] + (0.5 - peak[1] * 0.46) * size[1]],
+            [x, origin[1] + (0.5 - peak[0] * 0.46) * size[1]],
+            1,
+          );
+        }
+      },
       'image-preview': (origin, size) => draw.surface(origin, size, 5),
       'export-image': actions((path = 'assets/generated.png') => exportGeneratedImage(path, true)),
       'save-image-resource': actions((path = 'assets/generated.png') =>
@@ -507,10 +583,19 @@ function makeRuntime(target) {
               ? guide
               : tab === 'diagnostic'
                 ? message
-                : sources[tab];
+                : tab.startsWith('__')
+                  ? sources[tab]
+                  : visibleSources()[tab];
         if (typeof text !== 'string') throw new Error(`Unknown source buffer ${tab}`);
         if (live()) {
-          buffer = code.layout(origin, size, tab, text, !(tab in sources), performance.now());
+          buffer = code.layout(
+            origin,
+            size,
+            tab,
+            text,
+            !(tab in visibleSources()),
+            performance.now(),
+          );
           if ((tab === '__palette' && focusPalette) || (tab === '__path' && focusPath)) {
             focusPath = false;
             focusPalette = false;
@@ -558,23 +643,26 @@ function makeRuntime(target) {
       'upgrade-editor': actions(async () => {
         // Keep custom shell/library sources as ordinary root-level files so any
         // relative imports still resolve if a contributor opens the backups.
-        const backups = ['editor', 'ui'].filter((key) => sources[key] !== defaults[key]);
+        const editorKeys = ['editor', 'ui', ...editorSourcePaths];
+        const backups = editorKeys.filter(
+          (key) => key in sources && sources[key] !== defaults[key],
+        );
         if (
           Object.keys(sources).filter((key) => !key.startsWith('__')).length + backups.length >
           256
         )
           throw new Error('Make room for editor backups before upgrading');
         for (const key of backups) {
+          const stem = key.replace(/\.lisp$/, '');
           let index = 1;
           while (
-            `${key}-backup-${index}.lisp` in sources ||
-            `${key}-backup-${index}.lisp` in resources
+            `${stem}-backup-${index}.lisp` in sources ||
+            `${stem}-backup-${index}.lisp` in resources
           )
             index++;
-          sources[`${key}-backup-${index}.lisp`] = sources[key];
+          sources[`${stem}-backup-${index}.lisp`] = sources[key];
         }
-        sources.editor = defaults.editor;
-        sources.ui = defaults.ui;
+        for (const key of editorKeys) sources[key] = defaults[key];
         if (await evaluate({ exitRecovery: true }))
           report('Latest editor installed. Previous custom sources are kept in backup files.');
       }),
@@ -639,12 +727,12 @@ async function evaluate({ reset = false, imported = null, exitRecovery = false }
       baseline = { ...state };
     // File operations and gameplay edits are not repairs to the editor. Keep
     // the recovery shell until its sources are explicitly changed and accepted.
-    const editorChanged = ['editor', 'ui'].some(
+    const editorChanged = ['editor', 'ui', ...editorSourcePaths].some(
       (key) => candidateSources[key] !== committedSources[key],
     );
     const nextRecovery = !exitRecovery && (imported?.recovery ?? (recovery && !editorChanged));
     const target = Object.assign(Object.create(null), imported?.state ?? (reset ? {} : state));
-    const candidate = makeRuntime(target);
+    const candidate = makeRuntime(target, candidateSources, imported?.resources ?? resources);
     for (const module of resolveModules(candidateSources, [
       'game',
       'ui',
@@ -689,8 +777,8 @@ async function evaluate({ reset = false, imported = null, exitRecovery = false }
     if (imagePipeline) gpu.commitImage(imagePipeline, imageShader);
     generatedSound = nextGeneratedSound;
     rescueRuntime = makeRuntime(state);
-    rescueRuntime.load(parse(defaults.ui));
-    rescueRuntime.load(parse(defaults.editor));
+    for (const module of resolveModules(defaults, ['ui', 'editor']))
+      rescueRuntime.load(cpuForms(module.forms));
     gameFailed = false;
     editorFailed = false;
     recovery = nextRecovery;
@@ -847,9 +935,9 @@ function accessibility() {
   }
 }
 // Clamp to the visible viewport after collapse, delete, resize or import.
-function treeOffset(target) {
+function treeOffset(target, rows = resourceRows()) {
   const capacity = Math.min(64, Math.max(1, Math.floor((innerHeight - 125) / 26)));
-  const total = projectTree(resourceRows(), target['open-folders']).length;
+  const total = projectTree(rows, target['open-folders']).length;
   return Math.max(0, Math.min(Math.max(0, total - capacity), target['file-offset'] ?? 0));
 }
 function openFileContext(row, x, y) {
@@ -903,6 +991,26 @@ canvas.addEventListener('pointercancel', release);
 canvas.addEventListener(
   'wheel',
   (e) => {
+    const imageArea = topRegion(e.clientX, e.clientY);
+    if (imageArea?.id === 'asset-image-area') {
+      e.preventDefault();
+      const fit = Math.min(
+        1,
+        imageArea.size[0] / assetPreview.width,
+        imageArea.size[1] / assetPreview.height,
+      );
+      const old = state['preview-zoom'];
+      const next = Math.max(0.1, Math.min(32 / fit, old * Math.pow(1.15, -Math.sign(e.deltaY))));
+      const cx = imageArea.origin[0] + imageArea.size[0] / 2,
+        cy = imageArea.origin[1] + imageArea.size[1] / 2;
+      state['preview-pan-x'] =
+        e.clientX - cx - ((e.clientX - cx - state['preview-pan-x']) * next) / old;
+      state['preview-pan-y'] =
+        e.clientY - cy - ((e.clientY - cy - state['preview-pan-y']) * next) / old;
+      state['preview-zoom'] = next;
+      dirty = true;
+      return;
+    }
     const tree = regions.find((region) => region.id === 'files-tree');
     if (
       state.window === '' &&
@@ -1071,7 +1179,7 @@ $('resource-input').onchange = async (event) => {
           throw new Error('Maximum 256 source files');
         const text = await file.text();
         if (text.length > 100000) throw new Error('Source exceeds 100KB');
-        sources[path] = text;
+        sources[path] = normalizeSource(text);
       } else {
         if (Object.keys(resources).length >= 256) throw new Error('Maximum 256 assets');
         if (!/^(image|audio)\//.test(file.type))
@@ -1117,6 +1225,14 @@ function frame(now) {
         focusPalette = visibleWindow === 'palette';
         focusPath = visibleWindow === 'file-path';
       }
+      if (state.window === 'image-asset' || state.window === 'audio-asset') {
+        const resource = resources[state['preview-path']];
+        assetPreview.open(
+          state['preview-path'],
+          resource,
+          state.window === 'image-asset' ? 'image' : 'audio',
+        );
+      } else if (assetPreview.path) assetPreview.close();
       const result = ui.drawEditor();
       lastDraw = result.draw;
       regions = result.regions;
@@ -1137,6 +1253,7 @@ function frame(now) {
     }
   }
   // Immediate-mode edge events live for exactly one editor frame.
+  if (!pointer.down) pointer.capture = null;
   pointer.pressed = false;
   pointer.moved = false;
   activations.clear();
@@ -1196,6 +1313,19 @@ window.aioli = {
   },
   get sources() {
     return { ...sources };
+  },
+  get preview() {
+    return {
+      path: assetPreview.path,
+      kind: assetPreview.kind,
+      ready: assetPreview.ready,
+      width: assetPreview.width,
+      height: assetPreview.height,
+      duration: assetPreview.duration,
+      position: assetPreview.position,
+      playing: assetPreview.playing,
+      status: assetPreview.status,
+    };
   },
   get resources() {
     return structuredClone(resources);

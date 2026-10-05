@@ -28,8 +28,8 @@ Publish the repository's **root** on GitHub Pages so both the app and `/docs/` a
 
 ## The editor is the app
 
-- `editor.lisp` owns the fullscreen layout, toolbar, source tabs, viewport, optional tools, file menu, and status display.
-- `ui.lisp` implements buttons, sliders, toggles, choices, graphics/audio tools, syntax colors, source selections, and caret painting as ordinary Lisp functions.
+- `editor.lisp` imports the fullscreen workspace from `editor/`, where each pane, menu and widget has its own file.
+- `ui.lisp` imports reusable controls from `ui/`: buttons, sliders, tabs, menus, asset icons and source painting.
 - The visible browser surface is one WebGPU canvas. HTML and CSS do not style or lay out editor controls.
 - `fill`, `rect`, `circle`, `line`, `text`, `translate`, `scale`, `opacity`, `blend`, and `scope` produce ordered pixel drawing operations. `clip` restricts coverage. `surface` samples the running game.
 - Buttons and sliders read pointer input and update shared state in Lisp. Widget implementations can be redefined live. `region` declares their input/accessibility bounds without creating a visible native control.
@@ -40,9 +40,9 @@ The menu bar contains **File, Project, View, Edit, About**. File manages sources
 ## Try it
 
 1. Click the game. Move with A/D or Left/Right and jump with Space, Up, or W.
-2. Open View → Parameter tools to adjust the moon, wind, palette, glow, or sound patch. These are pixel-drawn controls defined in `ui.lisp`.
+2. Open View → Parameter tools to adjust the moon, wind, palette, glow, or sound patch. These are pixel-drawn controls defined in `editor/graphics-tools.lisp` and `editor/sound-tools.lisp`.
 3. Edit `scene` to change a per-pixel drawing program; edit `game` for gameplay and `audio` for synthesized sound.
-4. Edit `editor` to change the whole editor's appearance or layout. For example, change `:ui-bg`, move a toolbar button, or add a circle/text to the editor function.
+4. Open `editor/workspace.lisp` or a pane file to change layout; open `editor/state.lisp` to change theme defaults. Each imported component can be edited live.
 5. Edit `ui` to change how buttons or sliders look and behave, or customize the source widget's syntax colors.
 
 Valid edits evaluate after a short typing pause or **Ctrl/Cmd+Enter**. `init!` initializes missing state without resetting the running world. Rejected edits keep the previous runtime and GPU pipeline. Local storage keeps accepted source and state; invalid drafts remain in the current source view and can be included in an exported project.
@@ -53,7 +53,7 @@ Projects export/import as JSON. Game images export as PNG. The sound tool synthe
 
 ## Project files and commands
 
-**View → Files pane** toggles a docked project pane beside code. Its folder tree expands/collapses, preserves expansion, and opens files without closing the pane. Use File or the tree's right-click menu to create, import, download, rename or delete files. New/Rename opens a filename dialog. Icons distinguish code, images and audio; scroll with the wheel or scrollbar. Create additional modules, open them in the code pane, and import them with a project-local path:
+**View → Files pane** toggles a docked project pane beside code. Its folder tree expands/collapses, preserves expansion, and opens files without closing the pane. Use File or the tree's right-click menu to create, import, download, rename or delete files. New/Rename opens a filename dialog. Icons distinguish code, images and audio; scroll with the wheel or scrollbar. Click source files to open persistent, closable tabs. Click image/audio assets for pan/zoom image previews or waveform playback and seeking. Create additional modules, open them in the code pane, and import them with a project-local path:
 
 ```lisp
 (import "./lib/movement.lisp")
@@ -69,21 +69,24 @@ Projects save as version 3 JSON containing named `files`, binary `resources`, an
 
 ## Architecture
 
-| File               | Responsibility                                                         |
-| ------------------ | ---------------------------------------------------------------------- |
-| `editor.lisp`      | Fullscreen editor application: layout, paint, actions                  |
-| `ui.lisp`          | Immediate-mode widgets and source view painting                        |
-| `lisp.js`          | Reader, functions, shared state, bounded CPU interpreter               |
-| `shader.js`        | Lisp-to-WGSL scene compiler and shared pixel coverage functions        |
-| `drawing.js`       | Drawing state, primitive command stream, clipping, spatial bins        |
-| `gpu.js`           | WebGPU host: scene pass and fullscreen editor pass                     |
-| `code-input.js`    | Hidden native input and source/selection/token data                    |
-| `source-tokens.js` | Lossless display scanning, including incomplete strings                |
-| `audio.js`         | Procedural audio mixing and WAV encoding                               |
-| `app.js`           | Native bindings, live evaluation, persistence, recovery                |
-| `project.js`       | Project-local import resolution, v3 serialization and legacy migration |
-| `generators.js`    | Stock image/audio recipes and saved command sources                    |
-| `examples.js`      | Starter scene, gameplay, and sound programs                            |
+| File                | Responsibility                                                         |
+| ------------------- | ---------------------------------------------------------------------- |
+| `editor/`           | Fullscreen workspace, panes and complete widgets                       |
+| `ui/`               | Reusable immediate-mode controls and source painting                   |
+| `lisp.js`           | Reader, functions, shared state, bounded CPU interpreter               |
+| `shader.js`         | Lisp-to-WGSL scene compiler and shared pixel coverage functions        |
+| `drawing.js`        | Drawing state, primitive command stream, clipping, spatial bins        |
+| `gpu.js`            | WebGPU host: scene pass and fullscreen editor pass                     |
+| `editor-sources.js` | Static manifest of bundled live Lisp modules                           |
+| `code-tabs.js`      | Persistent open buffers and tab overflow data                          |
+| `asset-preview.js`  | Browser asset decoding and audio preview transport                     |
+| `code-input.js`     | Hidden native input and source/selection/token data                    |
+| `source-tokens.js`  | Lossless display scanning, including incomplete strings                |
+| `audio.js`          | Procedural audio mixing and WAV encoding                               |
+| `app.js`            | Native bindings, live evaluation, persistence, recovery                |
+| `project.js`        | Project-local import resolution, v3 serialization and legacy migration |
+| `generators.js`     | Stock image/audio recipes and saved command sources                    |
+| `examples.js`       | Starter scene, gameplay, and sound programs                            |
 
 The CPU editor program runs every frame and emits a drawing stream. WebGPU evaluates that stream per pixel over a fullscreen quad. Spatial bins restrict each pixel to nearby commands while preserving painter order. Rectangles, circles, and lines share coverage semantics with compiled scene shaders; text samples a glyph atlas and the game view samples the scene texture. No per-widget or per-shape geometry is submitted.
 

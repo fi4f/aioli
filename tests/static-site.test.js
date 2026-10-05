@@ -53,7 +53,9 @@ test('documentation directory and every local link work at root and project subp
     }
     const source = await fetch(base + 'editor.lisp');
     assert.equal(source.status, 200);
-    assert.match(await source.text(), /defn editor/);
+    assert.match(await source.text(), /import.*editor\/workspace.lisp/);
+    for (const path of (await import('../editor-sources.js')).editorSourcePaths)
+      assert.equal((await fetch(base + path)).status, 200, path);
   }
 });
 

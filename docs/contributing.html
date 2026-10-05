@@ -43,11 +43,16 @@ npm start</code></pre>
           <tbody>
             <tr>
               <td>Editor layout or actions</td>
-              <td><code>editor.lisp</code></td>
+              <td>
+                <code>editor/workspace.lisp</code> and individual files in <code>editor/</code>
+              </td>
             </tr>
             <tr>
               <td>Widgets, controls, source painting</td>
-              <td><code>ui.lisp</code></td>
+              <td>
+                <code>ui/buttons.lisp</code>, <code>ui/sliders.lisp</code>,
+                <code>ui/code-input.lisp</code>
+              </td>
             </tr>
             <tr>
               <td>Source input, caret/selection data</td>
@@ -100,6 +105,30 @@ npm start</code></pre>
         There is no JavaScript evaluation of user source. The strict Lisp reader handles evaluation;
         the lossless display scanner handles incomplete text. Keep those responsibilities separate.
         A parser error must not prevent source from being visible.
+      </p>
+      <h2 id="lisp-modules">Editor module layout</h2>
+      <p>
+        <code>ui.lisp</code> imports reusable controls from <code>ui/</code>, while
+        <code>editor.lisp</code> imports <code>editor/workspace.lisp</code>. The workspace composes
+        code, files, game and parameter panes plus menu, generator, palette and preview widgets.
+        Theme and state defaults live in <code>editor/state.lisp</code>. Each file owns its
+        component's drawing and interaction; browser decoding lives in
+        <code>asset-preview.js</code> and tab workspace data lives in <code>code-tabs.js</code>.
+      </p>
+      <p>
+        To add a bundled Lisp module, create its file, import it from the appropriate Lisp entry or
+        component, and add its path to <code>editor-sources.js</code>. The manifest loads the
+        initial project and recovery sources over static URLs. Project-local imports then use
+        editable source buffers, not additional network fetches. Save/Open includes every module;
+        custom components are preserved. Use latest editor backs up modified components beside their
+        originals before installing bundled versions, preserving relative import resolution.
+      </p>
+      <p>
+        Source buffers use LF newlines, matching the browser textarea. Bundled sources, imported
+        Lisp files, project loads and saves normalize CRLF and lone CR. Git attributes keep
+        checked-out text files on LF too. <code>source-text.js</code> maps displayed columns to
+        native UTF-16 offsets, so Unicode fallbacks and four-cell tabs preserve correct caret,
+        pointer and selection positions. Fallback rendering does not replace characters in source.
       </p>
       <h2>Code conventions</h2>
       <ul>
