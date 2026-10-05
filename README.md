@@ -16,7 +16,7 @@ Open **http://localhost:4173**. The app has no browser dependencies or external 
 
 ## Documentation
 
-Open [the documentation site](http://localhost:4173/docs/) locally, or use **Project → Documentation** in a fresh/default editor. The same static pages ship under `docs/` on GitHub Pages:
+Open [the documentation site](http://localhost:4173/docs/) locally, or use **About → Documentation** in a fresh/default editor. The same static pages ship under `docs/` on GitHub Pages:
 
 - [Language](docs/language.html): syntax, functions, shared state, and the shader subset.
 - [API reference](docs/api.html): drawing, input, widgets, audio, and editor actions.
@@ -35,25 +35,25 @@ Publish the repository's **root** on GitHub Pages so both the app and `/docs/` a
 - Buttons and sliders read pointer input and update shared state in Lisp. Widget implementations can be redefined live. `region` declares their input/accessibility bounds without creating a visible native control.
 - The source editor gets text/selection data from a browser input service and draws it using Lisp `fill`, `rect`, and `text` calls. A hidden textarea supplies keyboard, clipboard, selection, and IME input. Hidden semantic controls provide keyboard and screen-reader access to Lisp regions; they never paint the UI.
 
-By default, the editor shows code and a game view. **Tools** opens the procedural graphics or sound controls. **Code** hides the source pane for a focused game view. **Project** contains file actions, scene presets, reset, compiled WGSL, and the language guide. Small viewports switch between code and game instead of squeezing both into columns.
+The menu bar contains **File, Project, View, Edit, About**. File manages sources/projects and exports; Project runs the game; View opens panes, generators and recovery; Edit provides undo/redo and clipboard actions; About contains help and documentation. Small viewports switch between code and game instead of squeezing both into columns.
 
 ## Try it
 
 1. Click the game. Move with A/D or Left/Right and jump with Space, Up, or W.
-2. Open Tools to adjust the moon, wind, palette, glow, or sound patch. These are pixel-drawn controls defined in `ui.lisp`.
+2. Open View → Parameter tools to adjust the moon, wind, palette, glow, or sound patch. These are pixel-drawn controls defined in `ui.lisp`.
 3. Edit `scene` to change a per-pixel drawing program; edit `game` for gameplay and `audio` for synthesized sound.
 4. Edit `editor` to change the whole editor's appearance or layout. For example, change `:ui-bg`, move a toolbar button, or add a circle/text to the editor function.
 5. Edit `ui` to change how buttons or sliders look and behave, or customize the source widget's syntax colors.
 
 Valid edits evaluate after a short typing pause or **Ctrl/Cmd+Enter**. `init!` initializes missing state without resetting the running world. Rejected edits keep the previous runtime and GPU pipeline. Local storage keeps accepted source and state; invalid drafts remain in the current source view and can be included in an exported project.
 
-**F2** opens the stock recovery editor if a live edit hides the controls or breaks the editor frame. Your draft remains available, and Ctrl/Cmd+Enter applies repairs. Startup also opens a recovery shell if a saved project cannot evaluate. File operations keep recovery active. **Use latest editor** adopts the bundled editor with backups of custom sources; **Project → Project editor** exits recovery explicitly. Escape closes menus/tools. Wheel scrolls source vertically; Shift+wheel scrolls horizontally.
+**F2** opens the stock recovery editor if a live edit hides the controls or breaks the editor frame. Your draft remains available, and Ctrl/Cmd+Enter applies repairs. Startup also opens a recovery shell if a saved project cannot evaluate. File operations keep recovery active. **Use latest editor** adopts the bundled editor with backups of custom sources; **View → Project editor** exits recovery explicitly. Escape closes menus/tools. Wheel scrolls source vertically; Shift+wheel scrolls horizontally.
 
 Projects export/import as JSON. Game images export as PNG. The sound tool synthesizes swept oscillators or seeded noise, mixes an optional overtone, and exports PCM WAV. Each voice has attack/release and the mix uses soft clipping.
 
 ## Project files and commands
 
-**Files** lists project sources and assets. Create additional modules, open them in the code pane, and import them with a project-local path:
+**View → Files pane** toggles a docked project pane beside code. Its folder tree expands/collapses, preserves expansion, and opens files without closing the pane. Use File or the tree's right-click menu to create, import, download, rename or delete files. New/Rename opens a filename dialog. Icons distinguish code, images and audio; scroll with the wheel or scrollbar. Create additional modules, open them in the code pane, and import them with a project-local path:
 
 ```lisp
 (import "./lib/movement.lisp")
@@ -61,9 +61,9 @@ Projects export/import as JSON. Game images export as PNG. The sound tool synthe
 
 Imports resolve relative to the importing file; leading `/` means the project root. Dependencies load once, and cycles/missing files report errors. Scene files may contain ordinary CPU Lisp and an optional `scene-update` function. Only their single reachable `defpixel` hook compiles to WGSL.
 
-**Project → Image generator / Audio generator** opens a code-and-GUI window with its own preview. **Keep** adds the result to project resources; **PNG/WAV** also downloads it. The image generator has its own GPU texture, and sound settings are separate from gameplay audio. Both generator sources can import helpers.
+**View → Image generator / Audio generator** opens a code-and-GUI window with its own preview. **Keep** adds the result to project resources; **PNG/WAV** also downloads it. The image generator has its own GPU texture, and sound settings are separate from gameplay audio. Both generator sources can import helpers.
 
-**Commands** or **Ctrl/Cmd+Shift+P** opens the palette. Search `commands/` programs, or type Lisp and press Ctrl/Cmd+Enter. Programs can call current CPU functions, change state, and automate exports. Commands execute on request, never on each frame or while typing.
+**View → Command palette** or **Ctrl/Cmd+Shift+P** opens the palette. Search `commands/` programs, or type Lisp and press Ctrl/Cmd+Enter. Programs can call current CPU functions, change state, and automate exports. Commands execute on request, never on each frame or while typing.
 
 Projects save as version 3 JSON containing named `files`, binary `resources`, and `state`. Legacy saves migrate. Read [the project guide](docs/projects.html) for the exact resolution rules, limits and APIs.
 

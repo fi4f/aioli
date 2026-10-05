@@ -139,9 +139,16 @@ export function readProject(project, defaults) {
     editorHash = (Math.imul(editorHash, 31) + character.charCodeAt(0)) | 0;
   // A v2 editor may already have been saved inside a v3 project. Recognize the
   // unmodified stock source by content, rather than gating on project version.
-  if (editorHash === 1024998020) sources.editor = defaults.editor;
+  if ([2134464155, 1024998020, -1720971964, -191853367].includes(editorHash))
+    sources.editor = defaults.editor;
   // The stock widget library can be upgraded independently of a custom shell.
-  if (sources.ui.trim() === defaults.ui.split('; Shared window shell')[0].trim())
+  let uiHash = 0;
+  for (const character of sources.ui.replaceAll('\r\n', '\n'))
+    uiHash = (Math.imul(uiHash, 31) + character.charCodeAt(0)) | 0;
+  if (
+    [-1490889629, 982880566, -1492819819].includes(uiHash) ||
+    sources.ui.trim() === defaults.ui.split('; Shared window shell')[0].trim()
+  )
     sources.ui = defaults.ui;
   sources.editor = sources.editor.replace('(text [24 18] "pixel lisp")', '(text [24 18] "aioli")');
   for (const [key, value] of Object.entries(defaults))

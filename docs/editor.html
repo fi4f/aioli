@@ -24,9 +24,10 @@
       </p>
       <h2>The workspace</h2>
       <p>
-        <strong>Code</strong> shows or hides the source pane. <strong>Tools</strong> opens
-        graphics/sound controls. <strong>Run</strong> evaluates the current project. On a narrow
-        screen, hide Code to see the game at a useful size.
+        <strong>View → Code pane</strong> shows or hides source.
+        <strong>View → Parameter tools</strong> opens graphics/sound controls.
+        <strong>Project → Run / Evaluate</strong> evaluates the current project. On a narrow screen,
+        hide Code to see the game at a useful size.
       </p>
       <p>
         The five entry shortcuts are <code>scene</code>, <code>game</code>, <code>audio</code>,
@@ -35,6 +36,39 @@
         <a href="projects.html">Files, generator windows and Commands</a> to manage them. The files
         <code>editor.lisp</code> and <code>ui.lisp</code> in this repository supply the initial
         editor; edits in the browser belong to the project, rather than writing those files on disk.
+      </p>
+      <h2 id="menus">The menu bar</h2>
+      <p>
+        The workspace has five menus: <strong>File, Project, View, Edit, About</strong>. Dropdowns
+        group related actions and show checked pane visibility, disabled actions and shortcut hints.
+      </p>
+      <ul>
+        <li>
+          <strong>File:</strong> new source, open/save project JSON, import resources,
+          download/rename/delete selected files, export the game PNG. Entry files cannot be renamed
+          or deleted.
+        </li>
+        <li>
+          <strong>Project:</strong> run/evaluate, play/pause, reset state, next demo scene, adopt
+          the latest editor while in recovery.
+        </li>
+        <li>
+          <strong>View:</strong> code/files panes, parameter tools, image/audio generators, command
+          palette, compiled WGSL, recovery shell; return to the project editor while recovering.
+        </li>
+        <li>
+          <strong>Edit:</strong> undo/redo, cut/copy/paste, select all. Undo history belongs to each
+          source buffer and holds up to 100 edits. Read-only buffers disable mutations, and copy/cut
+          require a selection. Menu clipboard commands use browser clipboard permission; ordinary
+          keyboard clipboard shortcuts still work with native source input.
+        </li>
+        <li><strong>About:</strong> application information, documentation, language guide.</li>
+      </ul>
+      <p>
+        Click outside a dropdown or press Escape to dismiss it. Hover another menu heading to
+        switch. Alt+F/P/V/E/A opens a menu; Left/Right switches domains, Up/Down selects an enabled
+        item, and Enter activates it. Ctrl/Cmd+S downloads the project JSON, Ctrl/Cmd+O opens a
+        project, Ctrl/Cmd+Enter evaluates, and Ctrl/Cmd+Shift+P opens the palette.
       </p>
       <h2>Typing and live evaluation</h2>
       <p>
@@ -121,35 +155,35 @@
         <table>
           <thead>
             <tr>
-              <th>Project menu action</th>
+              <th>Menu action</th>
               <th>Result</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td>Save project</td>
+              <td>File → Save project</td>
               <td>Download editable JSON containing source drafts and state.</td>
             </tr>
             <tr>
-              <td>Open project</td>
+              <td>File → Open project</td>
               <td>
                 Validate and load project JSON; rejected imports retain the current working program.
               </td>
             </tr>
             <tr>
-              <td>Save image</td>
+              <td>File → Export game PNG</td>
               <td>Download a 320 × 240 PNG of the game view.</td>
             </tr>
             <tr>
-              <td>Reset state</td>
+              <td>Project → Reset state</td>
               <td>Rerun the current source with fresh initial values.</td>
             </tr>
             <tr>
-              <td>View WGSL</td>
+              <td>View → Compiled WGSL</td>
               <td>Inspect the compiled scene as a read-only source buffer.</td>
             </tr>
             <tr>
-              <td>Documentation</td>
+              <td>About → Documentation</td>
               <td>Open the language, API, and editor documentation.</td>
             </tr>
           </tbody>

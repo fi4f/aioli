@@ -22,9 +22,18 @@ export class CodeInput {
     this.focus = 'world';
     this.box = null;
     this.drag = false;
+    this.history = new Map();
+    this.restoring = false;
 
     input.addEventListener('input', () => {
       const session = this.session();
+      if (!session) return;
+      const history = this.historyForTab();
+      if (!this.restoring && session.text !== input.value) {
+        history.undo.push({ text: session.text, start: session.start, end: session.end });
+        if (history.undo.length > 100) history.undo.shift();
+        history.redo = [];
+      }
       session.text = input.value;
       session.start = input.selectionStart;
       session.end = input.selectionEnd;
@@ -42,6 +51,11 @@ export class CodeInput {
       if (this.tab) this.session().follow = true;
     });
     input.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && ['z', 'y'].includes(event.key.toLowerCase())) {
+        event.preventDefault();
+        this.edit(event.key.toLowerCase() === 'y' || event.shiftKey ? 'redo' : 'undo');
+        return;
+      }
       if (event.key === 'Tab' && !input.readOnly) {
         event.preventDefault();
         input.setRangeText('  ', input.selectionStart, input.selectionEnd, 'end');
@@ -53,11 +67,71 @@ export class CodeInput {
   session() {
     return this.sessions.get(this.tab);
   }
+  historyForTab() {
+    if (!this.history.has(this.tab)) this.history.set(this.tab, { undo: [], redo: [] });
+    return this.history.get(this.tab);
+  }
+  canEdit(action) {
+    if (!this.session()) return false;
+    if (action === 'select-all') return true;
+    if (action === 'copy') return this.session().end > this.session().start;
+    if (this.input.readOnly) return false;
+    if (action === 'cut') return this.canEdit('copy');
+    if (action === 'undo' || action === 'redo') return this.historyForTab()[action].length > 0;
+    return action === 'paste';
+  }
+  /** Edit the active buffer's native input, preserving selection after menu focus.
+   * Undo/redo belong to a buffer, rather than the browser's one textarea history.
+   */
+  async edit(action) {
+    if (!this.canEdit(action)) return;
+    const input = this.input,
+      session = this.session();
+    const tab = this.tab;
+    this.focus = 'code';
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(session.start, session.end);
+    if (action === 'select-all') {
+      input.select();
+      session.start = 0;
+      session.end = input.value.length;
+      return;
+    }
+    if (action === 'copy' || action === 'cut') {
+      await navigator.clipboard.writeText(input.value.slice(session.start, session.end));
+      if (this.tab !== tab || this.session() !== session)
+        throw new Error('Buffer changed during clipboard access');
+      if (action === 'copy') return;
+      input.setRangeText('', session.start, session.end, 'end');
+    } else if (action === 'paste') {
+      const text = await navigator.clipboard.readText();
+      if (this.tab !== tab || this.session() !== session)
+        throw new Error('Buffer changed during clipboard access');
+      input.setRangeText(text, session.start, session.end, 'end');
+    } else {
+      const history = this.historyForTab(),
+        next = history[action].pop();
+      history[action === 'undo' ? 'redo' : 'undo'].push({
+        text: session.text,
+        start: session.start,
+        end: session.end,
+      });
+      input.value = next.text;
+      input.setSelectionRange(next.start, next.end);
+      this.restoring = true;
+    }
+    try {
+      input.dispatchEvent(new Event('input'));
+    } finally {
+      this.restoring = false;
+    }
+  }
 
   switch(tab, text, readOnly = false) {
     if (this.tab === tab && this.session()?.text === text) return;
     let session = this.sessions.get(tab);
     if (!session || session.text !== text) {
+      if (session) this.history.delete(tab);
       session = { text, start: 0, end: 0, scroll: 0, col: 0, follow: false };
       this.sessions.set(tab, session);
     }

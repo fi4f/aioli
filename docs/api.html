@@ -512,8 +512,26 @@
       <p>
         See the <a href="projects.html#apis">project API reference</a> for file operations,
         generator previews and exports, and palette commands. Use
-        <code>(set! :window "files")</code>, <code>"image"</code>, <code>"audio"</code>, or
-        <code>"palette"</code> to open a stock tool window; use <code>""</code> to close it.
+        <code>(set! :show-files true)</code> to show the file pane. Set <code>:window</code> to
+        <code>"image"</code>, <code>"audio"</code>, or <code>"palette"</code> to open a tool window;
+        set it to <code>""</code> to close it.
+      </p>
+      <h2>Menus and source editing</h2>
+      <p>
+        <code>(edit-buffer action)</code> accepts <code>:undo</code>, <code>:redo</code>,
+        <code>:cut</code>, <code>:copy</code>, <code>:paste</code>, or <code>:select-all</code>.
+        <code>(can-edit-buffer? action)</code> reports whether the action is available.
+        <code>(prepare-file-path)</code> opens new-file path entry; pass <code>true</code> for
+        renaming the selected file. <code>(selected-file?)</code> and
+        <code>(selected-file-removable?)</code> support enabled states.
+        <code>(open-recovery)</code> enters recovery.
+      </p>
+      <p>
+        <code>(menu-region id label origin size enabled checked)</code> declares a menu
+        interaction/accessibility region. Pass <code>nil</code> for an ordinary item, or a boolean
+        checked state for a checkbox item. <code>(pointer-moved?)</code> is true for one frame after
+        pointer movement. The stock menu helpers in <code>ui.lisp</code> paint headings, items,
+        separators and the dismissible dropdown.
       </p>
     </main>
     <footer>

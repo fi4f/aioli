@@ -22,6 +22,7 @@ function editor(width = 1440, height = 900) {
       'focused?': () => false,
       'activated?': () => false,
       'pointer-pressed?': () => false,
+      'pointer-moved?': () => false,
       'pointer-down?': () => false,
       region: (id, label, origin, size) => regions.push({ id, label, origin, size }),
       surface: (p, s) => draw.surface(p, s),
@@ -32,6 +33,15 @@ function editor(width = 1440, height = 900) {
       status: () => 'Saved',
       'error?': () => false,
       'recovery?': () => false,
+      'project-tree': () => [],
+      'project-tree-count': () => 0,
+      'project-tree-offset': () => 0,
+      'path-input': () => 'lib/new.lisp',
+      'can-edit-buffer?': () => false,
+      'selected-file?': () => true,
+      'selected-file-removable?': () => false,
+      'menu-region': (id, label, origin, size, enabled, checked) =>
+        regions.push({ id, label, origin, size, disabled: !enabled, checked }),
       waveform: () => {},
     },
   });
@@ -50,6 +60,36 @@ test('fullscreen editor app draws pixels and defines its controls in Lisp', () =
   assert.equal(state['show-tools'], false);
   assert.equal(typeof r.global['ui-button'], 'function');
   assert.equal(typeof r.global['code-editor'], 'function');
+});
+test('file pane and code pane share the screen without overlapping input', () => {
+  const { r, state, regions } = editor();
+  state['show-files'] = true;
+  r.call('editor');
+  const tree = regions.find((region) => region.id === 'files-tree');
+  const scene = regions.find((region) => region.id === 'tab-scene');
+  assert.ok(tree);
+  assert.ok(scene.origin[0] >= tree.origin[0] + tree.size[0]);
+  assert.equal(
+    regions.some((region) => region.id === 'window'),
+    false,
+  );
+});
+test('menu bar has exactly the requested domains, with disabled editing actions', () => {
+  const { r, state, regions } = editor();
+  r.call('editor');
+  assert.deepEqual(
+    regions.filter((region) => region.origin[1] === 8).map((region) => region.label),
+    ['File', 'Project', 'View', 'Edit', 'About'],
+  );
+  regions.length = 0;
+  state.menu = 'edit';
+  r.call('editor');
+  assert.equal(regions.find((region) => region.id === 'undo').disabled, true);
+  assert.equal(regions.find((region) => region.id === 'cut').disabled, true);
+  assert.equal(
+    regions.some((region) => region.id === 'menu-dismiss'),
+    true,
+  );
 });
 test('Lisp changes editor background and widget appearance without changing the host', () => {
   const { r, draw, state } = editor();

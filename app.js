@@ -5,6 +5,7 @@ import { validateVoice, synthesize, wav } from './audio.js';
 import { DrawList } from './drawing.js';
 import { GPUHost } from './gpu.js';
 import { CodeInput } from './code-input.js';
+import { projectTree, toggleFolder } from './file-tree.js';
 import { generatorSources } from './generators.js';
 import {
   entryPaths,
@@ -39,6 +40,15 @@ let resources = Object.create(null),
   generatedSound;
 const transientBuffers = { __palette: '', __path: 'lib/new.lisp' };
 Object.assign(sources, transientBuffers);
+const resourceRows = () => [
+  ...Object.keys(sources)
+    .filter(
+      (key) =>
+        !key.startsWith('__') && !['generators/image.lisp', 'generators/audio.lisp'].includes(key),
+    )
+    .map((key) => [sourcePath(key), 'lisp', key]),
+  ...Object.keys(resources).map((path) => [path, 'asset', path, resources[path].mime]),
+];
 let state = Object.create(null),
   runtime,
   rescueRuntime,
@@ -61,14 +71,23 @@ let message = 'Starting…',
   editorFailed = false;
 let gpuFailure = '';
 let visibleWindow = '',
-  focusPalette = false;
+  focusPalette = false,
+  focusPath = false;
 let audioContext,
   samples,
   audioSignature = '',
   lastAudio = 0,
   voices = [];
 const keys = new Set(),
-  pointer = { x: -1, y: -1, down: false, pressed: false, capture: null, target: null },
+  pointer = {
+    x: -1,
+    y: -1,
+    down: false,
+    pressed: false,
+    moved: false,
+    capture: null,
+    target: null,
+  },
   activations = new Set();
 const guide = `AIOLI / all in one lisp
 
@@ -128,8 +147,10 @@ Waveforms: sine, triangle, square, sawtooth, noise.
 The Sound tool edits the same shared parameters.
 
 PROJECTS
-Project menu: open/save JSON, save image, next scene,
-reset, inspect WGSL, and this guide.
+File: open/save JSON and export images.
+Project: evaluate, pause, reset and generators.
+View: panes, palette, WGSL and recovery.
+Edit: undo/redo and clipboard. About: help and docs.
 The last accepted source and state save locally.
 Bad edits retain the working app and shader.
 F2 opens the stock recovery shell if an editor edit
@@ -141,7 +162,7 @@ No persistent GPU feedback or custom graph routing.
 The host/compiler are JavaScript native bindings;
 the editor app and widgets are Lisp source.
 
-Full documentation: Project > Documentation.
+Full documentation: About > Documentation.
 `;
 
 /** Validate imports before evaluating them, while retaining legacy save support. */
@@ -181,7 +202,7 @@ function save() {
     dirty = false;
     return true;
   } catch {
-    report('Storage unavailable. Save from Project menu.', true);
+    report('Storage unavailable. Use File → Save project.', true);
     return false;
   }
 }
@@ -270,6 +291,49 @@ function makeRuntime(target) {
       ),
       'screen-width': () => innerWidth,
       'screen-height': () => innerHeight,
+      'edit-buffer': actions((action) => code.edit(action)),
+      'can-edit-buffer?': (action) => code.canEdit(action),
+      'prepare-file-path': actions((rename = false) => {
+        const folder = state['context-kind'] === 'folder' ? state['context-path'] + '/' : '';
+        sources.__path = rename ? state['selected-file'] : folder + 'new.lisp';
+        state['file-operation'] = rename ? 'rename' : 'create';
+        state['file-path-editing'] = false;
+        state['file-context'] = false;
+        state.window = 'file-path';
+      }),
+      'selected-file?': () =>
+        sourceKey(target['selected-file'] ?? '') in sources ||
+        (target['selected-file'] ?? '') in resources,
+      'selected-file-removable?': () =>
+        !Object.values(entryPaths).includes(target['selected-file']) &&
+        !Object.keys(generatorSources).includes(target['selected-file']) &&
+        (sourceKey(target['selected-file'] ?? '') in sources ||
+          (target['selected-file'] ?? '') in resources),
+      'open-recovery': actions(() => enterRecovery()),
+      'menu-region': (id, label, origin, size, enabled, checked) =>
+        items.push({ id, label, origin, size, disabled: !enabled, menuItem: true, checked }),
+      'resource-region': (path, kind, assetKind, origin, size) =>
+        items.push({
+          id: `${kind === 'folder' ? 'folder' : 'file'}-${path}`,
+          label: `${assetKind}: ${path}`,
+          origin,
+          size,
+          resourcePath: path,
+          resourceKind: kind,
+          assetKind,
+        }),
+      'project-tree-offset': () => treeOffset(target),
+      'project-tree': () =>
+        projectTree(resourceRows(), target['open-folders']).slice(
+          treeOffset(target),
+          treeOffset(target) + 64,
+        ),
+      'project-tree-count': () => projectTree(resourceRows(), target['open-folders']).length,
+      'toggle-folder': actions((path) => {
+        state['open-folders'] = toggleFolder(state['open-folders'], path);
+        state['file-offset'] = 0;
+        dirty = true;
+      }),
       'project-files': () =>
         [
           ...Object.keys(sources)
@@ -290,6 +354,9 @@ function makeRuntime(target) {
         if (key in sources) {
           state.tab = key;
           state['show-code'] = true;
+          if (innerWidth < 850) state['show-files'] = false;
+          state['file-path-editing'] = false;
+          state['selected-file'] = resolvePath(path);
           state.window = '';
         } else if (resources[path])
           report(
@@ -310,6 +377,9 @@ function makeRuntime(target) {
         sources[key] = text;
         state.tab = key;
         state['show-code'] = true;
+        if (innerWidth < 850) state['show-files'] = false;
+        state['file-path-editing'] = false;
+        state['selected-file'] = path;
         state.window = '';
         evaluate();
       }),
@@ -336,6 +406,8 @@ function makeRuntime(target) {
           resources[newPath] = resources[oldPath];
           delete resources[oldPath];
         } else throw new Error('Missing file');
+        state['selected-file'] = newPath;
+        if (state.window === 'file-path') state.window = '';
         // Explicit imports stay human-readable: report broken references rather
         // than silently rewriting source text during a rename.
         evaluate();
@@ -398,6 +470,7 @@ function makeRuntime(target) {
       'pointer-y': () => pointer.y,
       'pointer-down?': () => live() && pointer.down,
       'pointer-pressed?': () => live() && pointer.pressed,
+      'pointer-moved?': () => live() && pointer.moved,
       'hit?': (origin, size) => {
         const hit = inBox(pointer.x, pointer.y, origin, size);
         const top = pointer.down ? pointer.target : topRegion(pointer.x, pointer.y);
@@ -438,7 +511,8 @@ function makeRuntime(target) {
         if (typeof text !== 'string') throw new Error(`Unknown source buffer ${tab}`);
         if (live()) {
           buffer = code.layout(origin, size, tab, text, !(tab in sources), performance.now());
-          if (tab === '__palette' && focusPalette) {
+          if ((tab === '__palette' && focusPalette) || (tab === '__path' && focusPath)) {
+            focusPath = false;
             focusPalette = false;
             code.focus = 'code';
             keys.clear();
@@ -755,6 +829,14 @@ function accessibility() {
       control = document.createElement('button');
       control.textContent = r.label;
       control.onclick = () => activations.add(r.id);
+      if (r.menuItem) {
+        control.disabled = r.disabled;
+        control.setAttribute(
+          'role',
+          typeof r.checked === 'boolean' ? 'menuitemcheckbox' : 'menuitem',
+        );
+        if (typeof r.checked === 'boolean') control.setAttribute('aria-checked', String(r.checked));
+      }
     }
     control.dataset.region = r.id;
     control.onfocus = () => {
@@ -764,10 +846,34 @@ function accessibility() {
     $('accessibility').append(control);
   }
 }
+// Clamp to the visible viewport after collapse, delete, resize or import.
+function treeOffset(target) {
+  const capacity = Math.min(64, Math.max(1, Math.floor((innerHeight - 125) / 26)));
+  const total = projectTree(resourceRows(), target['open-folders']).length;
+  return Math.max(0, Math.min(Math.max(0, total - capacity), target['file-offset'] ?? 0));
+}
+function openFileContext(row, x, y) {
+  if (state.window !== '' || state.menu || (!row?.resourcePath && row?.id !== 'files-tree')) return;
+  state['context-path'] = row.resourcePath ?? '';
+  state['context-kind'] = row.resourceKind === 'folder' ? 'folder' : row.resourcePath ? 'file' : '';
+  if (state['context-kind'] === 'file') state['selected-file'] = row.resourcePath;
+  state['context-x'] = x;
+  state['context-y'] = y;
+  state['file-context'] = true;
+  code.focus = 'ui';
+  keys.clear();
+  canvas.focus({ preventScroll: true });
+}
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   pointer.x = e.clientX;
   pointer.y = e.clientY;
+  if (e.button === 2) {
+    openFileContext(topRegion(pointer.x, pointer.y), pointer.x, pointer.y);
+    return;
+  }
+  if (e.button !== 0) return;
   pointer.down = true;
   pointer.pressed = true;
   pointer.target = topRegion(pointer.x, pointer.y);
@@ -781,6 +887,7 @@ canvas.addEventListener('pointerdown', (e) => {
   if (pointer.target?.id === 'world') activateAudio().catch(() => {});
 });
 canvas.addEventListener('pointermove', (e) => {
+  pointer.moved = true;
   pointer.x = e.clientX;
   pointer.y = e.clientY;
   if (pointer.down && code.drag) code.pointer(pointer.x, pointer.y, true);
@@ -796,6 +903,24 @@ canvas.addEventListener('pointercancel', release);
 canvas.addEventListener(
   'wheel',
   (e) => {
+    const tree = regions.find((region) => region.id === 'files-tree');
+    if (
+      state.window === '' &&
+      !state.menu &&
+      !state['file-context'] &&
+      tree &&
+      inBox(e.clientX, e.clientY, tree.origin, tree.size)
+    ) {
+      e.preventDefault();
+      const rows = Math.min(64, Math.max(1, Math.floor(tree.size[1] / 26)));
+      const count = projectTree(resourceRows(), state['open-folders']).length;
+      state['file-offset'] = Math.max(
+        0,
+        Math.min(Math.max(0, count - rows), (state['file-offset'] ?? 0) + Math.sign(e.deltaY) * 3),
+      );
+      dirty = true;
+      return;
+    }
     const r = topRegion(e.clientX, e.clientY);
     if (r?.id === 'source') {
       e.preventDefault();
@@ -804,7 +929,80 @@ canvas.addEventListener(
   },
   { passive: false },
 );
+function enterRecovery() {
+  recovery = true;
+  editorFailed = false;
+  state.tab = 'editor';
+  state['show-code'] = true;
+  state['show-tools'] = false;
+  state['file-path-editing'] = false;
+  state.menu = false;
+  state.window = '';
+  dirty = true;
+  report('Recovery shell. Adopt the latest editor or edit its sources and run.');
+}
 document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && ['s', 'o'].includes(e.key.toLowerCase())) {
+    e.preventDefault();
+    state.menu = false;
+    if (e.key.toLowerCase() === 'o') $('file-input').click();
+    else
+      download(
+        JSON.stringify(projectSnapshot(sources, state, resources, recovery), null, 2),
+        'application/json',
+        'midnight-garden.aioli.json',
+      );
+    return;
+  }
+  const menus = ['file', 'project', 'view', 'edit', 'about'];
+  if (e.altKey && ['f', 'p', 'v', 'e', 'a'].includes(e.key.toLowerCase())) {
+    e.preventDefault();
+    state['file-context'] = false;
+    state['context-kind'] = '';
+    state.menu = menus[['f', 'p', 'v', 'e', 'a'].indexOf(e.key.toLowerCase())];
+    keys.clear();
+    canvas.focus();
+    return;
+  }
+  if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+    const row =
+      regions.find((r) => r.resourcePath === state['selected-file']) ||
+      regions.find((r) => r.id === 'files-tree');
+    if (row) {
+      e.preventDefault();
+      openFileContext(row, row.origin[0] + 40, row.origin[1] + 20);
+    }
+    return;
+  }
+  if (typeof state.menu === 'string' || state['file-context']) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      state.menu = false;
+      state['file-context'] = false;
+      canvas.focus();
+      return;
+    }
+    if (!state['file-context'] && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      state.menu = menus[(menus.indexOf(state.menu) + (e.key === 'ArrowRight' ? 1 : 4)) % 5];
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const controls = [
+        ...$('accessibility').querySelectorAll('[role^="menuitem"]:not(:disabled)'),
+      ];
+      const index = controls.indexOf(document.activeElement);
+      const next =
+        index < 0
+          ? e.key === 'ArrowDown'
+            ? 0
+            : controls.length - 1
+          : (index + (e.key === 'ArrowDown' ? 1 : controls.length - 1)) % controls.length;
+      controls[next]?.focus();
+      return;
+    }
+  }
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'p') {
     e.preventDefault();
     state.window = state.window === 'palette' ? '' : 'palette';
@@ -821,18 +1019,11 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.key === 'F2') {
     e.preventDefault();
-    recovery = true;
-    editorFailed = false;
-    state.tab = 'editor';
-    state['show-code'] = true;
-    state['show-tools'] = false;
-    state.menu = false;
-    state.window = '';
-    dirty = true;
-    report('Recovery shell. Edit editor.lisp and press Ctrl+Enter.');
+    enterRecovery();
     return;
   }
   if (e.key === 'Escape') {
+    state['file-path-editing'] = false;
     state.window = '';
     state.menu = false;
     state['show-tools'] = false;
@@ -924,6 +1115,7 @@ function frame(now) {
       if (state.window !== visibleWindow) {
         visibleWindow = state.window;
         focusPalette = visibleWindow === 'palette';
+        focusPath = visibleWindow === 'file-path';
       }
       const result = ui.drawEditor();
       lastDraw = result.draw;
@@ -946,6 +1138,7 @@ function frame(now) {
   }
   // Immediate-mode edge events live for exactly one editor frame.
   pointer.pressed = false;
+  pointer.moved = false;
   activations.clear();
   requestAnimationFrame(frame);
 }

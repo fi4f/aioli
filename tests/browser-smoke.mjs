@@ -23,7 +23,31 @@ async function region(id) {
   await page.waitForFunction((id) => window.aioli?.regions.some((r) => r.id === id), id);
   return page.evaluate((id) => window.aioli.regions.find((r) => r.id === id), id);
 }
+const menuRoutes = {
+  'new-file': 'file',
+  export: 'file',
+  import: 'file',
+  png: 'file',
+  docs: 'about',
+  help: 'about',
+  preset: 'project',
+  reset: 'project',
+  evaluate: 'project',
+  'image-generator': 'view',
+  'audio-generator': 'view',
+  'upgrade-editor': 'project',
+  code: 'view',
+  files: 'view',
+  tools: 'view',
+  commands: 'view',
+  wgsl: 'view',
+};
 async function click(id) {
+  if (
+    menuRoutes[id] &&
+    !(await page.evaluate((id) => window.aioli.regions.some((region) => region.id === id), id))
+  )
+    await click(menuRoutes[id]);
   const r = await region(id);
   await page.mouse.click(r.origin[0] + r.size[0] / 2, r.origin[1] + r.size[1] / 2);
   await page.evaluate(
@@ -224,7 +248,7 @@ try {
         window.aioli.sources.editor.replace(
           '(text [24 18] "aioli")',
           '(text [24 18] "pixel lisp")',
-        ) + '\n; custom editor retained',
+        ) + '\n(defn legacy-brand [] (text [24 18] "pixel lisp"))\n; custom editor retained',
     },
     state: { ...window.aioli.state, moon: 17 },
   }));
@@ -255,9 +279,9 @@ try {
     const nestedUrl = `http://127.0.0.1:${projectServer.address().port}/aioli/`;
     await nested.goto(nestedUrl);
     await nested.waitForFunction(() => window.aioli?.running);
-    await nested.waitForFunction(() => window.aioli.regions.some((r) => r.id === 'project'));
+    await nested.waitForFunction(() => window.aioli.regions.some((r) => r.id === 'about'));
     const projectRegion = await nested.evaluate(() =>
-      window.aioli.regions.find((r) => r.id === 'project'),
+      window.aioli.regions.find((r) => r.id === 'about'),
     );
     await nested.mouse.click(projectRegion.origin[0] + 10, projectRegion.origin[1] + 10);
     await nested.waitForFunction(() => window.aioli.regions.some((r) => r.id === 'docs'));
