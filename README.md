@@ -54,6 +54,8 @@ Projects export/import as JSON with separate editor and application state. **Fil
 Play `examples/doom.scene.lisp` for **Tiny Crypt**, an asset-free first-person raycaster written entirely in Lisp. Click its play button in Files, then click the preview (F4 enlarges it). W/S or Up/Down walk, A/D strafe, Left/Right or Q/E turn, Space fires, and R restarts. Defeat the three monsters (two hits each), then reach the green gate in the southeast corner. Its movement settings are editable in the inspector; pistol/minimap drawing and procedural sounds expose hook previews. Existing projects receive this example once without replacing a customized copy.
 
 A new project has just `editor/` and `examples/` alongside `main.lisp` and `game.lisp`.
+`editor/theme.lisp` centralizes the editor palette and shared layout metrics. The default is a charcoal Monokai-inspired theme with cyan accents and pink/purple/yellow syntax. Edit its `set!` declarations and evaluate to update colors and spacing immediately, including in saved projects. See [theme customization](docs/editor.html#theme) for the constants and supported dimensions. Gameplay artwork stays independent.
+
 Editor controls and PNG icons live in `editor/ui/` and `editor/icon/`. Sample commands and generators live in `examples/commands/` and `examples/generators/`. Existing saves migrate these paths and references.
 
 ## Project files and commands
@@ -77,7 +79,7 @@ Numbers use sliders; booleans use toggles; choices cycle through values; colors 
 
 **View → Command palette** or **Ctrl/Cmd+Shift+P** opens the palette. Search `.command.lisp` programs in any folder, or type Lisp and press Ctrl/Cmd+Enter. Programs run in the editor environment and can inspect or change game state through `game-*` APIs, and automate exports. Commands execute on request, never on each frame or while typing.
 
-Projects save as version 18 JSON containing named `files`, binary `resources`, editor `state`, and `applicationState`. Legacy saves migrate. Read [the project guide](docs/projects.html) for the exact resolution rules, limits and APIs.
+Projects save as version 21 JSON containing named `files`, binary `resources`, editor `state`, and `applicationState`. Legacy saves migrate. Read [the project guide](docs/projects.html) for the exact resolution rules, limits and APIs.
 
 ## Architecture
 
@@ -152,4 +154,4 @@ Use `defdraw` and `defsound` for composable, inspectable CPU hooks:
 ; Inside gameplay: (play-sound :jump 300)
 ```
 
-The code pane's **Hooks** button previews each declaration with copied state. Drawing hooks get a fresh canvas; sound hooks get a waveform with playback and seeking. Preview arguments are editable. Named sounds capture their recipe before asynchronous playback, so multiple effects can overlap without a shared selector.
+A **Preview draw** or **Preview sound** button appears directly above each top-level declaration in the code editor. These extra UI rows are not part of the source and do not change line numbers, copying, or saved files. Clicking one previews that hook with copied state; **Code** returns to the same source buffer. Drawing hooks get a fresh canvas; sound hooks get a waveform with playback and seeking. Preview arguments are editable. Named sounds capture their recipe before asynchronous playback, so multiple effects can overlap without a shared selector.

@@ -31,6 +31,8 @@ export function engineServices({
       'pointer-y': () => pointer().y,
       'pointer-down?': () => pointer().down,
       'pointer-pressed?': () => pointer().pressed,
+      'canvas-width': () => size()[0],
+      'canvas-height': () => size()[1],
       'screen-width': () => size()[0],
       'screen-height': () => size()[1],
       'resource-url': resource,

@@ -6,14 +6,14 @@
         x (/ (- (screen-width) w) 2) y 64]
     ; This region intercepts background clicks without consuming child controls.
     (region :window "Project tool window" [x y] [w h])
-    (fill "#0b100d") (rect [(- x 2) (- y 2)] [(+ w 4) (+ h 4)])
+    (fill (get :ui-shadow)) (rect [(- x 2) (- y 2)] [(+ w 4) (+ h 4)])
     (fill (get :ui-panel)) (rect [x y] [w h])
     (fill (get :ui-text))
     (text [(+ x 16) (+ y 12)]
       (if (= kind "palette") "Commands / Ctrl+Shift+P"
         (if (or (= kind "hooks") (= kind "hook-draw") (= kind "hook-sound")) (hook-title)
           (generator-title))))
-    (when (ui-button :close-window "Close" [(+ x w -84) (+ y 4)] [76 32] false)
+    (when (ui-close-button :close-window "Close preview" [(+ x w -40) (+ y 4)] [32 32])
       (set! :window ""))
     (scope
       (clip [x (+ y 42)] [w (- h 42)])
@@ -36,7 +36,7 @@
                              [(+ x 16) (+ y (* i 48) (- 0 offset))] [(- w 56) 40] false)
               (inspect-hook name))))))
     (do
-      (when (ui-button :back-to-hooks "Hooks" [(+ x 16) y] [80 32] false) (back-to-hooks))
+      (when (ui-button :back-to-hooks "Code" [(+ x 16) y] [80 32] false) (back-to-hooks))
       (fill (get :ui-muted))
       (scope (clip [(+ x 108) (+ y 8)] [(- w 124) 20])
         (text [(+ x 108) (+ y 8)] (str "Arguments: " (hook-parameters))))
@@ -45,7 +45,7 @@
         (refresh-hook-preview))
       (if (= kind "hook-draw")
         (let [origin [(+ x 16) (+ y 88)] size [(- w 32) (- h 104)]]
-          (fill "#0b100d") (rect origin size)
+          (fill (get :ui-shadow)) (rect origin size)
           (hook-draw-preview origin size))
         (do
           (audio-asset-view x (+ y 66) w (- h 66))

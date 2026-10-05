@@ -9,6 +9,7 @@ export async function exportHTML(
     if (!response.ok) throw new Error(`Cannot bundle ${path}: HTTP ${response.status}`);
     return response.text();
   },
+  settings = {},
 ) {
   const modules = Object.create(null);
   async function collect(path) {
@@ -21,7 +22,11 @@ export async function exportHTML(
     await Promise.all(dependencies.map(collect));
   }
   await collect('standalone.js');
-  const project = { files: { ...files, 'main.lisp': '(import "./game.lisp")' }, resources };
+  const project = {
+    settings,
+    files: { ...files, 'main.lisp': '(import "./game.lisp")' },
+    resources,
+  };
   const json = (value) => JSON.stringify(value).replaceAll('<', '\\u003c');
   return `<!doctype html>
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

@@ -25,6 +25,22 @@
         Start with the game and its source. Open tools when you need them. Change the editor using
         the same workflow as changing gameplay.
       </p>
+      <h2 id="canvas-size">Project canvas size</h2>
+      <p>
+        Choose <strong>Project → Canvas size…</strong> for custom width and height or presets of 320
+        × 240, 640 × 360, and 512 × 512. Each dimension must be a whole number from 16 to 2048.
+        Apply updates the logical canvas, drawing coordinates, shader dimensions, pointer
+        coordinates, and PNG export. Preview and exported HTML preserve its aspect ratio with
+        letterboxing. JSON saves retain the settings; a new project starts at 320 × 240. Changing
+        resolution does not rewrite coordinates in existing scene code.
+      </p>
+      <pre><code>(defn draw []
+  (rect [0 0] [(canvas-width) (canvas-height)]))
+
+(defpixel render [p time]
+  (background "#272822")
+  (fill "#66d9ef")
+  (circle [(/ width 2) (/ height 2)] 40))</code></pre>
       <h2>The workspace</h2>
       <p>
         <strong>View → Code pane</strong> shows or hides source.
@@ -51,6 +67,101 @@
         modules. <code>editor/ui/</code> holds reusable controls; <code>editor/</code> holds
         complete panes and widgets. Open these files from the explorer and edit them live. Browser
         edits belong to the saved project rather than changing the repository on disk.
+      </p>
+      <h2 id="theme">Edit the theme</h2>
+      <p>
+        <code>editor/theme.lisp</code> is an ordinary editor module imported by
+        <code>editor/state.lisp</code>. It owns all editor colors: charcoal surfaces, a cyan accent,
+        Monokai pink keywords, purple numbers and yellow strings. Selection, hover, disabled text,
+        errors, checkerboards, audio playheads, icons and inline hook buttons use the same named
+        palette. Game and generator artwork keep their own colors.
+      </p>
+      <p>
+        Change the file and press <kbd>Ctrl+Enter</kbd>, or enable automatic re-evaluation. Theme
+        declarations use <code>set!</code> so edits replace saved values immediately; changing an
+        <code>init!</code> default would preserve the previous saved color. These constants belong
+        to editor state and are unavailable to the embedded game. Custom themes remain in saved
+        projects and survive reload and recovery-shell creation.
+      </p>
+      <pre><code>; editor/theme.lisp
+(set! :ui-bg "#1e1f1c")
+(set! :ui-panel "#272822")
+(set! :ui-accent "#66d9ef")
+(set! :ui-syntax-keyword "#f92672")
+(set! :ui-code-line-height 24)</code></pre>
+      <p>
+        Edit the existing declarations rather than replacing the whole theme with this excerpt.
+        Widgets read values with <code>(get :ui-accent)</code>, for example.
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Constants</th>
+              <th>Use</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>ui-bg, ui-panel, ui-shadow, ui-border</code></td>
+              <td>Workspace surfaces and separators.</td>
+            </tr>
+            <tr>
+              <td><code>ui-text, ui-muted, ui-disabled, ui-active-text, ui-line-number</code></td>
+              <td>Text and line numbers.</td>
+            </tr>
+            <tr>
+              <td><code>ui-accent, ui-button, ui-hover, ui-selection, ui-drop-target</code></td>
+              <td>Icons, controls, selection and file dragging.</td>
+            </tr>
+            <tr>
+              <td>
+                <code
+                  >ui-hook-bg, ui-hook-hover, ui-slider-track, ui-error, ui-playhead,
+                  ui-checker-dark, ui-checker-light</code
+                >
+              </td>
+              <td>Hook previews, sliders, diagnostics and resource previews.</td>
+            </tr>
+            <tr>
+              <td>
+                <code
+                  >ui-syntax-comment, ui-syntax-string, ui-syntax-keyword, ui-syntax-number,
+                  ui-syntax-delimiter</code
+                >
+              </td>
+              <td>Source highlighting.</td>
+            </tr>
+            <tr>
+              <td>
+                <code>ui-files-width</code> (280), <code>ui-inspector-width</code> (264),
+                <code>ui-collapsed-width</code> (40), <code>ui-code-fraction</code> (0.42),
+                <code>ui-narrow-width</code> (850)
+              </td>
+              <td>
+                Pane sizes and responsive layout. Expanded widths should be at least 240, collapsed
+                width at least 40, and code fraction between 0 and 1.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>ui-icon-size</code> (16), <code>ui-file-row-height</code> (26),
+                <code>ui-field-height</code> (56), <code>ui-code-line-height</code> (21),
+                <code>ui-code-gutter</code> (40)
+              </td>
+              <td>
+                Shared logical-pixel spacing. Use icons 16–20, file rows at least 24, inspector
+                fields at least 48, code lines at least 20 and gutter at least 24. Painting and
+                pointer mapping use the same code metrics; glyphs remain fixed 8 × 18 bitmap cells.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Older projects receive the theme file once and unchanged stock editor components upgrade
+        automatically. Customized components and existing theme files are preserved. The static
+        documentation mirrors the default palette; editing a project theme affects that project.
       </p>
       <h2 id="tiny-crypt">Play Tiny Crypt</h2>
       <p>
@@ -213,11 +324,13 @@
       <h2>Previewing individual hooks</h2>
       <p>
         Declare a composable drawing function with <code>defdraw</code> or a sound effect with
-        <code>defsound</code>. The code pane's Hooks button lists these declarations. Drawing
-        previews run the selected function on a fresh canvas; sound previews offer waveform seeking,
-        play/pause, stop and a one-second forward button. Edit preview arguments as a JSON array and
-        click Preview. Inspection uses a private state copy and leaves gameplay running
-        independently. See <a href="api.html#preview-hooks">hook syntax and examples</a>.
+        <code>defsound</code>. A Preview draw or Preview sound button appears directly above each
+        declaration in the code editor. These UI rows do not change the source or its line numbers.
+        Click a button to inspect that hook, then Code to return to the source. Drawing previews run
+        the selected function on a fresh canvas; sound previews offer waveform seeking, play/pause,
+        stop and a one-second forward button. Edit preview arguments as a JSON array and click
+        Preview. Inspection uses a private state copy and leaves gameplay running independently. See
+        <a href="api.html#preview-hooks">hook syntax and examples</a>.
       </p>
       <h2>Extending the editor</h2>
       <p>

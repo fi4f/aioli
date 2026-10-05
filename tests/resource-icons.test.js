@@ -69,6 +69,11 @@ test('new image icon migrates once while preserving replacements and later delet
 for (const [name, version] of [
   ['generator', 12],
   ['command', 13],
+  ['chevron-d', 19],
+  ['chevron-l', 19],
+  ['chevron-r', 19],
+  ['chevron-u', 19],
+  ['x', 20],
 ]) {
   test(`new ${name} icon migrates once while preserving replacements and later deletions`, () => {
     const path = `editor/icon/${name}.png`;

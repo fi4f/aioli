@@ -20,7 +20,7 @@
         output (generator-output) fields (generator-fields)
         preview-height (if (= output "audio") 48 (if wide 150 90))
         fy (+ gy preview-height 20)
-        height (max 56 (- (+ y h) fy 136))]
+        height (max (get :ui-field-height) (- (+ y h) fy 136))]
     (when (ui-button :generator-select (if (= path "") "No .generator.lisp files" (str path " / Next"))
                     [(+ x 16) y] [(- w 32) 32] false)
       (repeat (count files) i
@@ -36,12 +36,12 @@
             (ui-inspector-scroll :generator-text-scroll :text-preview-offset gx gy gw preview-height (* (generator-text-line-count) 18))
             (text-preview [gx gy] [(- gw 16) preview-height]))
           (do (fill (get :ui-accent)) (waveform [gx gy] [gw preview-height] true))))
-      (let [offset (ui-inspector-scroll :generator-inspector-scroll :inspector-offset gx fy gw height (* (count fields) 56))
-            first (floor (/ offset 56))]
+      (let [offset (ui-inspector-scroll :generator-inspector-scroll :inspector-offset gx fy gw height (* (count fields) (get :ui-field-height)))
+            first (floor (/ offset (get :ui-field-height)))]
         (scope
           (clip [gx fy] [(- gw 16) height])
-          (repeat (min (- (count fields) first) (+ 2 (floor (/ height 56)))) i
-            (generator-field (nth fields (+ first i)) gx (+ fy (* (+ first i) 56) (- 0 offset)) (- gw 16)))))
+          (repeat (min (- (count fields) first) (+ 2 (floor (/ height (get :ui-field-height))))) i
+            (generator-field (nth fields (+ first i)) gx (+ fy (* (+ first i) (get :ui-field-height)) (- 0 offset)) (- gw 16)))))
       (when (and (not (= (get :inspector-edit-key) ""))
                  (not (= (generator-edit-kind) "color")))
         (code-editor [gx (+ y h -122)] [(- gw 76) 32] :__generatorValue)

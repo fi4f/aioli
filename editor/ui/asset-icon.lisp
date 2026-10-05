@@ -8,5 +8,5 @@
     (scope
       (fill (if special (get :ui-accent) (get :ui-muted)))
       (if (icon-available? path)
-        (icon path [x y] [16 16])
+        (icon path [x y] [(get :ui-icon-size) (get :ui-icon-size)])
         (text [(+ x 4) y] "?")))))

@@ -116,7 +116,7 @@ test('legacy projects migrate commands, generator imports and workspace referenc
   );
   assert.match(loaded.sources.main, /image.generator.lisp/);
   assert.equal(sourceKey('main.lisp'), 'main');
-  assert.equal(projectSnapshot(loaded.sources, loaded.state).version, 18);
+  assert.equal(projectSnapshot(loaded.sources, loaded.state).version, 21);
   assert.throws(
     () =>
       readProject(

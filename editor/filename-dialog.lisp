@@ -15,7 +15,7 @@
         y (max 16 (min 90 (- (screen-height) h 16)))
         buttons (if create (if generator 274 230) 128)
         col (/ (- w 44) 3)]
-    (fill "#354239") (rect [(- x 1) (- y 1)] [(+ w 2) (+ h 2)])
+    (fill (get :ui-border)) (rect [(- x 1) (- y 1)] [(+ w 2) (+ h 2)])
     (fill (get :ui-panel)) (rect [x y] [w h])
     (region :file-path-panel "Filename dialog" [x y] [w h])
     (fill (get :ui-text)) (text [(+ x 16) (+ y 16)] (if folder (if rename "Rename folder" (if move "Move folder" "New folder")) (if rename "Rename file" "New file")))

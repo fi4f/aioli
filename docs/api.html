@@ -38,6 +38,14 @@
           <li><a href="#actions">Editor actions</a></li>
         </ul>
       </div>
+      <p>
+        In game scripts and scenes, <code>(canvas-width)</code> and <code>(canvas-height)</code>
+        return the logical project canvas size from any lifecycle or drawing hook.
+        <code>(screen-width)</code> and <code>(screen-height)</code> return the same size in games,
+        but return the browser workspace size in the editor. In <code>defpixel</code>, use the
+        built-in symbols <code>width</code> and <code>height</code>, or the canvas size calls; these
+        values are live GPU uniforms, independent of browser scaling.
+      </p>
       <h2 id="drawing">Drawing primitives</h2>
       <p>
         Positions are <code>[x y]</code>, sizes are <code>[width height]</code>, and colors are
@@ -139,7 +147,7 @@
               <td><code>(surface origin size)</code></td>
               <td>CPU editor</td>
               <td>
-                Composite the 320 × 240 game texture with nearest-neighbor sampling. Also declare
+                Composite the project canvas texture with nearest-neighbor sampling. Also declare
                 its game-input region.
               </td>
             </tr>
@@ -339,7 +347,10 @@
           </thead>
           <tbody>
             <tr>
-              <td><code>(screen-width)</code>, <code>(screen-height)</code></td>
+              <td>
+                <code>(screen-width)</code>, <code>(screen-height)</code>,
+                <code>(canvas-width)</code>, <code>(canvas-height)</code>
+              </td>
               <td>Editor viewport dimensions in CSS pixels.</td>
             </tr>
             <tr>
@@ -407,8 +418,8 @@
             <tr>
               <td><code>(buffer-open origin size tab)</code></td>
               <td>
-                Select the source and lay out its input region. Tabs:
-                <code>scene game audio editor ui</code>; read-only buffers:
+                Select a project source buffer and lay out its input region. Entry buffer keys are
+                <code>main game</code>; other files use their project paths. Read-only buffers:
                 <code>wgsl guide diagnostic</code>.
               </td>
             </tr>
@@ -417,6 +428,21 @@
               <td>
                 Vector of <code>[number-position number-text segments]</code>. Each segment is
                 <code>[position text kind]</code>.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(buffer-hooks)</code></td>
+              <td>
+                Visible inline preview rows: <code>[origin size name kind]</code>, where kind is
+                <code>"draw"</code> or <code>"sound"</code>. These rows appear above top-level
+                definitions without modifying source text or source line numbers. Transient and
+                read-only buffers have no hook controls.
+              </td>
+            </tr>
+            <tr>
+              <td><code>(inspect-inline-hook name)</code></td>
+              <td>
+                Open the named hook preview from the current source buffer, using copied state.
               </td>
             </tr>
             <tr>
@@ -458,12 +484,15 @@
         match the function's argument count. Canvas dimensions are 1–4096.
       </p>
       <p>
-        Open the source and click <strong>Hooks</strong>, then choose a declaration to inspect it.
-        The editor executes only that hook against copied state with application actions and input
-        disabled. Drawing previews start with fresh drawing state and a blank canvas. Edit the JSON
-        argument array and click Preview to rerun it. Sound previews provide a waveform, play/pause,
-        stop, a one-second forward button and click/drag seeking. Preview state never changes the
-        game. These declarations work in exported apps; only inspection UI belongs to the editor.
+        Open the source and click <strong>Preview draw</strong> or
+        <strong>Preview sound</strong> directly above its declaration to inspect it. The button row
+        is editor UI; copying, saving, line numbers and Lisp evaluation use the original source.
+        Click <strong>Code</strong> to return to the same source buffer. The editor executes only
+        that hook against copied state with application actions and input disabled. Drawing previews
+        start with fresh drawing state and a blank canvas. Edit the JSON argument array and click
+        Preview to rerun it. Sound previews provide a waveform, play/pause, stop, a one-second
+        forward button and click/drag seeking. Preview state never changes the game. These
+        declarations work in exported apps; only inspection UI belongs to the editor.
       </p>
       <h2 id="audio">Procedural audio</h2>
       <pre><code>(defn sound []
@@ -488,8 +517,8 @@
   (voice :sine (get :pitch) 880 0.3 0.35))</code></pre>
       <p>
         A Lisp slider bound to <code>:pitch</code> and a code edit both change the same recipe. The
-        generator inspector supplies controls from annotated state fields, while the Hooks button
-        previews individual named sound recipes.
+        generator inspector supplies controls from annotated state fields, while the inline preview
+        buttons previews individual named sound recipes.
       </p>
       <h2 id="actions">Editor actions</h2>
       <div class="table-scroll">

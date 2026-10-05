@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { sourceHookLines } from '../hook-definitions.js';
 import { tokenizeSourceLine } from '../source-tokens.js';
 import { CodeInput } from '../code-input.js';
 import { normalizeSource, displaySource, sourceLine } from '../source-text.js';
@@ -147,4 +148,83 @@ test('horizontal scrolling and token clipping keep fallback glyph boundaries ali
   assert.equal(input.selectionStart, 3);
   editor.pointer(80, 0);
   assert.equal(input.selectionStart, 5); // End of the tab, before C.
+});
+
+test('inline hook rows ignore comments, multiline strings and nested definitions in unfinished drafts', () => {
+  const source = `; (defdraw fake [] nil)
+(init! :caption "text
+(defsound fake [] nil)")
+(defn nested [] (defdraw local [] nil))
+(defdraw badge [] (fill "#fff"))
+( ; header comment
+ defsound beep [] (voice :sine 440 440 0.2 0.1))
+(defdraw unfinished [] (rect [`;
+  assert.deepEqual(sourceHookLines(source), [
+    { row: 4, name: 'badge', kind: 'draw' },
+    { row: 5, name: 'beep', kind: 'sound' },
+    { row: 7, name: 'unfinished', kind: 'draw' },
+  ]);
+});
+
+test('inline hook rows preserve source offsets, line numbers, selections and caret scrolling', () => {
+  const text = '(defdraw badge []\n  (fill "#fff"))\n(defsound beep [] nil)';
+  const { editor, input, sources, layout } = sourceEditor(text);
+  let result = layout();
+  assert.deepEqual(
+    result.hooks.map((h) => [h[0][1], h[2]]),
+    [
+      [0, 'badge'],
+      [63, 'beep'],
+    ],
+  );
+  assert.deepEqual(
+    result.rows.map((r) => [r[0][1], r[1].trim()]),
+    [
+      [21, '1'],
+      [42, '2'],
+      [84, '3'],
+    ],
+  );
+  editor.pointer(48, 43);
+  assert.equal(input.selectionStart, text.indexOf('\n') + 2);
+  assert.deepEqual(layout().caret, [48, 42]);
+  editor.pointer(40, 21);
+  editor.pointer(48, 85, true);
+  assert.equal(
+    input.value.slice(input.selectionStart, input.selectionEnd),
+    text.slice(0, text.lastIndexOf('\n') + 2),
+  );
+  assert.equal(layout().selections.length, 3, 'virtual rows are not selected text');
+  input.setSelectionRange(text.length, text.length);
+  editor.session().follow = true;
+  result = editor.layout([0, 0], [400, 42], 'scene', sources.scene, false, 0);
+  assert.ok(result.caret[1] >= 0 && result.caret[1] < 42);
+  assert.equal(input.value, text);
+  assert.equal(sources.scene, text);
+  assert.equal(
+    editor.layout([0, 0], [400, 100], '__hookArgs', '(defdraw fake [] nil)', false, 0).hooks.length,
+    0,
+  );
+  assert.equal(editor.layout([0, 0], [400, 100], 'asset', text, true, 0).hooks.length, 0);
+});
+
+test('themed source metrics keep painting, pointer offsets and hook rows aligned', () => {
+  const text = '(defdraw badge [] nil)\nnext';
+  const { editor, input } = sourceEditor(text);
+  const result = editor.layout([10, 10], [400, 150], 'scene', text, false, 0, {
+    lineHeight: 30,
+    gutter: 56,
+  });
+  assert.deepEqual(
+    result.rows.map((row) => row[0][1]),
+    [40, 70],
+  );
+  assert.equal(result.hooks[0][1][1], 29);
+  editor.pointer(74, 72);
+  assert.equal(input.selectionStart, text.indexOf('\n') + 2);
+  const painted = editor.layout([10, 10], [400, 150], 'scene', text, false, 0, {
+    lineHeight: 30,
+    gutter: 56,
+  });
+  assert.deepEqual(painted.caret, [74, 70]);
 });

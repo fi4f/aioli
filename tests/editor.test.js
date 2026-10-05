@@ -77,6 +77,7 @@ function editor(width = 1440, height = 900) {
       'code-tabs-after?': () => false,
       'active-code-path': () => state.tab + '.lisp',
       'buffer-rows': () => [],
+      'buffer-hooks': () => [],
       'buffer-selections': () => [],
       'buffer-caret': () => null,
       status: () => 'Saved',

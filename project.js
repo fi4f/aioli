@@ -1,3 +1,4 @@
+import { canvasSize } from './canvas-size.js';
 import { migrateEditorLayout, legacyEditorPath } from './editor-layout.js';
 import { resolvePath, resolveModules as loadModules } from './module-loader.js';
 import { game as exampleUpdate, audio as exampleSound, presets } from './examples.js';
@@ -155,7 +156,7 @@ export function projectSnapshot(
   applicationState = {},
 ) {
   return {
-    version: 18,
+    version: 21,
     files: Object.fromEntries(
       Object.entries(sources)
         .filter(([key]) => !key.startsWith('__'))
@@ -172,12 +173,15 @@ export function projectSnapshot(
 export function readProject(project, defaults, defaultResources = {}) {
   if (
     !project ||
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18].includes(project.version) ||
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21].includes(
+      project.version,
+    ) ||
     !project.state ||
     typeof project.state !== 'object' ||
     Array.isArray(project.state)
   )
     throw new Error('Not an aioli project');
+  canvasSize(project.state);
   const files = project.version >= 3 ? project.files : project.sources;
   if (!files || typeof files !== 'object' || Object.keys(files).length > 256)
     throw new Error('Invalid project files');
@@ -307,6 +311,16 @@ export function readProject(project, defaults, defaultResources = {}) {
   for (const [key, value] of Object.entries(defaults))
     if (project.version < 5 && key.includes('/') && !key.startsWith('scenes/') && !(key in sources))
       sources[key] = normalizeSource(value);
+  // Seed the shared theme once before stock components acquire its import.
+  const themePath = 'editor/theme.lisp';
+  if (
+    project.version < 21 &&
+    typeof defaults['editor/canvas-settings.lisp'] === 'string' &&
+    !('editor/canvas-settings.lisp' in sources)
+  )
+    sources['editor/canvas-settings.lisp'] = defaults['editor/canvas-settings.lisp'];
+  if (project.version < 19 && typeof defaults[themePath] === 'string' && !(themePath in sources))
+    sources[themePath] = normalizeSource(defaults[themePath]);
   // Saved projects carry their own components. Upgrade only exact known stock
   // content, so new interactions appear without overwriting human customizations.
   for (const [path, hashes] of Object.entries(editorSourceMigrations)) {
@@ -513,6 +527,11 @@ export function readProject(project, defaults, defaultResources = {}) {
     ['image', 12],
     ['generator', 13],
     ['command', 14],
+    ['chevron-d', 20],
+    ['chevron-l', 20],
+    ['chevron-r', 20],
+    ['chevron-u', 20],
+    ['x', 21],
   ]) {
     const path = `editor/icon/${name}.png`;
     if (

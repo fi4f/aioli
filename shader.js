@@ -93,6 +93,11 @@ export function compileShader(forms, state = {}) {
         throw new Error('Use (param :state-key)');
       return uniform(args[0].name.slice(1));
     }
+    if (
+      ['canvas-width', 'screen-width', 'canvas-height', 'screen-height'].includes(name) &&
+      !args.length
+    )
+      return { code: `u.data[0].${name.endsWith('width') ? 'y' : 'z'}`, type: 'f32' };
     if (name === 'position' && !args.length) return { code: 'd.p', type: 'vec2f' };
     const values = args.map((x) => expr(x, locals));
     if (['+', '-', '*', '/'].includes(name)) {

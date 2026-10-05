@@ -9,12 +9,8 @@
     (do
   (code-tab-strip (+ x 8) 58 (- width 56))
   (fill (get :ui-muted))
-  (scope (clip [(+ x 16) 94] [(- width 150) 20])
+  (scope (clip [(+ x 16) 94] [(- width 32) 20])
     (text [(+ x 16) 94] (active-code-path)))
-  (when (> (count (source-hooks)) 0)
-    (when (ui-button :inspect-hooks (str "Hooks / " (count (source-hooks)))
-                    [(+ x width -126) 88] [110 28] false)
-      (open-hooks)))
   (if (= (get :window) "")
     (if (= (get :tab) "")
       (text [(+ x 24) 124] "Open a source file from Files")

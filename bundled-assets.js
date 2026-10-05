@@ -12,6 +12,11 @@ export const bundledResourcePaths = [
   'game',
   'main',
   'scene',
+  'chevron-d',
+  'chevron-l',
+  'chevron-r',
+  'chevron-u',
+  'x',
 ].map((name) => `editor/icon/${name}.png`);
 export async function loadBundledResources() {
   const entries = await Promise.all(

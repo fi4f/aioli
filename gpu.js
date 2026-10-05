@@ -99,7 +99,8 @@ ${pixelCoverageWGSL}
       paint.a *= textureLoad(glyphs, glyphPosition, 0).a;
     }
     if (kind == 4u || kind == 5u) {
-      let scenePosition = clamp(vec2i(relative / command.bounds.zw * vec2f(320, 240)), vec2i(0), vec2i(319, 239));
+      let dimensions = select(textureDimensions(image), textureDimensions(scene), kind == 4u);
+      let scenePosition = clamp(vec2i(relative / command.bounds.zw * vec2f(dimensions)), vec2i(0), vec2i(dimensions) - vec2i(1));
       if (kind == 4u) { paint = textureLoad(scene, scenePosition, 0); }
       else { paint = textureLoad(image, scenePosition, 0); }
     }
@@ -356,6 +357,20 @@ export class GPUHost {
     }
     return this[name];
   }
+  resizeScene(width, height) {
+    if (this.sceneTexture.width === width && this.sceneTexture.height === height) return;
+    const previous = this.sceneTexture;
+    this.sceneTexture = this.device.createTexture({
+      size: [width, height],
+      format: 'rgba8unorm',
+      usage:
+        GPUTextureUsage.RENDER_ATTACHMENT |
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_SRC,
+    });
+    this.bindDirty = true;
+    previous.destroy();
+  }
   draw(drawList, time, state, imageState = state) {
     // Pass 1 renders the game texture. Pass 2 samples it among editor commands.
     const device = this.device,
@@ -425,7 +440,7 @@ export class GPUHost {
     ]) {
       if (!pipeline) continue;
       const uniforms = new Float32Array(256);
-      uniforms.set([clock, 320, 240, 0]);
+      uniforms.set([clock, texture.width, texture.height, 0]);
       shader.params.forEach(({ key, kind }, i) => {
         if (kind === 'color') uniforms.set(rgba(parameters[key]), (i + 1) * 4);
         else {
@@ -467,25 +482,29 @@ export class GPUHost {
     device.queue.submit([encoder.finish()]);
   }
   async snapshot(generated = false) {
-    // 320 RGBA pixels = 1280 bytes, already aligned to WebGPU's 256-byte rows.
+    const texture = generated ? this.imageTexture : this.sceneTexture;
+    const { width, height } = texture;
+    const bytesPerRow = Math.ceil((width * 4) / 256) * 256;
     const buffer = this.device.createBuffer({
-        size: 1280 * 240,
+        size: bytesPerRow * height,
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
       }),
       encoder = this.device.createCommandEncoder();
-    encoder.copyTextureToBuffer(
-      { texture: generated ? this.imageTexture : this.sceneTexture },
-      { buffer, bytesPerRow: 1280 },
-      { width: 320, height: 240 },
-    );
+    encoder.copyTextureToBuffer({ texture }, { buffer, bytesPerRow }, { width, height });
     this.device.queue.submit([encoder.finish()]);
     try {
       await buffer.mapAsync(GPUMapMode.READ);
-      const pixels = new Uint8ClampedArray(buffer.getMappedRange().slice(0));
+      const mapped = new Uint8Array(buffer.getMappedRange());
+      const pixels = new Uint8ClampedArray(width * height * 4);
+      for (let row = 0; row < height; row++)
+        pixels.set(
+          mapped.subarray(row * bytesPerRow, row * bytesPerRow + width * 4),
+          row * width * 4,
+        );
       const canvas = document.createElement('canvas');
-      canvas.width = 320;
-      canvas.height = 240;
-      canvas.getContext('2d').putImageData(new ImageData(pixels, 320, 240), 0, 0);
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').putImageData(new ImageData(pixels, width, height), 0, 0);
       return await new Promise((resolve) => canvas.toBlob(resolve));
     } finally {
       buffer.unmap();

@@ -31,7 +31,7 @@ try {
     );
   }
   const initial = await page.evaluate(() => window.aioli.resources);
-  assert.equal(Object.keys(initial).filter((p) => p.startsWith('editor/icon/')).length, 11);
+  assert.equal(Object.keys(initial).filter((p) => p.startsWith('editor/icon/')).length, 16);
   await click('view');
   await click('files');
   await click('folder-examples');
@@ -87,6 +87,22 @@ try {
   assert.equal(await page.evaluate(() => window.aioli.state.window), 'image-asset');
   await mkdir('artifacts', { recursive: true });
   await page.screenshot({ path: 'artifacts/editor-icon-resource.png' });
+  assert.ok(
+    await page.evaluate(() => {
+      const r = window.aioli.regions.find((r) => r.id === 'close-window');
+      return (
+        r.label === 'Close preview' &&
+        window.aioli.commands.some(
+          (c) =>
+            c.meta[0] === 7 &&
+            c.bounds[0] >= r.origin[0] &&
+            c.bounds[1] >= r.origin[1] &&
+            c.bounds[0] + c.bounds[2] <= r.origin[0] + r.size[0] &&
+            c.bounds[1] + c.bounds[3] <= r.origin[1] + r.size[1],
+        )
+      );
+    }),
+  );
   await click('close-window');
   await page.waitForFunction(() =>
     JSON.parse(localStorage.getItem('aioli.project.v3')).state['open-folders']?.includes(
@@ -94,7 +110,7 @@ try {
     ),
   );
   const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project.v3')));
-  assert.equal(project.version, 18);
+  assert.equal(project.version, 21);
   project.resources['editor/icon/code.png'] = initial['editor/icon/play.png'];
   delete project.resources['editor/icon/folder.png'];
   await page.locator('#file-input').setInputFiles({

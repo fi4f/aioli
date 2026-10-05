@@ -17,9 +17,9 @@
 
 (defn parameter-pane [w h narrow tools-width]
   (let [collapsed (get :inspector-collapsed)
-        pane-width (if collapsed 40 264)
-        x (- w pane-width) y 124 width 232
-        fields (scene-fields) height (max 56 (- h y 94))]
+        pane-width (if collapsed (get :ui-collapsed-width) (get :ui-inspector-width))
+        x (- w pane-width) y 124 width (- pane-width 32)
+        fields (scene-fields) height (max (get :ui-field-height) (- h y 94))]
     (fill (get :ui-panel)) (rect [x 51] [pane-width (- h 81)])
     (ui-pane-toggle :collapse-inspector :inspector-collapsed "Scene inspector" x 51 pane-width true)
     (if collapsed
@@ -27,12 +27,12 @@
       (do
     (fill (get :ui-muted))
     (scope (clip [(+ x 16) 88] [width 20]) (text [(+ x 16) 88] (preview-path)))
-    (let [offset (ui-inspector-scroll :scene-inspector-scroll :scene-inspector-offset (+ x 16) y width height (* (count fields) 56))
-          first (floor (/ offset 56))]
+    (let [offset (ui-inspector-scroll :scene-inspector-scroll :scene-inspector-offset (+ x 16) y width height (* (count fields) (get :ui-field-height)))
+          first (floor (/ offset (get :ui-field-height)))]
       (scope
         (clip [(+ x 16) y] [(- width 16) height])
-        (repeat (min (- (count fields) first) (+ 2 (floor (/ height 56)))) i
-          (scene-inspector-field (nth fields (+ first i)) (+ x 16) (+ y (* (+ first i) 56) (- 0 offset)) (- width 16)))))
+        (repeat (min (- (count fields) first) (+ 2 (floor (/ height (get :ui-field-height))))) i
+          (scene-inspector-field (nth fields (+ first i)) (+ x 16) (+ y (* (+ first i) (get :ui-field-height)) (- 0 offset)) (- width 16)))))
     (when (= (count fields) 0)
       (fill (get :ui-muted)) (text [(+ x 16) y] "No state fields yet"))
     (when (and (not (= (get :scene-edit-key) "")) (not (= (scene-edit-kind) "color")))

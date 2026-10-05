@@ -1,11 +1,11 @@
 :root {
   color-scheme: dark;
-  --ink: #d0dbd2;
-  --muted: #8f9e93;
-  --paper: #101613;
-  --panel: #171e19;
-  --line: #354239;
-  --accent: #bbd6a6;
+  --ink: #f8f8f2;
+  --muted: #a6a69c;
+  --paper: #1e1f1c;
+  --panel: #272822;
+  --line: #45463f;
+  --accent: #66d9ef;
   --mono: Consolas, Menlo, monospace;
 }
 * {
@@ -13,7 +13,7 @@
 }
 html {
   scroll-padding-top: 110px;
-  scrollbar-color: #526258 var(--panel);
+  scrollbar-color: #75766b var(--panel);
 }
 body {
   margin: 0;
@@ -64,7 +64,7 @@ nav a {
   border-bottom: 2px solid transparent;
 }
 nav a:hover {
-  background: #252e29;
+  background: #383a32;
 }
 a:focus-visible {
   outline: 2px solid var(--accent);
@@ -73,7 +73,7 @@ a:focus-visible {
 nav a[aria-current='page'] {
   font-weight: 700;
   color: var(--accent);
-  background: #252e29;
+  background: #383a32;
   border-bottom-color: var(--accent);
 }
 main {
@@ -154,7 +154,7 @@ kbd {
   padding: 2px 5px;
   border: 1px solid var(--line);
   border-radius: 0;
-  background: #252e29;
+  background: #383a32;
 }
 ul,
 ol {
@@ -196,7 +196,7 @@ li {
   background: var(--panel);
 }
 .card:hover {
-  background: #252e29;
+  background: #383a32;
   border-color: var(--accent);
 }
 .card strong {

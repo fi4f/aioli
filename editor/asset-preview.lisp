@@ -6,7 +6,7 @@
       (clip [ox oy] [vw vh])
       ; Checkerboard makes transparent pixels visible without changing the asset.
       (repeat 12 i (repeat 8 j
-        (fill (if (= (mod (+ i j) 2) 0) "#202823" "#29332c"))
+        (fill (if (= (mod (+ i j) 2) 0) (get :ui-checker-dark) (get :ui-checker-light)))
         (rect [(+ ox (* i (/ vw 12))) (+ oy (* j (/ vh 8)))] [(/ vw 12) (/ vh 8)])))
       (region :asset-image-area "Image / drag to pan, wheel to zoom" [ox oy] [vw vh])
       (when (and (pointer-pressed?) (hit? [ox oy] [vw vh]))
@@ -34,10 +34,10 @@
 (defn audio-asset-view [x y w h]
   (let [ox (+ x 16) oy (+ y 58) width (- w 32) height (max 40 (- h 164))
         duration (max 0.001 (asset-duration))]
-    (fill "#101613") (rect [ox oy] [width height])
-    (fill "#344339") (rect [ox (+ oy (/ height 2))] [width 1])
+    (fill (get :ui-bg)) (rect [ox oy] [width height])
+    (fill (get :ui-selection)) (rect [ox (+ oy (/ height 2))] [width 1])
     (fill (get :ui-accent)) (asset-waveform [ox oy] [width height])
-    (fill "#e9bca9")
+    (fill (get :ui-playhead))
     (rect [(+ ox (* width (/ (asset-time) duration))) oy] [1 height])
     (region :asset-seek "Audio / click or drag to seek" [ox oy] [width height])
     (when (and (pointer-pressed?) (hit? [ox oy] [width height])) (capture! :asset-seek))
@@ -57,12 +57,12 @@
         w (min (if (or image textual) 900 760) (- (screen-width) 32))
         h (min (if (or image textual) 650 340) (- (screen-height) 100))
         x (/ (- (screen-width) w) 2) y 64]
-    (fill "#354239") (rect [(- x 1) (- y 1)] [(+ w 2) (+ h 2)])
+    (fill (get :ui-border)) (rect [(- x 1) (- y 1)] [(+ w 2) (+ h 2)])
     (fill (get :ui-panel)) (rect [x y] [w h])
     (region :asset-window "Asset preview" [x y] [w h])
     (scope (clip [(+ x 16) (+ y 12)] [(- w 110) 24])
       (fill (get :ui-text)) (text [(+ x 16) (+ y 12)] (get :preview-path)))
-    (when (ui-button :close-window "Close" [(+ x w -84) (+ y 4)] [76 32] false)
+    (when (ui-close-button :close-window "Close preview" [(+ x w -40) (+ y 4)] [32 32])
       (close-asset-preview))
     (if textual
       (code-editor [(+ x 16) (+ y 48)] [(- w 32) (- h 64)] :__textResource)

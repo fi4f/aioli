@@ -57,7 +57,19 @@ try {
   await page.waitForFunction(
     () => !window.aioli.pending && window.aioli.state.tab === 'hooks.lisp',
   );
-  await click('inspect-hooks');
+  assert.equal(
+    await page.evaluate(() => window.aioli.regions.some((r) => r.id === 'inspect-hooks')),
+    false,
+  );
+  const inline = await page.evaluate(() =>
+    window.aioli.regions.find((r) => r.id === 'inspect-hook-mark'),
+  );
+  const sourceRegion = await page.evaluate(() =>
+    window.aioli.regions.find((r) => r.id === 'source'),
+  );
+  assert.ok(inline.origin[1] >= sourceRegion.origin[1] && inline.size[1] === 20);
+  await mkdir('artifacts', { recursive: true });
+  await page.screenshot({ path: 'artifacts/inline-hooks.png' });
   await click('inspect-hook-mark');
   await page.waitForFunction(
     () => window.aioli.hookPreview?.name === 'mark' && window.aioli.state.window === 'hook-draw',
@@ -103,12 +115,12 @@ try {
   await page.mouse.click(seek.origin[0] + seek.size[0] * 0.75, seek.origin[1] + 10);
   await page.waitForFunction(() => window.aioli.preview.position > 1.4);
   await page.screenshot({ path: 'artifacts/sound-hook-preview.png' });
-  // Saved preview windows reopen as a hook list, never a stale decode or missing buffer.
+  // Saved preview windows return to inline controls, never a stale decode or missing buffer.
   await page.waitForFunction(
     () => JSON.parse(localStorage.getItem('aioli.project.v3')).state.window === 'hook-sound',
   );
   await page.reload();
-  await page.waitForFunction(() => window.aioli?.running && window.aioli.state.window === 'hooks');
+  await page.waitForFunction(() => window.aioli?.running && window.aioli.state.window === '');
   await click('inspect-hook-hit');
   await page.waitForFunction(
     () => window.aioli.preview.ready && window.aioli.preview.duration < 0.3,

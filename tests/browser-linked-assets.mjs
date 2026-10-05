@@ -42,7 +42,7 @@ try {
     });
   });
   const initial = await page.evaluate(() => window.aioli.resources);
-  assert.equal(Object.keys(initial).filter((p) => p.startsWith('editor/icon/')).length, 11);
+  assert.equal(Object.keys(initial).filter((p) => p.startsWith('editor/icon/')).length, 16);
   await click('view');
   await click('files');
   await click('folder-editor');

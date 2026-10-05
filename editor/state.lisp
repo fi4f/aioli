@@ -1,10 +1,6 @@
 ; The editor is a fullscreen aioli app: all in one lisp.
-; Shared theme and workspace defaults, preserved through live reload.
-(init! :ui-bg "#101613")
-(init! :ui-panel "#171e19")
-(init! :ui-text "#d0dbd2")
-(init! :ui-muted "#77867b")
-(init! :ui-accent "#bbd6a6")
+; Workspace defaults, preserved through live reload.
+(import "./theme.lisp")
 (init! :tab "game")
 (init! :show-code true)
 (init! :show-tools false)

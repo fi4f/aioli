@@ -223,7 +223,9 @@ true false nil           ; CPU booleans and null</code></pre>
         <a href="projects.html#imports">imports and scene hooks</a>. Each invocation evaluates one
         pixel, accumulating color as drawing commands run. <code>p</code>, <code>p.x</code>, and
         <code>p.y</code> read the current transformed pixel position; <code>time</code> is seconds;
-        <code>width</code> and <code>height</code> are 320 and 240.
+        <code>width</code> and <code>height</code> are the project canvas dimensions (320 × 240 by
+        default). You can also call <code>(canvas-width)</code> and <code>(canvas-height)</code> in
+        a shader.
       </p>
       <p>
         Shader bodies support drawing commands, <code>let</code>, <code>scope</code>, and

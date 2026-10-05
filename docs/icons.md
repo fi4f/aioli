@@ -4,7 +4,7 @@ Delivery format: one 64 × 64 PNG per icon. Use black artwork on a white or tran
 
 Keep roughly 5 pixels of padding on every side. Use simple silhouettes or consistent strokes about 5 pixels thick. Avoid tiny details, gradients, and lettering. File icons will display at approximately 16 CSS pixels and button icons at 20 CSS pixels; inspect the art at these sizes. 64 × 64 provides enough source detail for these sizes on high DPI displays.
 
-Provide these 11 initial files in `editor/icon/`:
+Bundled artwork contains these 16 files in `editor/icon/`:
 
 - `game.png` — controller, for game.lisp
 - `main.png` — editor/window, for main.lisp
@@ -17,12 +17,16 @@ Provide these 11 initial files in `editor/icon/`:
 - `audio.png` — audio resource
 - `file.png` — other resource
 - `play.png` — play/restart action
+- `chevron-u.png` — scroll upward indicator
+- `chevron-d.png` — scroll downward indicator and open folder
+- `chevron-l.png` — pane collapse/expand and previous tabs
+- `chevron-r.png` — pane collapse/expand, closed folder and next tabs
 
-Optional UI artwork: `chevron-up.png`, `chevron-down.png`, `chevron-left.png`, `chevron-right.png`, and `close.png`.
+`x.png` closes source tabs, tool and asset previews, and the About window. Close controls retain descriptive accessibility labels.
 
 Icons are ordinary project image resources in `editor/icon/`, visible in the Files pane. You can preview, download, rename, delete or replace them like other imported images. JSON saves retain the actual image data; exported HTML bundles these resources like every other project asset.
 
-Bundled artwork seeds fresh projects and migrates older saves once. Subsequent saves preserve replacements and deletions. Lisp widgets choose resource paths; the renderer decodes those resources into theme-tinted masks and rebuilds the atlas for the current display density. Missing or invalid file icons show a question mark. All 11 initial icons are supplied.
+Bundled artwork seeds fresh projects and migrates older saves once. Subsequent saves preserve replacements and deletions. Lisp widgets choose resource paths; the renderer decodes those resources into theme-tinted masks and rebuilds the atlas for the current display density. Missing or invalid file icons show a question mark. All 16 icons are supplied, including `chevron-d.png`, `chevron-l.png`, `chevron-r.png` and `chevron-u.png`. The chevrons draw folder disclosure, pane collapse/expand, tab navigation and inspector overflow indicators. They use the theme colors like other icons.
 
 The Lisp editor uses `(icon-available? "editor/icon/code.png")` and `(icon "editor/icon/code.png" [x y] [16 16])`. These operations accept any image resource path; paths and theme colors are chosen by Lisp, rather than being hardcoded into the renderer.
 

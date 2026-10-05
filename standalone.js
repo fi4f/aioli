@@ -1,3 +1,4 @@
+import { canvasSize } from './canvas-size.js';
 import { launchApplication, callHook, callLifecycle } from './application.js';
 import { engineServices } from './engine-services.js';
 import { resolvePath } from './module-loader.js';
@@ -15,7 +16,8 @@ export async function startApplication(project, canvas) {
   });
   const keys = new Set();
   const pointer = { x: 0, y: 0, down: false, pressed: false };
-  const logicalSize = [320, 240];
+  const logicalSize = canvasSize(project.settings);
+  gpu.resizeScene(...logicalSize);
   const surface = () => fitSurface(canvas.clientWidth, canvas.clientHeight, ...logicalSize);
   function movePointer(event) {
     const { origin, scale } = surface();

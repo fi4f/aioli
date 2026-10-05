@@ -46,7 +46,7 @@ try {
       await page.goto(url + file);
       assert.equal(
         await page.evaluate(() => getComputedStyle(document.body).backgroundColor),
-        'rgb(16, 22, 19)',
+        'rgb(30, 31, 28)',
       );
       assert.ok(
         await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),

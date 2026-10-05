@@ -1,3 +1,4 @@
+import { sourceHookLines } from './hook-definitions.js';
 import { sourcePath } from './project.js';
 import { GLYPH_WIDTH } from './drawing.js';
 import { tokenizeSourceLine } from './source-tokens.js';
@@ -167,14 +168,13 @@ export class CodeInput {
     const bounds = this.box;
     const session = this.session();
     const lines = session.text.split('\n');
-    const row = Math.min(
-      lines.length - 1,
-      Math.max(0, Math.floor((y - bounds.y) / LINE_HEIGHT) + session.scroll),
-    );
+    const visual = Math.max(0, Math.floor((y - bounds.y) / bounds.lineHeight) + session.scroll);
+    const row =
+      session.visual?.[Math.min(visual, session.visual.length - 1)]?.row ?? lines.length - 1;
     const line = sourceLine(lines[row]);
     const column = Math.min(
       line.width,
-      Math.max(0, Math.round((x - bounds.x - GUTTER_WIDTH) / GLYPH_WIDTH) + session.col),
+      Math.max(0, Math.round((x - bounds.x - bounds.gutter) / GLYPH_WIDTH) + session.col),
     );
     const index =
       lines.slice(0, row).reduce((offset, line) => offset + line.length + 1, 0) +
@@ -201,17 +201,34 @@ export class CodeInput {
    * selections: [[origin, size], ...]; caret: [x,y] or null.
    * Source must remain paintable even when the strict Lisp reader rejects it.
    */
-  layout(origin, size, tab, text, readOnly, now) {
+  layout(origin, size, tab, text, readOnly, now, metrics = {}) {
     this.switch(tab, text, readOnly);
     const session = this.session();
     text = session.text;
     const [x, y] = origin;
     const [width, height] = size;
-    this.box = { x, y, w: width, h: height };
+    const lineHeight = Math.max(20, Number(metrics.lineHeight) || LINE_HEIGHT);
+    const gutter = Math.max(24, Number(metrics.gutter) || GUTTER_WIDTH);
+    this.box = { x, y, w: width, h: height, lineHeight, gutter };
 
     const lines = text.split('\n');
-    const visibleRows = Math.max(1, Math.floor(height / LINE_HEIGHT));
-    const visibleColumns = Math.max(1, Math.floor((width - GUTTER_WIDTH) / GLYPH_WIDTH));
+    const inline = !readOnly && !tab.startsWith('__');
+    if (session.visualText !== text || session.inline !== inline) {
+      session.visualText = text;
+      session.inline = inline;
+      const hooks = inline ? sourceHookLines(text) : [];
+      session.visual = [];
+      session.lineRows = [];
+      for (let row = 0; row < lines.length; row++) {
+        for (const hook of hooks.filter((hook) => hook.row === row))
+          session.visual.push({ row, hook });
+        session.lineRows.push(session.visual.length);
+        session.visual.push({ row });
+      }
+    }
+    const visual = session.visual;
+    const visibleRows = Math.max(1, Math.floor(height / lineHeight));
+    const visibleColumns = Math.max(1, Math.floor((width - gutter) / GLYPH_WIDTH));
     if (this.focus === 'code') {
       session.start = this.input.selectionStart;
       session.end = this.input.selectionEnd;
@@ -221,32 +238,43 @@ export class CodeInput {
     const caretRow = beforeCaret.length - 1;
     const caretColumn = sourceLine(lines[caretRow]).columnAtOffset(beforeCaret.at(-1).length);
 
+    const caretVisualRow = session.lineRows[caretRow];
+
     // Follow keyboard navigation/typing, but let an explicit wheel scroll stand.
     if (session.follow) {
-      if (caretRow < session.scroll) session.scroll = caretRow;
-      else if (caretRow >= session.scroll + visibleRows)
-        session.scroll = caretRow - visibleRows + 1;
+      if (caretVisualRow < session.scroll) session.scroll = caretVisualRow;
+      else if (caretVisualRow >= session.scroll + visibleRows)
+        session.scroll = caretVisualRow - visibleRows + 1;
       if (caretColumn < session.col) session.col = caretColumn;
       else if (caretColumn >= session.col + visibleColumns)
         session.col = caretColumn - visibleColumns + 1;
       session.follow = false;
     }
-    session.scroll = Math.min(session.scroll, Math.max(0, lines.length - visibleRows));
+    session.scroll = Math.min(session.scroll, Math.max(0, visual.length - visibleRows));
 
-    const result = { rows: [], selections: [], caret: null };
-    let lineOffset = lines
-      .slice(0, session.scroll)
-      .reduce((offset, line) => offset + line.length + 1, 0);
+    const result = { rows: [], hooks: [], selections: [], caret: null };
+    const offsets = [0];
+    for (const line of lines) offsets.push(offsets.at(-1) + line.length + 1);
     const endRow = Math.min(
-      lines.length,
+      visual.length,
       session.scroll + Math.min(visibleRows + 1, MAX_VISIBLE_ROWS),
     );
-
-    for (let row = session.scroll; row < endRow; row++) {
-      const top = y + (row - session.scroll) * LINE_HEIGHT;
+    for (let vrow = session.scroll; vrow < endRow; vrow++) {
+      const { row, hook } = visual[vrow];
+      const top = y + (vrow - session.scroll) * lineHeight;
+      if (hook) {
+        result.hooks.push([
+          [x + gutter, top],
+          [Math.max(1, width - gutter), lineHeight - 1],
+          hook.name,
+          hook.kind,
+        ]);
+        continue;
+      }
+      const lineOffset = offsets[row];
       const line = lines[row];
       const mapping = sourceLine(line);
-      const textX = x + GUTTER_WIDTH;
+      const textX = x + gutter;
 
       if (
         this.focus === 'code' &&
@@ -261,7 +289,7 @@ export class CodeInput {
             : mapping.columnAtOffset(session.end - lineOffset);
         result.selections.push([
           [textX + (start - session.col) * GLYPH_WIDTH, top],
-          [Math.max(2, (end - start) * GLYPH_WIDTH), LINE_HEIGHT],
+          [Math.max(2, (end - start) * GLYPH_WIDTH), lineHeight],
         ]);
       }
 
@@ -286,13 +314,12 @@ export class CodeInput {
         String(row + 1).padStart(3, ' '),
         segments.slice(0, MAX_SEGMENTS_PER_ROW),
       ]);
-      lineOffset += line.length + 1;
     }
 
     if (this.focus === 'code' && session.start === session.end && Math.floor(now / 550) % 2 === 0) {
       result.caret = [
-        x + GUTTER_WIDTH + (caretColumn - session.col) * GLYPH_WIDTH,
-        y + (caretRow - session.scroll) * LINE_HEIGHT,
+        x + gutter + (caretColumn - session.col) * GLYPH_WIDTH,
+        y + (caretVisualRow - session.scroll) * lineHeight,
       ];
     }
     return result;

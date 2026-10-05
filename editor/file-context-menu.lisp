@@ -9,7 +9,7 @@
         y (clamp (get :context-y) 52 (- h height 32))]
     (region :context-dismiss "Close file menu" [0 50] [w (- h 80)])
     (when (and (pointer-pressed?) (hit? [0 50] [w (- h 80)])) (set! :file-context false))
-    (fill "#354239") (rect [(- x 1) (- y 1)] [(+ width 2) (+ height 2)])
+    (fill (get :ui-border)) (rect [(- x 1) (- y 1)] [(+ width 2) (+ height 2)])
     (fill (get :ui-panel)) (rect [x y] [width height])
     (region :context-panel "File actions" [x y] [width height])
     (when (menu-action :context-new "New file..." "" x (+ y 4) width true nil) (prepare-file-path))

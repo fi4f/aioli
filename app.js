@@ -1,3 +1,4 @@
+import { canvasSize } from './canvas-size.js';
 import { textOutput, textMime } from './text-generator.js';
 import { newFilePath, newFileCode } from './file-templates.js';
 import {
@@ -88,7 +89,12 @@ const outputGenerator = (programs, target, output) => {
     : (programs.find((program) => program.path === target[`${output}-generator-path`]) ??
         programs.find((program) => program.output === output));
 };
-const transientBuffers = { __palette: '', __path: 'lib/new.lisp', __hookArgs: '[]' };
+const transientBuffers = {
+  __palette: '',
+  __path: 'lib/new.lisp',
+  __hookArgs: '[]',
+  __canvasSize: '320 240',
+};
 Object.assign(sources, transientBuffers);
 const resourceRows = (sourceStore = sources, resourceStore = resources) => [
   ...Object.keys(sourceStore)
@@ -388,7 +394,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
   let draw,
     items = [],
     patch = [],
-    buffer = { rows: [], selections: [], caret: null },
+    buffer = { rows: [], hooks: [], selections: [], caret: null },
     tabs = { rows: [], before: false, after: false };
   const live = () =>
     result === runtime || result === rescueRuntime || result === activeScene?.runtime;
@@ -464,6 +470,42 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           throw new Error('Invalid game state');
         (result.applicationState ?? applicationState)[key] = value;
       },
+      'canvas-width': () => canvasSize(target)[0],
+      'canvas-height': () => canvasSize(target)[1],
+      'open-canvas-settings': actions(() => {
+        const [w, h] = canvasSize(state);
+        sources.__canvasSize = `${w} ${h}`;
+        code.forgetBuffer('__canvasSize');
+        state.window = 'canvas-settings';
+        state.menu = false;
+      }),
+      'canvas-preset': actions((w, h) => {
+        sources.__canvasSize = `${w} ${h}`;
+        code.forgetBuffer('__canvasSize');
+      }),
+      'apply-canvas-settings': actions(async () => {
+        const dimensions = sources.__canvasSize
+          .trim()
+          .split(/[x,\s]+/i)
+          .map(Number);
+        if (dimensions.length !== 2)
+          throw new Error('Enter canvas width and height, for example 640 360');
+        const settings = {
+          ...state,
+          'canvas-width': dimensions[0],
+          'canvas-height': dimensions[1],
+        };
+        canvasSize(settings);
+        const previous = [state['canvas-width'], state['canvas-height']];
+        state['canvas-width'] = settings['canvas-width'];
+        state['canvas-height'] = settings['canvas-height'];
+        if (await evaluate()) {
+          state.window = '';
+          save();
+        } else {
+          [state['canvas-width'], state['canvas-height']] = previous;
+        }
+      }),
       'screen-width': () => innerWidth,
       'screen-height': () => innerHeight,
       'edit-buffer': actions((action) => code.edit(action)),
@@ -751,7 +793,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       ),
       'back-to-hooks': actions(() => {
         assetPreview.close();
-        state.window = 'hooks';
+        state.window = '';
       }),
 
       'open-file': actions((path) => {
@@ -769,7 +811,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
             });
           openTab(state, sources, key);
           state['show-code'] = true;
-          if (innerWidth < 850) state['show-files'] = false;
+          if (innerWidth < (state['ui-narrow-width'] ?? 850)) state['show-files'] = false;
           state['file-path-editing'] = false;
           state['selected-file'] = path;
           state.window = '';
@@ -793,7 +835,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         sources[key] = normalizeSource(text);
         openTab(state, sources, key);
         state['show-code'] = true;
-        if (innerWidth < 850) state['show-files'] = false;
+        if (innerWidth < (state['ui-narrow-width'] ?? 850)) state['show-files'] = false;
         state['file-path-editing'] = false;
         state['selected-file'] = path;
         state.window = '';
@@ -924,7 +966,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         const first = Math.floor(offset / 18);
         draw.scope();
         draw.clip(origin, size);
-        draw.fill(output.error ? '#e8ac94' : target['ui-text']);
+        draw.fill(output.error ? target['ui-error'] : target['ui-text']);
         for (let i = first; i < Math.min(lines.length, first + Math.ceil(size[1] / 18) + 1); i++)
           draw.text(
             [origin[0] + 4 - ((target['text-preview-x'] ?? 0) % 8), origin[1] + i * 18 - offset],
@@ -1100,8 +1142,8 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         draw.surface(origin, size);
         const application = result.gameRuntime ?? gameRuntime;
         const scene = 'scene' in result ? result.scene : activeScene;
-        if (application) draw.composite(application.drawFrame(), origin, size);
-        if (scene) draw.composite(scene.runtime.drawFrame(), origin, size);
+        if (application) draw.composite(application.drawFrame(...canvasSize(state)), origin, size);
+        if (scene) draw.composite(scene.runtime.drawFrame(...canvasSize(state)), origin, size);
         items.push({ id: 'world', label: 'Game viewport', origin, size });
       },
       'buffer-open': (origin, size, tab) => {
@@ -1124,6 +1166,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
             text,
             tab === '__textResource' || !(tab in visibleSources()),
             performance.now(),
+            { lineHeight: target['ui-code-line-height'], gutter: target['ui-code-gutter'] },
           );
           if ((tab === '__palette' && focusPalette) || (tab === '__path' && focusPath)) {
             focusPath = false;
@@ -1136,6 +1179,11 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         }
       },
       'buffer-rows': () => buffer.rows,
+      'buffer-hooks': () => buffer.hooks,
+      'inspect-inline-hook': actions((name) => {
+        state['hook-path'] = sourcePath(code.tab);
+        inspectHook(state['hook-path'], name).catch((error) => report(error.message, true));
+      }),
       'buffer-selections': () => buffer.selections,
       'buffer-caret': () => buffer.caret,
       waveform: (origin, size, generated = false) => {
@@ -1213,6 +1261,8 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         const html = await exportHTML(
           applicationFiles(committedSources, state['editor-file-paths']).game,
           resources,
+          undefined,
+          { 'canvas-width': canvasSize(state)[0], 'canvas-height': canvasSize(state)[1] },
         );
         download(html, 'text/html', 'game.html');
       }),
@@ -1318,15 +1368,21 @@ async function evaluate({
       lifecycle,
       makeRuntime: () => candidate,
     });
+    const logicalSize = canvasSize(target);
     const makeGameRuntime = (targetState = gameTarget) => {
       let staged;
       const services = engineServices({
+        size: () => logicalSize,
         key: (key) => code.focus === 'world' && keys.has(key),
         pointer: () => {
           const viewport = regions.find((region) => region.id === 'world');
           return {
-            x: viewport ? ((pointer.x - viewport.origin[0]) * 320) / viewport.size[0] : 0,
-            y: viewport ? ((pointer.y - viewport.origin[1]) * 240) / viewport.size[1] : 0,
+            x: viewport
+              ? ((pointer.x - viewport.origin[0]) * logicalSize[0]) / viewport.size[0]
+              : 0,
+            y: viewport
+              ? ((pointer.y - viewport.origin[1]) * logicalSize[1]) / viewport.size[1]
+              : 0,
             down: code.focus === 'world' && pointer.down,
             pressed: code.focus === 'world' && pointer.pressed,
           };
@@ -1467,6 +1523,7 @@ async function evaluate({
           gameTarget[key] = value;
     // Nothing above this point replaces the running program. Draft text remains
     // editable even if validation fails; persistence only uses committedSources.
+    if (gpu) gpu.resizeScene(...logicalSize);
     state = target;
     runtime = candidate;
     gameRuntime = gameCandidate;
@@ -1487,9 +1544,13 @@ async function evaluate({
     if (imagePipeline) gpu.commitImage(imagePipeline, imageShader);
     generatedSound = nextGeneratedSound;
     generatorPrograms = nextGenerators;
+    const acceptedEditorState = { ...state };
     rescueRuntime = makeRuntime(state);
     for (const module of resolveModules(defaults, ['main']))
       rescueRuntime.load(cpuForms(module.forms));
+    Object.assign(state, acceptedEditorState);
+    document.documentElement.style.setProperty('--ui-bg', state['ui-bg'] ?? '#1e1f1c');
+    document.documentElement.style.setProperty('--ui-text', state['ui-text'] ?? '#f8f8f2');
     gameFailed = false;
     editorFailed = false;
     recovery = nextRecovery;
@@ -1677,7 +1738,10 @@ function accessibility() {
 function treeOffset(
   target,
   rows = resourceRows(),
-  capacity = Math.min(64, Math.max(1, Math.floor((innerHeight - 136) / 26))),
+  capacity = Math.min(
+    64,
+    Math.max(1, Math.floor((innerHeight - 136) / (state['ui-file-row-height'] ?? 26))),
+  ),
 ) {
   const total = projectTree(
     rows,
@@ -2059,7 +2123,10 @@ canvas.addEventListener(
         dirty = true;
         return;
       }
-      const rows = Math.min(64, Math.max(1, Math.floor(tree.size[1] / 26)));
+      const rows = Math.min(
+        64,
+        Math.max(1, Math.floor(tree.size[1] / (state['ui-file-row-height'] ?? 26))),
+      );
       const count = projectTree(
         resourceRows(),
         state['open-folders'],
@@ -2348,8 +2415,8 @@ function frame(now) {
         focusPalette = visibleWindow === 'palette';
         focusPath = visibleWindow === 'file-path';
       }
-      if (['hook-draw', 'hook-sound'].includes(state.window) && !hookPreview)
-        state.window = 'hooks';
+      if (['hook-draw', 'hook-sound', 'hooks'].includes(state.window) && !hookPreview)
+        state.window = '';
       if (state.window === 'hook-sound' && hookPreview?.resource) {
         assetPreview.open(state['preview-path'], hookPreview.resource, 'audio');
       } else if (state.window === 'image-asset' || state.window === 'audio-asset') {

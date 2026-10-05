@@ -107,7 +107,7 @@ test('v3 saves preserve extra source files and binary assets while excluding tra
     'assets/example.png': { mime: 'image/png', data: 'data:image/png;base64,AAAA' },
   };
   const snapshot = projectSnapshot(sources, { x: 7 }, resources);
-  assert.equal(snapshot.version, 18);
+  assert.equal(snapshot.version, 21);
   assert.equal(snapshot.files.__palette, undefined);
   const imported = readProject(JSON.parse(JSON.stringify(snapshot)), defaults);
   assert.equal(imported.sources['lib/helper.lisp'], sources['lib/helper.lisp']);
@@ -164,7 +164,12 @@ test('project loading and saving normalize source newlines without replacing Uni
 
 test('stock component upgrades preserve custom editor changes', () => {
   const path = 'editor/ui/buttons.lisp';
-  const old = normalizeSource(defaults[path]).split('\n; A compact pixel play glyph')[0];
+  // Reconstruct the historical stock prefix, rather than a newly themed custom subset.
+  const old = normalizeSource(defaults[path])
+    .split('\n; A compact pixel play glyph')[0]
+    .replaceAll('(get :ui-hover)', '"#252e29"')
+    .replaceAll('(get :ui-button)', '"#191f1b"')
+    .replaceAll('(get :ui-active-text)', '"#162019"');
   const stock = projectSnapshot({ ...defaults, [path]: old }, {}, {});
   assert.equal(readProject(stock, defaults).sources[path], normalizeSource(defaults[path]));
   const custom = old + '\n; My custom buttons\n';
