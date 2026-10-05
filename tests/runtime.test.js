@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parse, print, createRuntime } from '../lisp.js';
+import { cpuForms } from '../project.js';
 import { compileShader } from '../shader.js';
 import { defaults, presets } from '../examples.js';
 import { validateVoice, synthesize, wav } from '../audio.js';
@@ -12,7 +13,7 @@ function boot(keys = new Set(), existing = {}) {
     key: (k) => keys.has(k),
     voice: (...a) => voices.push(validateVoice(...a)),
   });
-  for (const name of ['game', 'audio']) r.load(parse(defaults[name]));
+  r.load(cpuForms(parse(defaults['scenes/garden.scene.lisp'])));
   return { r, state, voices };
 }
 test('reader round-trips strings, vectors, numbers, and comments', () => {
@@ -40,7 +41,7 @@ test('gameplay moves, clamps, jumps, and lands using Lisp code', () => {
 });
 test('live reload preserves shared state and function replacement', () => {
   const { r, state } = boot(new Set(), { x: 90, moon: 31 });
-  r.load(parse(defaults.game));
+  r.load(cpuForms(parse(defaults['scenes/garden.scene.lisp'])));
   assert.equal(state.x, 90);
   assert.equal(state.moon, 31);
   r.load(parse('(defn center [] (set! :x 160))'));

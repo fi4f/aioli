@@ -29,7 +29,7 @@ Publish the repository's **root** on GitHub Pages so both the app and `/docs/` a
 ## The editor is the app
 
 - `editor.lisp` imports the fullscreen workspace from `editor/`, where each pane, menu and widget has its own file.
-- `ui.lisp` imports reusable controls from `ui/`: buttons, sliders, tabs, menus, asset icons and source painting.
+- `ui/components.lisp` imports reusable controls from `ui/`: buttons, sliders, tabs, menus, asset icons and source painting.
 - The visible browser surface is one WebGPU canvas. HTML and CSS do not style or lay out editor controls.
 - `fill`, `rect`, `circle`, `line`, `text`, `translate`, `scale`, `opacity`, `blend`, and `scope` produce ordered pixel drawing operations. `clip` restricts coverage. `surface` samples the running game.
 - Buttons and sliders read pointer input and update shared state in Lisp. Widget implementations can be redefined live. `region` declares their input/accessibility bounds without creating a visible native control.
@@ -41,7 +41,7 @@ The menu bar contains **File, Project, View, Edit, About**. File manages sources
 
 1. Click the game. Move with A/D or Left/Right and jump with Space, Up, or W.
 2. Open View → Parameter tools to adjust the moon, wind, palette, glow, or sound patch. These are pixel-drawn controls defined in `editor/graphics-tools.lisp` and `editor/sound-tools.lisp`.
-3. Edit `scene` to change a per-pixel drawing program; edit `game` for gameplay and `audio` for synthesized sound.
+3. Edit `main.lisp` to choose a scene with `start-scene`. Open `scenes/garden.scene.lisp` for its CPU `update`, procedural `sound`, and WebGPU `defpixel render` hooks.
 4. Open `editor/workspace.lisp` or a pane file to change layout; open `editor/state.lisp` to change theme defaults. Each imported component can be edited live.
 5. Edit `ui` to change how buttons or sliders look and behave, or customize the source widget's syntax colors.
 
@@ -59,7 +59,7 @@ Projects export/import as JSON. Game images export as PNG. The sound tool synthe
 (import "./lib/movement.lisp")
 ```
 
-Imports resolve relative to the importing file; leading `/` means the project root. Dependencies load once, and cycles/missing files report errors. Scene files may contain ordinary CPU Lisp and an optional `scene-update` function. Only their single reachable `defpixel` hook compiles to WGSL.
+Imports resolve relative to the importing file; leading `/` means the project root. Dependencies load once, and cycles/missing files report errors. Only `main.lisp` and `editor.lisp` are entry points. Other filenames have no special loading behavior. Define `update [dt]` for CPU updates and `defpixel render [p time]` for the scene shader, inline or in imported modules. Optional `init` and `reload` hooks run on activation/reset and live edits respectively. Only the named render hook compiles to WGSL; sound and UI are ordinary CPU functions. Swappable `.scene.lisp` resources have their own hook environment; `(start-scene "scenes/bloom.scene.lisp")` stages a transition without replacing the editor. Entry and scene badges distinguish them in the file tree. Legacy projects migrate to explicit imports.
 
 **View → Image generator / Audio generator** opens a code-and-GUI window with its own preview. **Keep** adds the result to project resources; **PNG/WAV** also downloads it. The image generator has its own GPU texture, and sound settings are separate from gameplay audio. Both generator sources can import helpers.
 
@@ -84,7 +84,7 @@ Projects save as version 3 JSON containing named `files`, binary `resources`, an
 | `source-tokens.js`  | Lossless display scanning, including incomplete strings                |
 | `audio.js`          | Procedural audio mixing and WAV encoding                               |
 | `app.js`            | Native bindings, live evaluation, persistence, recovery                |
-| `project.js`        | Project-local import resolution, v3 serialization and legacy migration |
+| `project.js`        | Project-local import resolution, v5 serialization and legacy migration |
 | `generators.js`     | Stock image/audio recipes and saved command sources                    |
 | `examples.js`       | Starter scene, gameplay, and sound programs                            |
 
@@ -102,7 +102,7 @@ Tests cover the reader, gameplay, state-preserving hot reload, procedural audio/
 
 `npm run format` applies the repository's formatting conventions; `npm run format:check` verifies them. See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance.
 
-With the server running, `node tests/browser-smoke.mjs` runs headless Chromium integration checks. It requires Playwright and a browser executable; override `PLAYWRIGHT_MODULE` and `BROWSER_EXECUTABLE` for other local installations. It checks actual WebGPU rendering and compilation, verifies that only the canvas paints, edits the Lisp editor/library through keyboard input, verifies quote painting, drags a pixel slider, recovers an editor with no controls, exercises gameplay and all presets, imports/exports projects, exports WAV/PNG, and checks local persistence, documentation navigation, narrow layouts, and a simulated GitHub Pages project path. Screenshots are written to `artifacts/`. `node tests/browser-widgets.mjs` starts its own server below a repository subpath and tests named-file creation, imports, mixed scenes, saved/typed commands, independent generator previews and exports, v3 resource persistence and narrow tool windows.
+With the server running, `node tests/browser-smoke.mjs` runs headless Chromium integration checks. It requires Playwright and a browser executable; override `PLAYWRIGHT_MODULE` and `BROWSER_EXECUTABLE` for other local installations. It checks actual WebGPU rendering and compilation, verifies that only the canvas paints, edits the Lisp editor/library through keyboard input, verifies quote painting, drags a pixel slider, recovers an editor with no controls, exercises gameplay and all presets, imports/exports projects, exports WAV/PNG, and checks local persistence, documentation navigation, narrow layouts, and a simulated GitHub Pages project path. Screenshots are written to `artifacts/`. `node tests/browser-widgets.mjs` starts its own server below a repository subpath and tests named-file creation, imports, mixed scenes, saved/typed commands, independent generator previews and exports, v5 resource persistence and narrow tool windows.
 
 ## Current scope
 

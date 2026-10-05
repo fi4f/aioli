@@ -1,18 +1,21 @@
+import { game as exampleUpdate, audio as exampleSound, presets } from './examples.js';
 import { parse, isSym } from './lisp.js';
+import { editorSourceMigrations } from './editor-sources.js';
 import { normalizeSource } from './source-text.js';
 
-// The short keys keep existing editor tabs and v1/v2 projects compatible. All
-// external paths and v3 saves use actual filenames rather than these aliases.
-export const entryPaths = {
-  scene: 'scene.lisp',
+// Only these entry points are protected and loaded by the host. Legacy short
+// buffer keys still map to filenames, but they carry no loading privileges.
+export const entryPaths = { main: 'main.lisp', editor: 'editor.lisp' };
+const bufferPaths = {
+  ...entryPaths,
   game: 'game.lisp',
+  scene: 'scene.lisp',
   audio: 'audio.lisp',
   ui: 'ui.lisp',
-  editor: 'editor.lisp',
 };
-export const sourcePath = (key) => entryPaths[key] ?? key;
+export const sourcePath = (key) => bufferPaths[key] ?? key;
 export const sourceKey = (path) =>
-  Object.keys(entryPaths).find((key) => entryPaths[key] === path) ?? path;
+  Object.keys(bufferPaths).find((key) => bufferPaths[key] === path) ?? path;
 
 /** Normalize a project-local path; imports never fetch network resources. */
 export function resolvePath(path, importer = '') {
@@ -78,18 +81,68 @@ export function resolveModules(sources, roots) {
 
 export const cpuForms = (forms) =>
   forms.filter((form) => !(Array.isArray(form) && isSym(form[0], 'defpixel')));
-export function pixelHook(modules) {
+export function pixelHook(modules, name = null) {
   const hooks = modules.flatMap((module) =>
-    module.forms.filter((form) => Array.isArray(form) && isSym(form[0], 'defpixel')),
+    module.forms.filter(
+      (form) =>
+        Array.isArray(form) && isSym(form[0], 'defpixel') && (!name || isSym(form[1], name)),
+    ),
   );
   if (hooks.length !== 1)
-    throw new Error('Expected exactly one defpixel hook in this scene and its imports');
+    throw new Error(
+      name
+        ? `Expected exactly one (defpixel ${name} [p time] ...) in the application or scene and its imports`
+        : 'Expected exactly one defpixel hook in this scene and its imports',
+    );
   return hooks;
+}
+
+/** Replace a named pixel definition without reprinting surrounding CPU code.
+ * Track reader delimiters, strings and comments so parentheses in comments or
+ * shader strings cannot truncate the form. Presets keep imports and annotations.
+ */
+export function replacePixelHook(source, name, replacement) {
+  let start = -1,
+    depth = 0,
+    string = false,
+    comment = false;
+  for (let i = 0; i < source.length; i++) {
+    const character = source[i];
+    if (comment) {
+      if (character === '\n') comment = false;
+      continue;
+    }
+    if (string) {
+      if (character === '\\') i++;
+      else if (character === '"') string = false;
+      continue;
+    }
+    if (character === ';') {
+      comment = true;
+      continue;
+    }
+    if (character === '"') {
+      string = true;
+      continue;
+    }
+    if (character === '(' || character === '[') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (character === ')' || character === ']') {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        const form = parse(source.slice(start, i + 1))[0];
+        if (Array.isArray(form) && isSym(form[0], 'defpixel') && isSym(form[1], name))
+          return source.slice(0, start) + replacement + source.slice(i + 1);
+      }
+    }
+  }
+  throw new Error(`Missing defpixel ${name}`);
 }
 
 export function projectSnapshot(sources, state, resources = {}, recovery = false) {
   return {
-    version: 3,
+    version: 5,
     files: Object.fromEntries(
       Object.entries(sources)
         .filter(([key]) => !key.startsWith('__'))
@@ -105,21 +158,21 @@ export function projectSnapshot(sources, state, resources = {}, recovery = false
 export function readProject(project, defaults) {
   if (
     !project ||
-    ![1, 2, 3].includes(project.version) ||
+    ![1, 2, 3, 4, 5].includes(project.version) ||
     !project.state ||
     typeof project.state !== 'object' ||
     Array.isArray(project.state)
   )
     throw new Error('Not an aioli project');
-  const files = project.version === 3 ? project.files : project.sources;
+  const files = project.version >= 3 ? project.files : project.sources;
   if (!files || typeof files !== 'object' || Object.keys(files).length > 256)
     throw new Error('Invalid project files');
   const sources = Object.create(null);
   for (const [name, text] of Object.entries(files)) {
-    const path = resolvePath(project.version === 3 ? name : sourcePath(name));
+    const path = resolvePath(project.version >= 3 ? name : sourcePath(name));
     if (
       path.startsWith('__') ||
-      !path.endsWith('.lisp') ||
+      (!path.endsWith('.lisp') && !path.endsWith('.scene')) ||
       typeof text !== 'string' ||
       text.length > 100000
     )
@@ -130,7 +183,81 @@ export function readProject(project, defaults) {
   }
   if (project.version === 1) {
     sources.editor = defaults.editor;
-    sources.ui = defaults.ui;
+    sources.ui = defaults.ui ?? '(import "/ui/components.lisp")';
+  }
+  // v1-v3 implicitly loaded scene/audio/UI. Turn that behavior into explicit
+  // imports, retaining the old files as editable, deletable ordinary modules.
+  if (project.version < 4 && typeof sources.game === 'string') {
+    const imports = [];
+    for (const key of ['audio', 'scene']) {
+      if (typeof sources[key] === 'string') imports.push(`(import "./${sourcePath(key)}")`);
+    }
+    if (typeof sources.scene === 'string') {
+      sources.scene = sources.scene.replace(/(\(defpixel\s+)[^\s()[\]]+/, '$1render');
+      if (/\(defn\s+scene-update\s/.test(sources.scene)) {
+        sources.game = sources.game.replace(/\(defn\s+update\s/, '(defn legacy-update ');
+        sources.game += '\n(defn update [dt] (legacy-update dt) (scene-update dt))\n';
+      }
+    }
+    sources.game = imports.join('\n') + '\n' + sources.game;
+  }
+  if (project.version < 5 && typeof sources.game === 'string' && !('main' in sources)) {
+    sources.main = sources.game;
+    delete sources.game;
+    // References and workspace selections follow the renamed entry point.
+    for (const key of Object.keys(sources))
+      sources[key] = sources[key].replace(
+        /(\(import\s+")([^"\n]*?)game\.lisp("\))/g,
+        '$1$2main.lisp$3',
+      );
+    project = { ...project, state: { ...project.state } };
+    if (project.state['selected-file'] === 'game.lisp')
+      project.state['selected-file'] = 'main.lisp';
+    if (project.state.tab === 'game') project.state.tab = 'main';
+    if (typeof project.state['open-tabs'] === 'string')
+      project.state['open-tabs'] = project.state['open-tabs'].replaceAll('"game"', '"main"');
+  }
+  // Upgrade recognizable, unchanged bundled examples too. Custom scene/audio
+  // modules are never deleted merely because they use an old filename.
+  if (project.version < 5 && typeof sources.main === 'string') {
+    const oldMain = sources.main.replace(/^\(import "\.\/(audio|scene)\.lisp"\)\s*/gm, '').trim();
+    const stockScene = Object.entries(presets).find(
+      ([, text]) =>
+        sources.scene?.trim() === text.replace(/\(defpixel\s+\S+/, '(defpixel render').trim(),
+    );
+    const otherReferences = Object.entries(sources).some(
+      ([key, text]) =>
+        !['main', 'scene', 'audio'].includes(key) &&
+        /\(import\s+"[^"\n]*(scene|audio)\.lisp"/.test(text),
+    );
+    if (
+      oldMain === exampleUpdate.trim() &&
+      sources.audio?.trim() === exampleSound.trim() &&
+      stockScene &&
+      !otherReferences
+    ) {
+      const path = `scenes/${stockScene[0]}.scene.lisp`;
+      sources[path] = exampleUpdate + '\n\n' + exampleSound + '\n\n' + sources.scene;
+      sources.main = `; Application entry point.\n(start-scene "${path}")`;
+      delete sources.scene;
+      delete sources.audio;
+      project = { ...project, state: { ...project.state, 'active-scene': path } };
+      if (['scene', 'audio'].includes(project.state.tab)) project.state.tab = path;
+      if (typeof project.state['open-tabs'] === 'string')
+        project.state['open-tabs'] = project.state['open-tabs']
+          .replaceAll('"scene"', JSON.stringify(path))
+          .replaceAll('"audio"', JSON.stringify(path));
+    } else if (
+      typeof defaults['scenes/garden.scene.lisp'] === 'string' &&
+      sources.main.trim() === normalizeSource(defaults['scenes/garden.scene.lisp']).trim()
+    ) {
+      sources['scenes/garden.scene.lisp'] = sources.main;
+      sources.main = defaults.main;
+      project = {
+        ...project,
+        state: { ...project.state, 'active-scene': 'scenes/garden.scene.lisp' },
+      };
+    }
   }
   for (const key of Object.keys(entryPaths))
     if (typeof sources[key] !== 'string') throw new Error(`Missing ${sourcePath(key)}`);
@@ -144,16 +271,45 @@ export function readProject(project, defaults) {
     sources.editor = defaults.editor;
   // The stock widget library can be upgraded independently of a custom shell.
   let uiHash = 0;
-  for (const character of sources.ui.replaceAll('\r\n', '\n'))
+  for (const character of (sources.ui ?? '').replaceAll('\r\n', '\n'))
     uiHash = (Math.imul(uiHash, 31) + character.charCodeAt(0)) | 0;
   if (
     [1938375303, -1490889629, 982880566, -1492819819].includes(uiHash) ||
-    sources.ui.trim() === defaults.ui.split('; Shared window shell')[0].trim()
+    (typeof sources.ui === 'string' &&
+      typeof defaults.ui === 'string' &&
+      sources.ui.trim() === defaults.ui.split('; Shared window shell')[0].trim())
   )
-    sources.ui = defaults.ui;
+    sources.ui = defaults.ui ?? '(import "/ui/components.lisp")';
+  if (project.version < 4 && typeof sources.ui === 'string')
+    sources.editor = '(import "./ui.lisp")\n' + sources.editor;
   sources.editor = sources.editor.replace('(text [24 18] "pixel lisp")', '(text [24 18] "aioli")');
   for (const [key, value] of Object.entries(defaults))
-    if (key.includes('/') && !(key in sources)) sources[key] = normalizeSource(value);
+    if (project.version < 5 && key.includes('/') && !key.startsWith('scenes/') && !(key in sources))
+      sources[key] = normalizeSource(value);
+  // Saved projects carry their own components. Upgrade only exact known stock
+  // content, so new interactions appear without overwriting human customizations.
+  for (const [path, hashes] of Object.entries(editorSourceMigrations)) {
+    if (!(path in sources) || !(path in defaults)) continue;
+    let hash = 0;
+    for (const character of normalizeSource(sources[path]))
+      hash = (Math.imul(hash, 31) + character.charCodeAt(0)) | 0;
+    if (hashes.includes(hash)) sources[path] = normalizeSource(defaults[path]);
+  }
+  // Retire only the unchanged stock facade. Human UI code stays a normal file.
+  const stockUI =
+    typeof defaults['ui/components.lisp'] === 'string'
+      ? normalizeSource(defaults['ui/components.lisp']).replaceAll('"./', '"./ui/')
+      : undefined;
+  if (
+    project.version < 5 &&
+    typeof sources.ui === 'string' &&
+    (sources.ui.trim() === stockUI?.trim() ||
+      sources.ui.trim() === '(import "/ui/components.lisp")')
+  ) {
+    delete sources.ui;
+    for (const key of Object.keys(sources))
+      sources[key] = sources[key].replace(/(["/])ui\.lisp"/g, '$1ui/components.lisp"');
+  }
   if (Object.keys(project.state).length > 256) throw new Error('Too many state fields');
   for (const [key, value] of Object.entries(project.state)) {
     if (

@@ -196,7 +196,7 @@ export class CodeInput {
   }
 
   /**
-   * Return vectors consumed by code-editor in ui.lisp:
+   * Return vectors consumed by code-editor in ui/components.lisp:
    * rows: [[numberPosition, numberText, [[tokenPosition, tokenText, kind], ...]], ...]
    * selections: [[origin, size], ...]; caret: [x,y] or null.
    * Source must remain paintable even when the strict Lisp reader rejects it.

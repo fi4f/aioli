@@ -41,7 +41,9 @@ export function compileShader(forms, state = {}) {
   // Slot zero is time/width/height. Each state parameter gets one aligned vec4.
   function uniform(key) {
     if (!(key in state))
-      throw new Error(`Unknown shader parameter :${key}; initialize it in game.lisp`);
+      throw new Error(
+        `Unknown shader parameter :${key}; initialize it in main.lisp or the active scene`,
+      );
     if (!paramMap.has(key)) {
       if (params.length >= 63) throw new Error('Maximum 63 shader parameters');
       const kind = typeof state[key] === 'string' ? 'color' : 'scalar';

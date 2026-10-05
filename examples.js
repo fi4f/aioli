@@ -158,5 +158,11 @@ export const audio = `; A patch is an ordinary Lisp function.
            (* (get :end-pitch) 0.5)
            (get :duration)
            (* (get :volume) 0.25))))`;
-export const defaults = { scene: garden, game, audio };
+// Only two roots are special. Everything else is reached by explicit imports.
+export const defaults = {
+  main: '; Application entry: choose an ordinary scene resource.\n(start-scene "scenes/garden.scene.lisp")',
+  'scenes/garden.scene.lisp':
+    game + '\n\n' + audio + '\n\n' + garden.replace('(defpixel garden', '(defpixel render'),
+  'scenes/bloom.scene.lisp': game + '\n\n' + orb.replace('(defpixel bloom', '(defpixel render'),
+};
 export const presets = { garden, orb, plasma };

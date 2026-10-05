@@ -6,11 +6,16 @@ import { DrawList, binCommands } from '../drawing.js';
 import { resolveModules, cpuForms } from '../project.js';
 import { editorSourcePaths } from '../editor-sources.js';
 import { tabLayout } from '../code-tabs.js';
+import { generatorSources } from '../generators.js';
 import { defaults } from '../examples.js';
-const uiSource = readFileSync(new URL('../ui.lisp', import.meta.url), 'utf8');
+const uiSource = readFileSync(new URL('../ui/components.lisp', import.meta.url), 'utf8').replaceAll(
+  '\"./',
+  '\"./ui/',
+);
 const editorSource = readFileSync(new URL('../editor.lisp', import.meta.url), 'utf8');
 const sources = {
   ...defaults,
+  ...generatorSources,
   ui: uiSource,
   editor: editorSource,
   ...Object.fromEntries(
@@ -64,7 +69,7 @@ function editor(width = 1440, height = 900) {
       waveform: () => {},
     },
   });
-  r.load(parse(defaults.game));
+  r.load(cpuForms(parse(defaults['scenes/garden.scene.lisp'])));
   resolveModules(sources, ['ui', 'editor']).forEach((module) => r.load(cpuForms(module.forms)));
   return { r, state, draw, regions };
 }
@@ -74,7 +79,7 @@ test('fullscreen editor app draws pixels and defines its controls in Lisp', () =
   assert.deepEqual(draw.commands[0].bounds, [0, 0, 1440, 900]);
   assert.ok(draw.commands.some((c) => c.meta[0] === 4));
   assert.ok(draw.commands.some((c) => c.meta[0] === 3));
-  assert.ok(regions.some((r) => r.id === 'tab-ui'));
+  assert.ok(regions.some((r) => r.id === 'tab-editor'));
   assert.equal(state['show-tools'], false);
   assert.equal(typeof r.global['ui-button'], 'function');
   assert.equal(typeof r.global['code-editor'], 'function');
@@ -84,7 +89,7 @@ test('file pane and code pane share the screen without overlapping input', () =>
   state['show-files'] = true;
   r.call('editor');
   const tree = regions.find((region) => region.id === 'files-tree');
-  const scene = regions.find((region) => region.id === 'tab-scene');
+  const scene = regions.find((region) => region.id === 'tab-main');
   assert.ok(tree);
   assert.ok(scene.origin[0] >= tree.origin[0] + tree.size[0]);
   assert.equal(
@@ -157,5 +162,5 @@ test('small viewports retain the fullscreen editor and code controls', () => {
   r.call('editor');
   assert.deepEqual(draw.commands[0].bounds, [0, 0, 390, 844]);
   assert.ok(regions.find((r) => r.id === 'project').origin[0] < 100);
-  assert.ok(regions.some((r) => r.id === 'tab-scene'));
+  assert.ok(regions.some((r) => r.id === 'tab-main'));
 });

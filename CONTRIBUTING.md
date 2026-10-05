@@ -9,4 +9,4 @@ npm test
 npm run format:check
 ```
 
-Prefer Lisp changes in `editor/` for complete panes/widgets and `ui/` for reusable controls. The root `editor.lisp` and `ui.lisp` import these modules. Register new bundled source paths in `editor-sources.js` as well as adding their Lisp imports. Keep browser services in small JavaScript modules. Comment intent and invariants, use readable names and normal formatting, and document public API changes under `docs/`.
+Prefer Lisp changes in `editor/` for complete panes/widgets and `ui/` for reusable controls. The root `editor.lisp` and `ui/components.lisp` import these modules. Register new bundled source paths in `editor-sources.js` as well as adding their Lisp imports. Keep browser services in small JavaScript modules. Comment intent and invariants, use readable names and normal formatting, and document public API changes under `docs/`.

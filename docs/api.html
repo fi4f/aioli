@@ -265,9 +265,9 @@
       </p>
       <h2 id="widgets">Lisp widget library</h2>
       <p>
-        These are normal functions imported by <code>ui.lisp</code> from <code>ui/</code>, not
-        special language forms. Call them from <code>editor</code>; changing their definitions
-        changes the editor live.
+        These are normal functions imported by <code>ui/components.lisp</code> from
+        <code>ui/</code>, not special language forms. Call them from <code>editor</code>; changing
+        their definitions changes the editor live.
       </p>
       <div class="table-scroll">
         <table>
@@ -541,8 +541,8 @@
       <p>
         <code>(open-code-tab key)</code> selects or adds a buffer;
         <code>(close-code-tab key)</code> closes its tab without deleting its source. Use short keys
-        for the five entry files, or a full project path for other sources.
-        <code>(code-tabs width)</code> returns visible rows
+        for the main/editor entry files (legacy scene/audio/UI aliases remain compatible), or a full
+        project path for other sources. <code>(code-tabs width)</code> returns visible rows
         <code>[key label x-offset width draft?]</code> and updates overflow metadata.
         <code>(code-tabs-before?)</code> / <code>(code-tabs-after?)</code> query that metadata;
         <code>(scroll-code-tabs delta)</code> browses overflow.

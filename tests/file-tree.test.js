@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { projectTree, toggleFolder, assetKind } from '../file-tree.js';
+import { projectTree, toggleFolder, assetKind, isCommandFile } from '../file-tree.js';
 const files = [
   ['scene.lisp', 'lisp', 'scene'],
   ['lib/math.lisp', 'lisp', 'lib/math.lisp'],
@@ -57,4 +57,12 @@ test('asset types recognize MIME and filename extensions', () => {
   assert.equal(assetKind('sound.wav', 'asset'), 'audio');
   assert.equal(assetKind('scene.lisp', 'lisp'), 'code');
   assert.equal(assetKind('notes.bin', 'asset'), 'asset');
+});
+
+test('only Lisp files under commands receive execution controls', () => {
+  assert.equal(isCommandFile('commands/reset.lisp'), true);
+  assert.equal(isCommandFile('commands/tools/export.lisp'), true);
+  assert.equal(isCommandFile('lib/reset.lisp'), false);
+  assert.equal(isCommandFile('commands/sound.wav'), false);
+  assert.equal(isCommandFile('commands/reset.lisp', 'asset'), false);
 });

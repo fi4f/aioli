@@ -107,6 +107,14 @@ try {
   const url = `http://127.0.0.1:${server.address().port}/aioli/`;
   await page.goto(url);
   await page.waitForFunction(() => window.aioli?.running);
+  assert.deepEqual(await page.evaluate(() => JSON.parse(window.aioli.state['open-tabs'])), [
+    'main',
+    'editor',
+  ]);
+  assert.equal(
+    await page.evaluate(() => 'scene' in window.aioli.sources || 'audio' in window.aioli.sources),
+    false,
+  );
   assert.deepEqual(
     await page.evaluate(() =>
       window.aioli.regions.filter((region) => region.origin[1] === 8).map((region) => region.label),
@@ -118,6 +126,9 @@ try {
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => !window.aioli.state['show-code'] && !window.aioli.state.menu);
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
   await click('code');
   await click('edit');
   assert.equal(await page.locator('button[data-region="undo"]').isDisabled(), true);
@@ -144,7 +155,7 @@ try {
       JSON.parse(window.aioli.state['open-tabs']).includes('lib/math.lisp'),
     ),
   );
-  await click('tab-scene');
+  await click('tab-main');
   await click('tab-lib/math.lisp');
   const mathSource = await page.evaluate(() => window.aioli.sources['lib/math.lisp']);
   await click('edit');
@@ -214,10 +225,14 @@ try {
     1,
   );
 
-  await page.waitForFunction(() =>
-    JSON.parse(localStorage.getItem('aioli.project.v3')).state['open-folders'].includes(
-      'lib/actors',
-    ),
+  await page.waitForFunction(
+    () =>
+      JSON.parse(localStorage.getItem('aioli.project.v3')).state['open-folders'].includes(
+        'lib/actors',
+      ) &&
+      JSON.parse(localStorage.getItem('aioli.project.v3')).state['open-tabs'].includes(
+        'lib/actors/player.lisp',
+      ),
   );
   await page.reload();
   await page.waitForFunction(() => window.aioli?.running);
@@ -248,7 +263,7 @@ try {
   );
   assert.equal(
     await page.evaluate(() => window.aioli.regions.some((r) => r.resourcePath === 'generators')),
-    false,
+    true,
   );
   assert.equal(
     await page.evaluate(
@@ -258,9 +273,21 @@ try {
   );
   async function context(id) {
     const row = await page.evaluate((id) => window.aioli.regions.find((r) => r.id === id), id);
-    await page.mouse.click(row.origin[0] + 20, row.origin[1] + 10, { button: 'right' });
+    await page.mouse.click(row.origin[0] + Math.min(10, row.size[0] / 2), row.origin[1] + 10, {
+      button: 'right',
+    });
     await page.waitForFunction(() => window.aioli.state['file-context']);
   }
+  await context('folder-lib');
+  assert.equal(
+    await page.evaluate(() => window.aioli.regions.some((r) => r.id === 'context-delete')),
+    false,
+  );
+  await context('file-lib/math.lisp');
+  await page.waitForFunction(() => window.aioli.state['context-path'] === 'lib/math.lisp');
+  await click('context-new');
+  await page.waitForFunction(() => document.querySelector('#text-input').value === 'lib/new.lisp');
+  await page.keyboard.press('Escape');
   await context('folder-lib');
   await click('context-new');
   await page.waitForFunction(() => document.querySelector('#text-input').value === 'lib/new.lisp');
@@ -284,7 +311,7 @@ try {
   );
   // Import a large project fixture to exercise wheel scrolling and the scrollbar.
   const treeProject = await page.evaluate(() => ({
-    version: 3,
+    version: 5,
     files: Object.fromEntries(
       Object.entries(window.aioli.sources)
         .filter(([key]) => !key.startsWith('__'))
@@ -330,16 +357,22 @@ try {
   await page.waitForFunction(
     () => !window.aioli.pending && !window.aioli.sources['scroll-00.lisp'],
   );
-  await click('tab-scene');
-  const originalScene = await page.evaluate(() => window.aioli.sources.scene);
+  await click('tab-main');
+  await openFiles();
+  await click('folder-scenes');
+  await click('file-scenes/garden.scene.lisp');
+  const originalScene = await page.evaluate(() => window.aioli.sources['scenes/garden.scene.lisp']);
   await type(
-    '(import "./lib/math.lisp")\n(init! :scene-tick 0)\n(defn scene-update [dt] (set! :scene-tick (+ (get :scene-tick) dt)))\n' +
-      originalScene,
+    '(import "../lib/math.lisp")\n(init! :scene-tick 0)\n' +
+      originalScene.replace(
+        '(defn update [dt]',
+        '(defn update [dt] (set! :scene-tick (+ (get :scene-tick) dt))',
+      ),
   );
   await page.keyboard.press('Control+Enter');
   await ready();
   await page.waitForFunction(() => window.aioli.state['scene-tick'] > 0);
-  await palette('(set! :x (twice 30)) (set! :paused true)');
+  await palette('(set! :x 60) (set! :paused true)');
   await page.waitForFunction(() => window.aioli.state.x === 60 && window.aioli.state.paused);
   await page.screenshot({ path: 'artifacts/command-palette.png' });
   await type('center-player');
@@ -420,7 +453,7 @@ try {
     () => window.aioli.preview.ready && window.aioli.preview.width === 320,
   );
   assert.equal(await page.evaluate(() => window.aioli.state.window), 'image-asset');
-  assert.ok(await page.evaluate(() => window.aioli.commands.some((c) => c.meta[0] === 6)));
+  await page.waitForFunction(() => window.aioli.commands.some((c) => c.meta[0] === 6));
   const area = await page.evaluate(() =>
     window.aioli.regions.find((r) => r.id === 'asset-image-area'),
   );
@@ -468,10 +501,41 @@ try {
   await click('audio-generator');
 
   await click('close-window');
-  await palette('(create-file "commands/custom.lisp" "(set! :x 23)")');
+  await palette(
+    '(create-file "commands/custom.lisp" "(set! :x 23) (init! :command-runs 0) (set! :command-runs (+ (get :command-runs) 1))")',
+  );
   await page.waitForFunction(
     () => window.aioli.sources['commands/custom.lisp'] && !window.aioli.pending,
   );
+  await page.keyboard.press('Escape');
+  await openFiles();
+  if (
+    !(await page.evaluate(() =>
+      JSON.parse(window.aioli.state['open-folders']).includes('commands'),
+    ))
+  )
+    await click('folder-commands');
+  await click('tab-main');
+  const activeBeforeRun = await page.evaluate(() => window.aioli.state.tab);
+  await click('run-commands/custom.lisp');
+  await page.waitForFunction(
+    () => window.aioli.state.x === 23 && window.aioli.status.includes('Executed'),
+  );
+  assert.equal(await page.evaluate(() => window.aioli.state.tab), activeBeforeRun);
+  assert.equal(await page.evaluate(() => window.aioli.state.window), '');
+  await page.screenshot({ path: 'artifacts/file-commands.png' });
+  await context('run-commands/custom.lisp');
+  await page.waitForFunction(() => window.aioli.state['context-path'] === 'commands/custom.lisp');
+  await page.screenshot({ path: 'artifacts/command-context.png' });
+  await click('context-run');
+  await page.waitForFunction(
+    () => !window.aioli.state['file-context'] && window.aioli.state['command-runs'] === 2,
+  );
+  assert.equal(await page.evaluate(() => window.aioli.state.tab), activeBeforeRun);
+  await page.locator('[data-region="run-commands/custom.lisp"]').focus();
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.aioli.state['command-runs'] === 3);
+  assert.equal(await page.evaluate(() => window.aioli.state.tab), activeBeforeRun);
   await palette('');
   await type('custom');
   await click('command-commands/custom.lisp');
@@ -491,7 +555,7 @@ try {
   await click('export');
   await (await download).saveAs('artifacts/project-v3.json');
   const project = JSON.parse(await readFile('artifacts/project-v3.json', 'utf8'));
-  assert.equal(project.version, 3);
+  assert.equal(project.version, 5);
   assert.ok(project.files['lib/math.lisp']);
   assert.ok(project.resources['assets/generated.png']);
   assert.ok(project.resources['assets/generated.wav']);
@@ -501,6 +565,9 @@ try {
   assert.ok(await page.evaluate(() => window.aioli.sources['commands/custom.lisp']));
   assert.ok(await page.evaluate(() => window.aioli.resources['assets/generated.png']));
   await page.locator('#file-input').setInputFiles('artifacts/project-v3.json');
+  await page.waitForFunction(
+    () => document.querySelector('#file-input').value === '' && !window.aioli.pending,
+  );
   await ready();
   // Native resource import is a reversible project operation, with no server.
   await page
@@ -510,11 +577,11 @@ try {
   // An older/custom saved shell remains the project source in recovery. File
   // operations must not silently switch back to that shell after evaluation.
   const oldEditor = '(defn editor [] (background "#101613"))\n; custom old editor';
-  const oldUI = project.files['ui.lisp'] + '\n; custom old library';
+  const oldUI = project.files['ui/components.lisp'] + '\n; custom old library';
   const oldProject = {
     ...project,
     recovery: false,
-    files: { ...project.files, 'editor.lisp': oldEditor, 'ui.lisp': oldUI },
+    files: { ...project.files, 'editor.lisp': oldEditor, 'ui/components.lisp': oldUI },
   };
   oldProject.files['generators/audio.lisp'] =
     '(init! :sound-wave "sine") (init! :sound-pitch 440) (init! :sound-end 880) (init! :sound-duration 0.3) (init! :sound-gain 0.35)\n' +
@@ -560,7 +627,10 @@ try {
     oldEditor,
   );
   assert.equal(await page.evaluate(() => window.aioli.sources['editor-backup-1.lisp']), oldEditor);
-  assert.equal(await page.evaluate(() => window.aioli.sources['ui-backup-1.lisp']), oldUI);
+  assert.equal(
+    await page.evaluate(() => window.aioli.sources['ui/components-backup-1.lisp']),
+    oldUI,
+  );
   await openFiles();
   await click('hide-files');
   await page.reload();
@@ -603,6 +673,143 @@ try {
         region.origin[1] + region.size[1] <= 844,
     ),
   );
+  // Lifecycle hooks are independent of filenames, and unused former roots are inert.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const lifecycleGame = `(init! :hook-inits 0)
+(init! :hook-reloads 0)
+(init! :hook-ticks 0)
+(init! :radius 20)
+(defn init [] (set! :hook-inits (+ (get :hook-inits) 1)))
+(defn reload [] (set! :hook-reloads (+ (get :hook-reloads) 1)))
+(defn update [dt] (set! :hook-ticks (+ (get :hook-ticks) dt)))
+(defpixel render [p time] (background "#101613") (fill "#bbd6a6") (circle [160 120] (param :radius)))`;
+  const lifecycleProject = {
+    ...project,
+    recovery: false,
+    files: {
+      ...project.files,
+      'generators/audio.lisp': oldProject.files['generators/audio.lisp'],
+      'main.lisp': lifecycleGame,
+      'scene.lisp': '(unused-error)',
+      'audio.lisp': '(',
+    },
+    state: {
+      tab: 'main',
+      'open-tabs': '["main","editor"]',
+      'show-code': true,
+      'show-files': false,
+      paused: false,
+    },
+  };
+  await page.locator('#file-input').setInputFiles({
+    name: 'lifecycle.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(lifecycleProject)),
+  });
+  await page.waitForFunction(
+    () =>
+      !window.aioli.pending &&
+      window.aioli.state['hook-inits'] === 1 &&
+      window.aioli.state['hook-ticks'] > 0,
+  );
+  await ready();
+  assert.equal(await page.evaluate(() => window.aioli.state['hook-reloads']), 0);
+  assert.equal(await page.evaluate(() => window.aioli.primitives), 1);
+  await type(lifecycleGame + '\n; Accepted live edit');
+  await page.keyboard.press('Control+Enter');
+  await page.waitForFunction(
+    () => !window.aioli.pending && window.aioli.state['hook-reloads'] === 1,
+  );
+  assert.equal(await page.evaluate(() => window.aioli.state['hook-inits']), 1);
+  await click('reset');
+  await page.waitForFunction(
+    () => !window.aioli.pending && window.aioli.state['hook-reloads'] === 0,
+  );
+  assert.equal(await page.evaluate(() => window.aioli.state['hook-inits']), 1);
+  await palette('(delete-file "scene.lisp") (delete-file "audio.lisp")');
+  await page.waitForFunction(
+    () =>
+      !window.aioli.pending &&
+      !('scene' in window.aioli.sources) &&
+      !('audio' in window.aioli.sources),
+  );
+  await ready();
+  await page.reload();
+  await page.waitForFunction(() => window.aioli?.running);
+  assert.equal(
+    await page.evaluate(() => 'scene' in window.aioli.sources || 'audio' in window.aioli.sources),
+    false,
+  );
+  // Swap scoped scenes transactionally; a rejected shader never leaves the old scene.
+  const makeScene = (
+    tag,
+    extra = '',
+  ) => `(defn enter [] (set! :exit-before-enter (get :scene-exits)) (set! :scene-label "${tag}") (set! :scene-enters (+ (get :scene-enters) 1)))
+(defn exit [] (set! :scene-exits (+ (get :scene-exits) 1)))
+(defn update [dt] (set! :scene-clock (+ (get :scene-clock) dt)))
+(defpixel render [p time] (background "#101613") (fill "#bbd6a6") (circle [160 120] 20) ${extra})`;
+  const sceneProject = {
+    ...lifecycleProject,
+    files: {
+      ...lifecycleProject.files,
+      'main.lisp':
+        '(init! :scene-enters 0) (init! :scene-exits 0) (init! :scene-clock 0) (start-scene "scenes/a.scene.lisp")',
+      'scenes/a.scene.lisp': makeScene('A'),
+      'scenes/b.scene': makeScene('B', '(rect [10 10] [20 20])'),
+      'scenes/bad.scene.lisp': '(defpixel render [p time] (circle 3 2))',
+    },
+    state: { tab: 'main', 'show-code': true },
+  };
+  await page.locator('#file-input').setInputFiles({
+    name: 'scenes.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(sceneProject)),
+  });
+  await page.waitForFunction(
+    () => !window.aioli.pending && window.aioli.state['scene-label'] === 'A',
+  );
+  await ready();
+  await palette('(start-scene "scenes/bad.scene.lisp")');
+  await page.waitForFunction(() => !window.aioli.pending && window.aioli.error);
+  assert.equal(
+    await page.evaluate(() => window.aioli.state['active-scene']),
+    'scenes/a.scene.lisp',
+  );
+  assert.equal(await page.evaluate(() => window.aioli.state['scene-exits']), 0);
+  assert.equal(await page.evaluate(() => window.aioli.running), true);
+  await page.keyboard.press('Escape');
+  await palette('(start-scene "scenes/b.scene")');
+  await page.waitForFunction(
+    () => !window.aioli.pending && window.aioli.state['scene-label'] === 'B',
+  );
+  await ready();
+  assert.equal(await page.evaluate(() => window.aioli.state['scene-enters']), 2);
+  assert.equal(await page.evaluate(() => window.aioli.state['scene-exits']), 1);
+  assert.equal(await page.evaluate(() => window.aioli.state['exit-before-enter']), 1);
+  assert.equal(await page.evaluate(() => window.aioli.primitives), 2);
+  await page.keyboard.press('Escape');
+  await openFiles();
+  assert.equal(
+    await page.evaluate(
+      () => window.aioli.regions.find((r) => r.id === 'file-main.lisp').assetKind,
+    ),
+    'main-entry',
+  );
+  assert.equal(
+    await page.evaluate(
+      () => window.aioli.regions.find((r) => r.id === 'file-editor.lisp').assetKind,
+    ),
+    'editor-entry',
+  );
+  await page.screenshot({ path: 'artifacts/scene-entry-icons.png' });
+  await page.waitForFunction(
+    () =>
+      JSON.parse(localStorage.getItem('aioli.project.v3')).state['active-scene'] ===
+      'scenes/b.scene',
+  );
+  await page.reload();
+  await page.waitForFunction(() => window.aioli?.running);
+  assert.equal(await page.evaluate(() => window.aioli.state['active-scene']), 'scenes/b.scene');
   assert.deepEqual(errors, []);
   console.log(
     'PASS: source tabs, live component modules, image pan/zoom, audio waveform/playback/seek, named files, imports, commands, generators, persistence and narrow widgets.',

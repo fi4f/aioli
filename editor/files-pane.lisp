@@ -13,6 +13,7 @@
       (clip [(+ x 8) (+ y 36)] [(- w 16) tree-height])
       (repeat rows i
         (let [file (nth files i) path (nth file 0) folder (= (nth file 1) "folder")
+              command (command-file? path)
               id (str (if folder "folder-" "file-") path)
               indent (min (* (nth file 4) 14) (- w 100))
               rx (+ x 8 indent) ry (+ y 36 (* i 26))
@@ -28,11 +29,15 @@
               (do (line [(+ rx 2) (+ ry 7)] [(+ rx 6) (+ ry 11)] 1)
                   (line [(+ rx 6) (+ ry 11)] [(+ rx 2) (+ ry 15)] 1))))
           (asset-icon (nth file 6) (+ rx 14) (+ ry 5))
-          (fill (get :ui-text)) (text [(+ rx 36) (+ ry 5)] (nth file 3))
+          (fill (get :ui-text)) (text [(+ rx (if command 58 36)) (+ ry 5)] (nth file 3))
           (resource-region path (nth file 1) (nth file 6) origin size)
           (when (or (activated? id) (and (pointer-pressed?) (hit? origin size)))
             (if folder (toggle-folder path)
-              (do (set! :selected-file path) (open-file path))))))
+              (do (set! :selected-file path) (open-file path))))
+          ; This child region takes pointer priority over the file-opening row.
+          (when command
+            (when (ui-run-button (str "run-" path) (str "Run " path) (+ rx 32) ry)
+              (run-command path)))))
       (when (> total capacity)
         (let [track (* capacity 26) thumb (max 18 (* track (/ capacity total)))
               offset (project-tree-offset) limit (- total capacity)

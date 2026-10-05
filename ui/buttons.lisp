@@ -13,3 +13,15 @@
   (when (ui-button (str "tab-" id) caption [x 58] [70 32]
                    (= active id))
     (set! :tab id)))
+
+; A compact pixel play glyph with a full accessible label.
+(defn ui-run-button [id label x y]
+  (let [origin [x y] size [20 24]]
+    (fill (if (or (hit? origin size) (focused? id)) "#344339" (get :ui-panel)))
+    (rect origin size)
+    (fill (get :ui-accent))
+    (line [(+ x 5) (+ y 6)] [(+ x 5) (+ y 17)] 1)
+    (line [(+ x 5) (+ y 6)] [(+ x 13) (+ y 12)] 1)
+    (line [(+ x 13) (+ y 12)] [(+ x 5) (+ y 17)] 1)
+    (region id label origin size)
+    (or (activated? id) (and (pointer-pressed?) (hit? origin size)))))

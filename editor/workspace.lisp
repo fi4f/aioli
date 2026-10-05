@@ -1,5 +1,5 @@
 ; Fullscreen workspace composition; panes are independent imported Lisp files.
-(import "../ui.lisp")
+(import "../ui/components.lisp")
 (import "./state.lisp")
 (import "./code-pane.lisp")
 (import "./game-pane.lisp")

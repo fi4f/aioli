@@ -1,4 +1,4 @@
-import { parse, createRuntime } from './lisp.js';
+import { parse, print, createRuntime } from './lisp.js';
 import { compileShader } from './shader.js';
 import { defaults as examples, presets } from './examples.js';
 import { validateVoice, synthesize, wav } from './audio.js';
@@ -8,8 +8,9 @@ import { CodeInput } from './code-input.js';
 import { editorSourcePaths } from './editor-sources.js';
 import { openTab, closeTab, renameTab, tabLayout } from './code-tabs.js';
 import { AssetPreview } from './asset-preview.js';
+import { stageScene, callHook, callLifecycle, isScenePath } from './scenes.js';
 import { normalizeSource } from './source-text.js';
-import { assetKind, projectTree, toggleFolder } from './file-tree.js';
+import { assetKind, isCommandFile, projectTree, toggleFolder } from './file-tree.js';
 import { generatorSources } from './generators.js';
 import {
   entryPaths,
@@ -19,6 +20,7 @@ import {
   resolveModules,
   cpuForms,
   pixelHook,
+  replacePixelHook,
   projectSnapshot,
   readProject,
 } from './project.js';
@@ -26,6 +28,7 @@ import {
 /** Browser services for the Lisp editor; appearance and layout stay in Lisp. */
 const $ = (id) => document.getElementById(id),
   canvas = $('app'),
+  // Retain the storage key so earlier local projects migrate in place.
   storageKey = 'aioli.project.v3';
 // Resolve against this module, not the domain root, for GitHub Pages subpaths.
 async function loadBundledSource(filename) {
@@ -36,7 +39,6 @@ async function loadBundledSource(filename) {
 const defaults = {
   ...examples,
   editor: await loadBundledSource('editor.lisp'),
-  ui: await loadBundledSource('ui.lisp'),
   ...generatorSources,
   ...Object.fromEntries(
     await Promise.all(editorSourcePaths.map(async (path) => [path, await loadBundledSource(path)])),
@@ -49,15 +51,14 @@ const transientBuffers = { __palette: '', __path: 'lib/new.lisp' };
 Object.assign(sources, transientBuffers);
 const resourceRows = (sourceStore = sources, resourceStore = resources) => [
   ...Object.keys(sourceStore)
-    .filter(
-      (key) =>
-        !key.startsWith('__') && !['generators/image.lisp', 'generators/audio.lisp'].includes(key),
-    )
+    .filter((key) => !key.startsWith('__'))
     .map((key) => [sourcePath(key), 'lisp', key]),
   ...Object.keys(resourceStore).map((path) => [path, 'asset', path, resourceStore[path].mime]),
 ];
 let state = Object.create(null),
   runtime,
+  activeScene = null,
+  sceneTime = 0,
   rescueRuntime,
   compiled,
   gpu,
@@ -100,7 +101,7 @@ const guide = `AIOLI / all in one lisp
 
 The editor is an aioli app.
 Edit editor.lisp for layout and behavior.
-Edit ui.lisp for button and slider implementations.
+Edit ui/components.lisp for button and slider implementations.
 Every visible element is a WebGPU pixel primitive.
 
 Ctrl/Cmd+Enter  Evaluate all programs
@@ -137,7 +138,7 @@ compile into WGSL. (param :key) reads shared state.
 The editor emits an ordered drawing stream that
 WebGPU evaluates per pixel on a fullscreen quad.
 
-Widgets in ui.lisp are ordinary Lisp functions.
+Widgets in ui/components.lisp are ordinary Lisp functions.
 You can change their shape, colors, layout, and
 interaction logic while the app is running.
 
@@ -272,7 +273,8 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
     patch = [],
     buffer = { rows: [], selections: [], caret: null },
     tabs = { rows: [], before: false, after: false };
-  const live = () => result === runtime || result === rescueRuntime;
+  const live = () =>
+    result === runtime || result === rescueRuntime || result === activeScene?.runtime;
   // Candidate queries must describe the imported/draft project before commit.
   const visibleSources = () => (live() ? sources : candidateSources);
   const visibleResources = () => (live() ? resources : candidateResources);
@@ -281,6 +283,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
     (fn) =>
     (...args) => {
       if (live()) defer(() => fn(...args));
+      else if (result.captureActions) result.pendingActions.push(() => fn(...args));
     };
   const result = createRuntime(target, {
     budget: 100000,
@@ -324,19 +327,34 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       'edit-buffer': actions((action) => code.edit(action)),
       'can-edit-buffer?': (action) => code.canEdit(action),
       'prepare-file-path': actions((rename = false) => {
-        const folder = state['context-kind'] === 'folder' ? state['context-path'] + '/' : '';
+        const contextPath = state['context-path'] ?? '';
+        const folder =
+          state['context-kind'] === 'folder'
+            ? contextPath + '/'
+            : state['context-kind'] === 'file'
+              ? contextPath.slice(0, contextPath.lastIndexOf('/') + 1)
+              : '';
         sources.__path = rename ? state['selected-file'] : folder + 'new.lisp';
         state['file-operation'] = rename ? 'rename' : 'create';
         state['file-path-editing'] = false;
         state['file-context'] = false;
         state.window = 'file-path';
       }),
+      // During staging this selects the initial scene; live calls request a
+      // transactional transition. The previous scene survives rejected edits.
+      'start-scene': (path = '') => {
+        path = path ? resolvePath(path) : '';
+        if (path && !isScenePath(path)) throw new Error('Expected a .scene.lisp or .scene path');
+        if (live()) defer(() => evaluate({ scene: path }));
+        else result.initialScene = path;
+      },
+      'active-scene': () => target['active-scene'] ?? '',
+      'command-file?': (path) => isCommandFile(path) && sourceKey(path) in visibleSources(),
       'selected-file?': () =>
         sourceKey(target['selected-file'] ?? '') in sources ||
         (target['selected-file'] ?? '') in resources,
       'selected-file-removable?': () =>
         !Object.values(entryPaths).includes(target['selected-file']) &&
-        !Object.keys(generatorSources).includes(target['selected-file']) &&
         (sourceKey(target['selected-file'] ?? '') in sources ||
           (target['selected-file'] ?? '') in resources),
       'open-recovery': actions(() => enterRecovery()),
@@ -417,7 +435,8 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         if (path.startsWith('__'))
           throw new Error('Names beginning with __ are reserved for input buffers');
         const key = sourceKey(path);
-        if (!path.endsWith('.lisp')) throw new Error('Source files must end in .lisp');
+        if (!path.endsWith('.lisp') && !isScenePath(path))
+          throw new Error('Source files must end in .lisp');
         if (key in sources || path in resources) throw new Error(`File already exists: ${path}`);
         if (Object.keys(sources).length >= 258) throw new Error('Maximum 256 source files');
         if (typeof text !== 'string' || text.length > 100000)
@@ -436,17 +455,15 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         newPath = resolvePath(newPath);
         if (newPath.startsWith('__'))
           throw new Error('Names beginning with __ are reserved for input buffers');
-        if (
-          Object.values(entryPaths).includes(oldPath) ||
-          Object.keys(generatorSources).includes(oldPath)
-        )
-          throw new Error('Keep entry, generator and stock command filenames stable');
+        if (Object.values(entryPaths).includes(oldPath))
+          throw new Error('Keep main and editor entry filenames stable');
         const oldKey = sourceKey(oldPath),
           newKey = sourceKey(newPath);
         if (newKey in sources || newPath in resources)
           throw new Error('Destination already exists');
         if (oldKey in sources) {
-          if (!newPath.endsWith('.lisp')) throw new Error('Source files must end in .lisp');
+          if (!newPath.endsWith('.lisp') && !isScenePath(newPath))
+            throw new Error('Source files must end in .lisp');
           sources[newKey] = sources[oldKey];
           delete sources[oldKey];
           renameTab(state, sources, oldKey, newKey);
@@ -463,11 +480,8 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       }),
       'delete-file': actions((path) => {
         path = resolvePath(path);
-        if (
-          Object.values(entryPaths).includes(path) ||
-          Object.keys(generatorSources).includes(path)
-        )
-          throw new Error('Entry and stock generator/command files cannot be deleted');
+        if (Object.values(entryPaths).includes(path))
+          throw new Error('Main and editor entry files cannot be deleted');
         const key = sourceKey(path);
         closeTab(state, sources, key);
         code.forgetBuffer(key);
@@ -643,7 +657,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       'upgrade-editor': actions(async () => {
         // Keep custom shell/library sources as ordinary root-level files so any
         // relative imports still resolve if a contributor opens the backups.
-        const editorKeys = ['editor', 'ui', ...editorSourcePaths];
+        const editorKeys = ['editor', ...editorSourcePaths];
         const backups = editorKeys.filter(
           (key) => key in sources && sources[key] !== defaults[key],
         );
@@ -687,12 +701,22 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       }),
       'next-scene': actions(() => {
         const options = Object.values(presets),
-          i = options.indexOf(sources.scene);
-        sources.scene = options[(i + 1) % options.length];
+          i = state['preset-index'] ?? 0;
+        const module = resolveModules(sources, [activeScene?.path ?? 'main']).find((m) =>
+          m.forms.some(
+            (f) => Array.isArray(f) && f[0]?.name === 'defpixel' && f[1]?.name === 'render',
+          ),
+        );
+        const key = sourceKey(module.path);
+        const next = parse(options[(i + 1) % options.length])[0];
+        next[1] = parse('render')[0];
+        sources[key] = replacePixelHook(sources[key], 'render', print(next));
+        state['preset-index'] = (i + 1) % options.length;
         evaluate();
       }),
     },
   });
+  result.pendingActions = [];
   result.drawEditor = () => {
     draw = new DrawList(innerWidth, innerHeight);
     items = [];
@@ -705,20 +729,23 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
   };
   result.collectSound = () => {
     patch = [];
-    result.call('sound');
-    if (!patch.length) throw new Error('sound must produce at least one voice');
+    if (typeof result.global.sound === 'function') result.call('sound');
     return patch;
   };
   result.collectGeneratedSound = () => {
     patch = [];
-    result.call('generate-sound');
-    if (!patch.length) throw new Error('generate-sound must produce at least one voice');
+    if (typeof result.global['generate-sound'] === 'function') result.call('generate-sound');
     return patch;
   };
   return result;
 }
 /** Stage all sources and a GPU pipeline, then commit only the newest valid edit. */
-async function evaluate({ reset = false, imported = null, exitRecovery = false } = {}) {
+async function evaluate({
+  reset = false,
+  imported = null,
+  exitRecovery = false,
+  scene = undefined,
+} = {}) {
   const id = ++revision;
   pending = true;
   message = 'Evaluating…';
@@ -733,32 +760,59 @@ async function evaluate({ reset = false, imported = null, exitRecovery = false }
     const nextRecovery = !exitRecovery && (imported?.recovery ?? (recovery && !editorChanged));
     const target = Object.assign(Object.create(null), imported?.state ?? (reset ? {} : state));
     const candidate = makeRuntime(target, candidateSources, imported?.resources ?? resources);
-    for (const module of resolveModules(candidateSources, [
-      'game',
-      'ui',
-      'editor',
-      'audio',
-      'scene',
-      'generators/image.lisp',
-      'generators/audio.lisp',
-    ]))
+    const modules = resolveModules(candidateSources, ['main', 'editor']);
+    for (const module of modules)
       try {
         candidate.load(cpuForms(module.forms));
       } catch (e) {
         throw new Error(`${module.path}: ${e.message}`);
       }
-    candidate.call('update', 0);
+    // init runs on project activation/reset; reload runs on accepted live edits.
+    const lifecycle = !runtime || imported || reset ? 'init' : 'reload';
+    if (scene === undefined) callLifecycle(candidate, lifecycle);
+    if (typeof candidate.global.update === 'function') candidate.call('update', 0);
+    const scenePath = scene ?? target['active-scene'] ?? candidate.initialScene ?? '';
+    const sceneChanged = scenePath !== (activeScene?.path ?? '') || reset || !!imported;
+    // Run exit against staged state too: a failed shader must not leave the old
+    // scene or leak its cleanup effects. Exit precedes the incoming init/enter.
+    const outgoing =
+      sceneChanged && activeScene && typeof activeScene.runtime.global.exit === 'function'
+        ? stageScene(committedSources, activeScene.path, candidate, () =>
+            makeRuntime(target, committedSources, resources),
+          )
+        : null;
+    callLifecycle(outgoing?.runtime, 'exit');
+    const nextScene = scenePath
+      ? stageScene(candidateSources, scenePath, candidate, () =>
+          makeRuntime(target, candidateSources, imported?.resources ?? resources),
+        )
+      : null;
+    target['active-scene'] = scenePath;
+    if (nextScene) {
+      callLifecycle(nextScene.runtime, sceneChanged || !activeScene ? 'init' : 'reload');
+      if (sceneChanged || !activeScene) callLifecycle(nextScene.runtime, 'enter');
+      callHook(nextScene.runtime, 'update', 0);
+    }
     candidate.drawEditor();
     candidate.collectSound();
-    if (typeof candidate.global['scene-update'] === 'function') candidate.call('scene-update', 0);
-    const shader = compileShader(pixelHook(resolveModules(candidateSources, ['scene'])), target),
+    const shader = compileShader(
+        nextScene?.render ?? pixelHook(resolveModules(candidateSources, ['main']), 'render'),
+        target,
+      ),
       imageShader = compileShader(
-        pixelHook(resolveModules(candidateSources, ['generators/image.lisp'])),
+        modules.some((module) =>
+          module.forms.some((form) => form[0]?.name === 'defpixel' && form[1]?.name === 'image'),
+        )
+          ? pixelHook(modules, 'image')
+          : parse('(defpixel image [p time] (background "#000000"))'),
         target,
       ),
       pipeline = gpu ? await gpu.prepare(shader) : null,
       imagePipeline = gpu ? await gpu.prepare(imageShader) : null;
-    const nextGeneratedSound = synthesize(candidate.collectGeneratedSound());
+    const generatedPatch = candidate.collectGeneratedSound();
+    const nextGeneratedSound = generatedPatch.length
+      ? synthesize(generatedPatch)
+      : new Float32Array(4410);
     if (id !== revision) return;
     // Preserve state updates that happened while the GPU was compiling.
     if (!reset && !imported)
@@ -768,6 +822,8 @@ async function evaluate({ reset = false, imported = null, exitRecovery = false }
     // editable even if validation fails; persistence only uses committedSources.
     state = target;
     runtime = candidate;
+    activeScene = nextScene;
+    if (sceneChanged) sceneTime = 0;
     compiled = shader;
     for (const key of Object.keys(sources)) if (!key.startsWith('__')) delete sources[key];
     Object.assign(sources, candidateSources);
@@ -777,12 +833,14 @@ async function evaluate({ reset = false, imported = null, exitRecovery = false }
     if (imagePipeline) gpu.commitImage(imagePipeline, imageShader);
     generatedSound = nextGeneratedSound;
     rescueRuntime = makeRuntime(state);
-    for (const module of resolveModules(defaults, ['ui', 'editor']))
+    for (const module of resolveModules(defaults, ['editor']))
       rescueRuntime.load(cpuForms(module.forms));
     gameFailed = false;
     editorFailed = false;
     recovery = nextRecovery;
     refreshAudio(true);
+    for (const program of [candidate, outgoing?.runtime, nextScene?.runtime])
+      for (const action of program?.pendingActions ?? []) defer(action);
     if (save()) report(gpuFailure || 'Saved', Boolean(gpuFailure));
     return true;
   } catch (e) {
@@ -795,14 +853,16 @@ function refreshAudio(force = false) {
   const generatedPatch = runtime.collectGeneratedSound();
   const generatedSignature = JSON.stringify(generatedPatch);
   if (force || generatedSignature !== refreshAudio.generatedSignature) {
-    generatedSound = synthesize(generatedPatch);
+    generatedSound = generatedPatch.length ? synthesize(generatedPatch) : new Float32Array(4410);
     refreshAudio.generatedSignature = generatedSignature;
   }
-  const patch = runtime.collectSound(),
+  const patch = (
+      typeof activeScene?.runtime.global.sound === 'function' ? activeScene.runtime : runtime
+    ).collectSound(),
     signature = JSON.stringify(patch);
   if (!force && signature === audioSignature) return;
   voices = patch;
-  samples = synthesize(voices);
+  samples = voices.length ? synthesize(voices) : new Float32Array(4410);
   audioSignature = signature;
 }
 async function activateAudio() {
@@ -873,7 +933,7 @@ async function storeGenerated(path, blob, shouldDownload) {
 async function exportGeneratedImage(path, shouldDownload) {
   if (!gpu || !lastDraw) throw new Error('WebGPU is unavailable');
   // Submit current GUI parameters before reading back, even between frames.
-  gpu.draw(lastDraw, time, state);
+  gpu.draw(lastDraw, activeScene ? sceneTime : time, state);
   await storeGenerated(path, await gpu.snapshot(true), shouldDownload);
 }
 async function exportGeneratedSound(path, shouldDownload) {
@@ -952,13 +1012,23 @@ function openFileContext(row, x, y) {
   keys.clear();
   canvas.focus({ preventScroll: true });
 }
-canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+function fileRegionAt(x, y) {
+  // Ignore the existing context backdrop so right-click can change its target.
+  // Child action buttons inherit their containing resource row's context.
+  return regions.findLast(
+    (row) => (row.resourcePath || row.id === 'files-tree') && inBox(x, y, row.origin, row.size),
+  );
+}
+canvas.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  openFileContext(fileRegionAt(e.clientX, e.clientY), e.clientX, e.clientY);
+});
 canvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   pointer.x = e.clientX;
   pointer.y = e.clientY;
   if (e.button === 2) {
-    openFileContext(topRegion(pointer.x, pointer.y), pointer.x, pointer.y);
+    openFileContext(fileRegionAt(pointer.x, pointer.y), pointer.x, pointer.y);
     return;
   }
   if (e.button !== 0) return;
@@ -1174,7 +1244,7 @@ $('resource-input').onchange = async (event) => {
       if (sourceKey(path) in sources || path in resources)
         throw new Error(`File already exists: ${path}`);
       if (file.size > 6000000) throw new Error('Resource exceeds 6MB');
-      if (path.endsWith('.lisp')) {
+      if (path.endsWith('.lisp') || isScenePath(path)) {
         if (Object.keys(sources).filter((key) => !key.startsWith('__')).length >= 256)
           throw new Error('Maximum 256 source files');
         const text = await file.text();
@@ -1203,8 +1273,9 @@ function frame(now) {
     try {
       if (!state.paused && !gameFailed) {
         time += dt;
-        runtime.call('update', dt);
-        if (typeof runtime.global['scene-update'] === 'function') runtime.call('scene-update', dt);
+        callHook(runtime, 'update', dt);
+        callHook(activeScene?.runtime, 'update', dt);
+        sceneTime += dt;
       }
     } catch (e) {
       gameFailed = true;
@@ -1242,7 +1313,7 @@ function frame(now) {
       report(`Editor: ${e.message}. Press F2 for recovery.`, true);
     }
     try {
-      if (gpu && lastDraw) gpu.draw(lastDraw, time, state);
+      if (gpu && lastDraw) gpu.draw(lastDraw, activeScene ? sceneTime : time, state);
     } catch (e) {
       report(`Drawing: ${e.message}`, true);
     }

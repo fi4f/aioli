@@ -22,6 +22,9 @@ export function toggleFolder(value, path) {
  */
 export function assetKind(path, kind, mime = '') {
   mime = typeof mime === 'string' ? mime : '';
+  if (kind === 'lisp' && path === 'main.lisp') return 'main-entry';
+  if (kind === 'lisp' && path === 'editor.lisp') return 'editor-entry';
+  if (kind === 'lisp' && /\.scene(?:\.lisp)?$/.test(path)) return 'scene';
   if (kind === 'lisp') return 'code';
   if (mime.startsWith('image/')) return 'image';
   if (mime.startsWith('audio/')) return 'audio';
@@ -61,4 +64,9 @@ export function projectTree(files, value) {
   }
   visit(root, 0);
   return rows;
+}
+
+/** Commands are editable Lisp sources under commands/, including subfolders. */
+export function isCommandFile(path, kind = 'lisp') {
+  return kind === 'lisp' && typeof path === 'string' && /^commands\/.+\.lisp$/.test(path);
 }

@@ -36,18 +36,18 @@
         Right-click a file, folder or empty tree area for file actions. Shift+F10 opens the selected
         file's menu. New file, Import resource, Download, Rename and Delete are also under File. New
         file and Rename open a filename dialog. Use slash-separated paths such as
-        <code>lib/math.lisp</code>. New file on a folder starts inside that folder. Create starts
-        with a commented module. Import accepts local Lisp, image and audio files under
-        <code>assets/</code> and never overwrites existing paths. Rename does not rewrite imports:
-        update references yourself. If evaluation fails, the working program continues while you
-        repair the draft.
+        <code>lib/math.lisp</code>. New file on a folder starts inside that folder; on a file, it
+        starts beside that file. Create starts with a commented module. Import accepts local Lisp,
+        image and audio files under <code>assets/</code> and never overwrites existing paths. Rename
+        does not rewrite imports: update references yourself. If evaluation fails, the working
+        program continues while you repair the draft.
       </p>
       <p>
-        The initial tabs open entry files: <code>scene.lisp</code>, <code>game.lisp</code>,
-        <code>audio.lisp</code>, <code>ui.lisp</code> and <code>editor.lisp</code>. Entry and stock
-        generator filenames cannot be renamed or deleted. Built-in generator recipes belong to their
-        widgets; they are retained in project saves but omitted from the file tree. Generated assets
-        appear in the tree like other resources.
+        Only <code>main.lisp</code> and <code>editor.lisp</code> are entry files. New projects open
+        these two tabs. These two filenames are protected; all other source files are ordinary
+        modules that can be renamed or deleted after updating their imports. The generator widget
+        imports its recipes like any other component. Older projects retain scene, audio and UI
+        files through explicit imports, preserving their code without requiring those filenames.
       </p>
       <h2 id="previews">Asset previews</h2>
       <p>
@@ -66,7 +66,7 @@
         error appears inside the window and leaves the editor usable.
       </p>
       <h2 id="imports">Import resolution</h2>
-      <pre><code>; game.lisp
+      <pre><code>; main.lisp
 (import "./lib/movement.lisp")
 (defn update [dt]
   (move-player dt))</code></pre>
@@ -90,28 +90,85 @@
         from an entry are loaded automatically. An unused library or command file is retained in the
         project without being executed.
       </p>
-      <h2 id="scenes">A scene is ordinary Lisp with one pixel hook</h2>
-      <pre><code>(import "./lib/math.lisp")
-(init! :scene-radius 20)
+      <h2 id="scenes">Application lifecycle hooks</h2>
+      <pre><code>; main.lisp: CPU and GPU code can share a file.
+(init! :radius 20)
 
-; Optional CPU hook, called after gameplay update when the game is not paused.
-(defn scene-update [dt]
-  (set! :scene-radius (clamp (+ (get :scene-radius) dt) 20 60)))
+; Optional CPU update hook, in seconds, while unpaused.
+(defn update [dt]
+  (set! :radius (clamp (+ (get :radius) dt) 20 60)))
 
-; Only this form is compiled to WGSL.
-(defpixel scene [p time]
+; Required render hook: compiled into a WebGPU fragment program.
+(defpixel render [p time]
   (background "#101613")
   (fill "#bbd6a6")
-  (circle [160 120] (param :scene-radius)))</code></pre>
+  (circle [160 120] (param :radius)))</code></pre>
       <p>
-        The scene and its imports must contain exactly one <code>defpixel</code>. It may live in a
-        separate render file. Top-level <code>init!</code>, <code>defn</code> and ordinary CPU
-        expressions evaluate in the shared environment. The optional
-        <code>scene-update [dt]</code> runs beside <code>update [dt]</code>; both receive a
-        zero-duration validation call. CPU functions are callable by other CPU functions and
-        commands, but are not callable inside <code>defpixel</code>. Pass values into the pixel hook
-        through <code>param</code>. The <a href="language.html#shaders">shader subset</a> still
-        applies inside that hook.
+        Without an active scene, the main import graph must define exactly one
+        <code>defpixel render</code>. It can live in an imported file; the filename has no special
+        meaning. Only this hook compiles to the scene shader. CPU forms run normally.
+        <code>p</code> is the pixel position and <code>time</code> is elapsed game time. Pass shared
+        state to the GPU through <code>param</code>. The
+        <a href="language.html#shaders">shader subset</a> applies inside the render hook.
+      </p>
+      <p>
+        Optional <code>(defn init [] ...)</code> runs on initial project activation, import and
+        reset. Optional <code>(defn reload [] ...)</code> runs when live edits are accepted.
+        <code>update [dt]</code> receives a zero-duration validation call and then a call each
+        unpaused frame. Use top-level <code>init!</code> for state that should survive live edits.
+        Optional <code>(defn sound [] ...)</code> produces gameplay audio; without it, audio is
+        silent. These functions can be defined anywhere reachable from the entry points. The
+        editor's CPU drawing hook remains <code>(defn editor [] ...)</code>.
+      </p>
+      <p>
+        Version 5 saves require only the two entry files. Older projects automatically gain explicit
+        imports for their previous scene/audio/UI modules. Legacy scene updates are called from an
+        update wrapper; the existing pixel hook becomes <code>render</code>. Version 4 projects
+        rename their application entry from <code>game.lisp</code> to <code>main.lisp</code>.
+        Customized legacy modules are kept. Unreferenced files do not execute, and version 5 loading
+        does not recreate deleted modules.
+      </p>
+      <h2 id="scene-resources">Swappable scene resources</h2>
+      <pre><code>; main.lisp: application entry point
+(start-scene "scenes/menu.scene.lisp")
+
+; Later, from an update function or command:
+(start-scene "scenes/level-one.scene.lisp")</code></pre>
+      <pre><code>; scenes/menu.scene.lisp
+(init! :menu-time 0)
+(defn enter [] (set! :menu-time 0))
+(defn update [dt]
+  (set! :menu-time (+ (get :menu-time) dt)))
+(defn exit [] (set! :menu-time 0))
+(defpixel render [p time]
+  (background "#101613")
+  (fill "#bbd6a6")
+  (circle [160 120] (+ 20 (* 4 (sin time)))))</code></pre>
+      <p>
+        Scenes use <code>.scene.lisp</code> (recommended) or <code>.scene</code>. Paths passed to
+        <code>start-scene</code> resolve from the project root. Each scene has its own function
+        environment and imports, so scenes can reuse hook names without replacing application or
+        editor functions. Shared project state is accessible with
+        <code>get</code>/<code>set!</code>; choose distinct state keys or clear scene-specific state
+        in <code>exit</code>. Application helpers are available in scenes; scene functions stay
+        private to their scene.
+      </p>
+      <p>
+        The outgoing scene's <code>exit []</code> precedes the incoming scene's
+        <code>init []</code> and <code>enter []</code>. An active scene's
+        <code>update [dt]</code> runs after the application update, and its required
+        <code>defpixel render</code> becomes the preview's WebGPU pipeline. Live edits call
+        <code>reload []</code> while retaining state. Optional scene <code>sound []</code> supplies
+        audio; otherwise application audio is used. Shader time starts at zero on scene entry. The
+        selected scene is saved with the project.
+      </p>
+      <p>
+        Transitions stage state, lifecycle hooks and GPU compilation before committing. Failed
+        transitions leave the current scene running. Browser actions requested by lifecycle hooks
+        run after acceptance. An unselected scene file does not execute. Main may also render
+        directly without scenes; <code>(start-scene "")</code> leaves the active scene and uses
+        main's render hook. <code>(active-scene)</code> returns the active path or an empty string.
+        The editor continues running across scene changes.
       </p>
       <h2 id="generators">Image and audio generators</h2>
       <p>
@@ -154,11 +211,12 @@
 (export-sound "assets/chime.wav")</code></pre>
       <p>
         Create a file such as <code>commands/reset-player.lisp</code> to add your own saved command.
-        These programs run explicitly rather than during normal live evaluation. Commands share the
-        active CPU functions and state and can import helpers relative to <code>commands/</code>.
-        Typed programs resolve imports as though they are in that directory too. Use
-        <code>set!</code> for immediate state edits, or <code>reset-project</code> to rebuild all
-        state from defaults.
+        Click the small play button beside its explorer icon to run it without opening a code tab,
+        or choose Run command from its right-click menu. Nested command folders work too. These
+        programs run explicitly rather than during normal live evaluation. Commands share the active
+        CPU functions and state and can import helpers relative to <code>commands/</code>. Typed
+        programs resolve imports as though they are in that directory too. Use <code>set!</code> for
+        immediate state edits, or <code>reset-project</code> to rebuild all state from defaults.
       </p>
       <p>
         Each loaded module uses the normal evaluation budget. Execution is sequential: effects
@@ -200,8 +258,8 @@
                 <code>(rename-file old-path new-path)</code><br /><code>(delete-file path)</code>
               </td>
               <td>
-                Move or remove a project resource. Entry and stock filenames are protected. Rename
-                keeps imports unchanged.
+                Move or remove a project resource. Only main/editor entry filenames are protected.
+                Rename keeps imports unchanged.
               </td>
             </tr>
             <tr>
@@ -250,6 +308,12 @@
               <td>Run a saved command or the current palette program.</td>
             </tr>
             <tr>
+              <td><code>(command-file? path)</code></td>
+              <td>
+                Whether a source exists under <code>commands/</code>, including nested folders.
+              </td>
+            </tr>
+            <tr>
               <td><code>(path-input)</code></td>
               <td>
                 Current transient filename dialog input. Input buffer names beginning with
@@ -261,10 +325,14 @@
       </div>
       <h2 id="recovery">Keeping the current editor</h2>
       <p>
+        Unmodified bundled editor components upgrade automatically when a saved project loads.
+        Customized components keep their source; use the recovery shell to adopt the latest widgets.
+      </p>
+      <p>
         F2 opens the latest recovery shell without replacing your project’s editor source. Creating
         or renaming files, editing gameplay or generators, and resetting state keep that shell
         active, including after reload. Accepting an edit to <code>editor.lisp</code> or
-        <code>ui.lisp</code> returns to the project editor.
+        <code>ui/components.lisp</code> returns to the project editor.
       </p>
       <p>
         In recovery, <strong>Use latest editor</strong> adopts the bundled editor and widget library

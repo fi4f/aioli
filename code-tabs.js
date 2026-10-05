@@ -1,6 +1,6 @@
 import { sourcePath } from './project.js';
 
-const entries = ['scene', 'game', 'audio', 'editor', 'ui'];
+const entries = ['main', 'editor'];
 const readOnly = ['wgsl', 'guide', 'diagnostic'];
 const valid = (key, sources) =>
   typeof key === 'string' &&

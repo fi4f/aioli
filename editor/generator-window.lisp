@@ -1,3 +1,6 @@
+; Widget recipes are ordinary imports, not host-loaded entry files.
+(import "../generators/image.lisp")
+(import "../generators/audio.lisp")
 ; editor/generator-window.lisp / live Lisp drawing and interaction.
 (defn generator-window [kind x y w h]
   (let [wide (> w 760) left (if wide (floor (* w 0.55)) w)
