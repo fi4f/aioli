@@ -628,7 +628,7 @@ try {
   await click('export');
   await (await download).saveAs('artifacts/project-v3.json');
   const project = JSON.parse(await readFile('artifacts/project-v3.json', 'utf8'));
-  assert.equal(project.version, 17);
+  assert.equal(project.version, 18);
   assert.ok(project.files['lib/math.lisp']);
   assert.ok(project.resources['assets/generated.png']);
   assert.ok(project.resources['assets/generated.wav']);

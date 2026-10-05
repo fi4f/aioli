@@ -51,6 +51,8 @@ Valid edits evaluate after a short typing pause or **Ctrl/Cmd+Enter**. `init!` i
 
 Projects export/import as JSON with separate editor and application state. **File → Export application HTML** downloads one HTML file containing the runtime, every game module, and all assets. A generated `main.lisp` imports `game.lisp`; startup uses fresh game state and excludes the editor package. The file runs offline in a browser with WebGPU support. Game images export as PNG. The sound tool synthesizes swept oscillators or seeded noise, mixes an optional overtone, and exports PCM WAV. Each voice has attack/release and the mix uses soft clipping.
 
+Play `examples/doom.scene.lisp` for **Tiny Crypt**, an asset-free first-person raycaster written entirely in Lisp. Click its play button in Files, then click the preview (F4 enlarges it). W/S or Up/Down walk, A/D strafe, Left/Right or Q/E turn, Space fires, and R restarts. Defeat the three monsters (two hits each), then reach the green gate in the southeast corner. Its movement settings are editable in the inspector; pistol/minimap drawing and procedural sounds expose hook previews. Existing projects receive this example once without replacing a customized copy.
+
 A new project has just `editor/` and `examples/` alongside `main.lisp` and `game.lisp`.
 Editor controls and PNG icons live in `editor/ui/` and `editor/icon/`. Sample commands and generators live in `examples/commands/` and `examples/generators/`. Existing saves migrate these paths and references.
 
@@ -75,7 +77,7 @@ Numbers use sliders; booleans use toggles; choices cycle through values; colors 
 
 **View → Command palette** or **Ctrl/Cmd+Shift+P** opens the palette. Search `.command.lisp` programs in any folder, or type Lisp and press Ctrl/Cmd+Enter. Programs run in the editor environment and can inspect or change game state through `game-*` APIs, and automate exports. Commands execute on request, never on each frame or while typing.
 
-Projects save as version 17 JSON containing named `files`, binary `resources`, editor `state`, and `applicationState`. Legacy saves migrate. Read [the project guide](docs/projects.html) for the exact resolution rules, limits and APIs.
+Projects save as version 18 JSON containing named `files`, binary `resources`, editor `state`, and `applicationState`. Legacy saves migrate. Read [the project guide](docs/projects.html) for the exact resolution rules, limits and APIs.
 
 ## Architecture
 

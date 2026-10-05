@@ -94,7 +94,7 @@ try {
     ),
   );
   const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project.v3')));
-  assert.equal(project.version, 17);
+  assert.equal(project.version, 18);
   project.resources['editor/icon/code.png'] = initial['editor/icon/play.png'];
   delete project.resources['editor/icon/folder.png'];
   await page.locator('#file-input').setInputFiles({

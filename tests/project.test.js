@@ -107,7 +107,7 @@ test('v3 saves preserve extra source files and binary assets while excluding tra
     'assets/example.png': { mime: 'image/png', data: 'data:image/png;base64,AAAA' },
   };
   const snapshot = projectSnapshot(sources, { x: 7 }, resources);
-  assert.equal(snapshot.version, 17);
+  assert.equal(snapshot.version, 18);
   assert.equal(snapshot.files.__palette, undefined);
   const imported = readProject(JSON.parse(JSON.stringify(snapshot)), defaults);
   assert.equal(imported.sources['lib/helper.lisp'], sources['lib/helper.lisp']);

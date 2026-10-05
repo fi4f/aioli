@@ -52,6 +52,24 @@
         complete panes and widgets. Open these files from the explorer and edit them live. Browser
         edits belong to the saved project rather than changing the repository on disk.
       </p>
+      <h2 id="tiny-crypt">Play Tiny Crypt</h2>
+      <p>
+        Expand <code>examples/</code> in Files and click the play button beside
+        <code>doom.scene.lisp</code>. Click the preview to direct keyboard input to the game;
+        <kbd>F4</kbd> enlarges it and restores your previous editor layout when toggled again. W/S
+        or Up/Down walk, A/D strafe, Left/Right or Q/E turn, Space fires, and R restarts. Defeat
+        three monsters with two hits each, then reach the green gate at the southeast corner of the
+        minimap. Contact with monsters costs health; walls block movement and shots.
+      </p>
+      <p>
+        The entire example is ordinary Lisp: a grid raycaster draws stone corridors, depth-tested
+        monster strips and a pistol without imported art. Edit its annotated movement settings in
+        the scene inspector, inspect the pistol and minimap <code>defdraw</code> hooks, or listen to
+        its procedural <code>defsound</code> hooks. To launch it as your application, put
+        <code>(start-scene "examples/doom.scene.lisp")</code> in <code>game.lisp</code>; HTML export
+        then bundles it with the runtime. Existing saves receive the example once, preserving custom
+        copies and later deletions.
+      </p>
       <h2 id="menus">The menu bar</h2>
       <p>
         The workspace has five menus: <strong>File, Project, View, Edit, About</strong>. Dropdowns

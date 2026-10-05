@@ -2208,7 +2208,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (code.focus === 'world') {
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', ' ', 'w', 'a', 'd'].includes(key)) {
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && (key.length === 1 || key.startsWith('Arrow'))) {
       e.preventDefault();
       keys.add(key);
       activateAudio().catch(() => {});

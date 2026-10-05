@@ -3,4 +3,5 @@ export const exampleScenePaths = [
   'examples/garden.scene.lisp',
   'examples/bloom.scene.lisp',
   'examples/plasma.scene.lisp',
+  'examples/doom.scene.lisp',
 ];

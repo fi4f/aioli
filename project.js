@@ -155,7 +155,7 @@ export function projectSnapshot(
   applicationState = {},
 ) {
   return {
-    version: 17,
+    version: 18,
     files: Object.fromEntries(
       Object.entries(sources)
         .filter(([key]) => !key.startsWith('__'))
@@ -172,7 +172,7 @@ export function projectSnapshot(
 export function readProject(project, defaults, defaultResources = {}) {
   if (
     !project ||
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17].includes(project.version) ||
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18].includes(project.version) ||
     !project.state ||
     typeof project.state !== 'object' ||
     Array.isArray(project.state)
@@ -485,6 +485,16 @@ export function readProject(project, defaults, defaultResources = {}) {
     applicationState = relocated.applicationState;
     project = { ...project, state: relocated.state };
   }
+  // Offer the new playable example once; custom copies and later deletions belong to the project.
+  const doomPath = 'examples/doom.scene.lisp';
+  if (
+    project.version < 18 &&
+    typeof defaults[doomPath] === 'string' &&
+    !(doomPath in sources) &&
+    !(doomPath in resources) &&
+    Object.keys(sources).length < 256
+  )
+    sources[doomPath] = normalizeSource(defaults[doomPath]);
   // Import initial resources once for older projects, preserving replacements.
   // Newer saves own their resource store, including intentionally deleted assets.
   if (project.version < 10) {
