@@ -3,6 +3,7 @@ import { policy, policySource } from './editor-policy.js';
 import { validateValue, validKey } from './state-values.js';
 import { pixelBlock } from './pixel-block.js';
 import { canvasSize } from './canvas-size.js';
+import { projectSettings } from './project-settings.js';
 import { textOutput, textMime } from './text-generator.js';
 import { newFilePath, newFileCode } from './file-templates.js';
 import {
@@ -106,6 +107,9 @@ const transientBuffers = {
   __path: 'lib/new.lisp',
   __hookArgs: '[]',
   __canvasSize: '320 240',
+  __projectName: 'Untitled project',
+  __canvasWidth: '320',
+  __canvasHeight: '240',
 };
 Object.assign(sources, transientBuffers);
 const resourceRows = (sourceStore = sources, resourceStore = resources) => [
@@ -278,6 +282,8 @@ function defer(action) {
 }
 // A new keystroke invalidates any older asynchronous GPU compilation immediately.
 const code = new CodeInput($('text-input'), sources, (tab) => {
+  if (['__projectName', '__canvasWidth', '__canvasHeight'].includes(tab))
+    state['project-settings-error'] = '';
   if (tab.startsWith('__')) return;
   revision++;
   clearTimeout(timer);
@@ -409,6 +415,68 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       },
       'canvas-width': () => (frameSize ?? canvasSize(target))[0],
       'canvas-height': () => (frameSize ?? canvasSize(target))[1],
+      'open-project-settings': actions(() => {
+        const settings = projectSettings(state);
+        for (const [tab, key] of [
+          ['__projectName', 'project-name'],
+          ['__canvasWidth', 'canvas-width'],
+          ['__canvasHeight', 'canvas-height'],
+        ]) {
+          sources[tab] = String(settings[key]);
+          code.forgetBuffer(tab);
+        }
+        state['input-tab'] = '';
+        state['project-settings-error'] = '';
+        state.window = 'project-settings';
+        state.menu = false;
+      }),
+      'project-canvas-preset': actions((width, height) => {
+        sources.__canvasWidth = String(width);
+        sources.__canvasHeight = String(height);
+        code.forgetBuffer('__canvasWidth');
+        code.forgetBuffer('__canvasHeight');
+        state['project-settings-error'] = '';
+      }),
+      'apply-project-settings': actions(async () => {
+        try {
+          const settings = projectSettings({
+            'project-name': sources.__projectName,
+            'canvas-width': Number(sources.__canvasWidth.trim()),
+            'canvas-height': Number(sources.__canvasHeight.trim()),
+          });
+          const previous = projectSettings(state);
+          Object.assign(state, settings);
+          if (await evaluate()) {
+            state.window = '';
+            state['project-settings-error'] = '';
+            save();
+          } else {
+            Object.assign(state, previous);
+            state['project-settings-error'] = message;
+          }
+        } catch (error) {
+          state['project-settings-error'] = error.message;
+        }
+      }),
+      'input-value': (tab) => sources[tab] ?? '',
+      'field-focus': (tab) => {
+        if (!live()) return;
+        state['input-tab'] = tab;
+        code.switch(tab, sources[tab] ?? '');
+        code.focus = 'code';
+        code.input.focus({ preventScroll: true });
+        code.input.select();
+        code.session().start = 0;
+        code.session().end = code.input.value.length;
+      },
+      'buffer-field': (origin, size, tab, label) => {
+        if (!live()) return;
+        buffer = code.layout(origin, size, tab, sources[tab] ?? '', false, performance.now(), {
+          gutter: 0,
+        });
+        code.input.setAttribute('aria-label', label);
+        items.push({ id: 'source', label, origin, size });
+      },
       'open-canvas-settings': actions(() => {
         const [w, h] = canvasSize(state);
         sources.__canvasSize = `${w} ${h}`;
@@ -1286,7 +1354,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           applicationFiles(committedSources, state['editor-file-paths']).game,
           resources,
           undefined,
-          { 'canvas-width': canvasSize(state)[0], 'canvas-height': canvasSize(state)[1] },
+          projectSettings(state),
         );
         download(html, 'text/html', 'game.html');
       }),
@@ -2069,9 +2137,11 @@ canvas.addEventListener('pointerdown', (e) => {
   }
   if (pointer.target?.id === 'source') code.pointer(pointer.x, pointer.y);
   else {
-    code.focus = pointer.target?.id === 'world' ? 'world' : 'ui';
+    const nextFocus = pointer.target?.id === 'world' ? 'world' : 'ui';
+    // Clicking an already-focused Game must preserve physically held keys.
+    if (nextFocus !== 'world' || code.focus !== 'world') keys.clear();
+    code.focus = nextFocus;
     canvas.focus({ preventScroll: true });
-    keys.clear();
   }
   if (pointer.target?.id === 'world') activateAudio().catch(() => {});
 });

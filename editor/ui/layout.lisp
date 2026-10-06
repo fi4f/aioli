@@ -16,6 +16,27 @@
 (defn ui/space [height] (map :type "spacer" :options (map :height height)))
 (defn ui/flex [] (map :type "spacer" :options (map :grow 1)))
 (defn ui/custom [options paint] (map :type "custom" :options options :paint paint))
+(defn ui/input [id label tab]
+  (ui/custom (map :height 36)
+    (fn [origin size]
+      (fill (get :ui-button)) (rect origin size)
+      (region id label origin size)
+      (when (or (activated? id)
+                (and (not (= (get :input-tab) tab)) (pointer-pressed?) (hit? origin size)))
+        (field-focus tab))
+      (let [p [(+ (nth origin 0) 8) (+ (nth origin 1) 7)]
+            s [(max 1 (- (nth size 0) 16)) 21]]
+        (scope (clip origin size)
+          (if (= (get :input-tab) tab)
+            (do
+              (buffer-field p s tab label)
+              (fill (get :ui-selection))
+              (mapv (fn [selection] (rect (nth selection 0) (nth selection 1))) (buffer-selections))
+              (fill (get :ui-text))
+              (mapv (fn [row]
+                (mapv (fn [token] (text (nth token 0) (nth token 1))) (nth row 2))) (buffer-rows))
+              (when (buffer-caret) (fill (get :ui-accent)) (rect (buffer-caret) [1 18])))
+            (do (fill (get :ui-text)) (text p (input-value tab)))))))))
 (defn ui/chevron-button [id label direction action]
   (assoc (ui/custom (map :width 32 :height 34)
     (fn [origin size]

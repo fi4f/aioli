@@ -61,11 +61,12 @@
     (when (and narrow (not focused) (get :show-generator) (= (get :window) ""))
       (project-window))
     (when (and (not focused) (not (= (get :window) "")))
+      (if (= (get :window) "project-settings") (project-settings-window)
       (if (= (get :window) "canvas-settings") (canvas-settings-window)
       (if (= (get :window) "about") (about-aioli)
         (if (= (get :window) "file-path") (file-path-dialog)
           (if (or (= (get :window) "image-asset") (= (get :window) "audio-asset") (= (get :window) "text-asset"))
-            (asset-preview-window) (project-window))))))
+            (asset-preview-window) (project-window)))))))
     (when (not (= (file-drag-path) ""))
       (scope
         (fill (get :ui-selection)) (rect [(+ (pointer-x) 12) (+ (pointer-y) 12)] [240 30])

@@ -1,3 +1,5 @@
+import { projectName } from './project-settings.js';
+
 /** Embed a closed ES-module graph and project files into a single offline HTML.
  * Blob module URLs are created locally; no server, fetch, or build step is used
  * by the exported application. Project paths and dynamic imports remain intact. */
@@ -28,9 +30,14 @@ export async function exportHTML(
     resources,
   };
   const json = (value) => JSON.stringify(value).replaceAll('<', '\\u003c');
+  const title = projectName(settings).replace(
+    /[&<>"']/g,
+    (character) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character],
+  );
   return `<!doctype html>
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Aioli application</title><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}canvas{display:block;width:100%;height:100%}#error{position:absolute;top:0;left:0;color:white;background:#600;white-space:pre-wrap}</style>
+<title>${title}</title><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}canvas{display:block;width:100%;height:100%}#error{position:absolute;top:0;left:0;color:white;background:#600;white-space:pre-wrap}</style>
 <canvas id="app" tabindex="0"></canvas><div id="error" role="alert"></div>
 <script type="module">
 const sources=${json(modules)}, project=${json(project)}, urls=new Map();

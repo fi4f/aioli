@@ -76,7 +76,7 @@
             (when (menu-action :pause (if (get :paused) "Play" "Pause") "" x (+ y 34) width true nil) (set! :paused (not (get :paused))))
             (when (menu-action :reset "Reset state" "" x (+ y 64) width true nil) (reset-project))
             (when (menu-action :auto-evaluate "Automatic re-evaluation" "" x (+ y 94) width true (get :auto-evaluate)) (toggle-auto-evaluate))
-            (when (menu-action :canvas-settings "Canvas size..." "" x (+ y 124) width true nil) (open-canvas-settings))
+            (when (menu-action :project-settings "Settings..." "" x (+ y 124) width true nil) (open-project-settings))
             (when (recovery?)
               (when (menu-action :upgrade-editor "Use latest editor" "" x (+ y 164) width true nil) (upgrade-editor))))
           (if (= kind "view")

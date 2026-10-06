@@ -42,15 +42,15 @@ try {
     () => !window.aioli.pending && window.aioli.applicationState.cw === 320,
   );
   await click('project');
-  await click('canvas-settings');
+  await click('project-settings');
   await click('canvas-wide');
   // Custom odd dimensions test texture readback row padding as well as text input.
-  const inputRegion = await page.evaluate(() =>
-    window.aioli.regions.filter((r) => r.id === 'source').at(-1),
-  );
-  await page.mouse.click(inputRegion.origin[0] + 60, inputRegion.origin[1] + 12);
+  await click('canvas-width');
   await page.keyboard.press('Control+a');
-  await page.keyboard.insertText('641 359');
+  await page.keyboard.insertText('641');
+  await click('canvas-height');
+  await page.keyboard.press('Control+a');
+  await page.keyboard.insertText('359');
   await click('canvas-apply');
   await page.waitForFunction(
     () =>
@@ -99,18 +99,20 @@ try {
     () => window.aioli?.running && window.aioli.applicationState.cw === 641,
   );
   await click('project');
-  await click('canvas-settings');
-  const invalidInput = await page.evaluate(() =>
-    window.aioli.regions.filter((r) => r.id === 'source').at(-1),
-  );
-  await page.mouse.click(invalidInput.origin[0] + 60, invalidInput.origin[1] + 12);
+  await click('project-settings');
+  await click('canvas-width');
   await page.keyboard.press('Control+a');
-  await page.keyboard.insertText('0 359');
+  await page.keyboard.insertText('0');
   await click('canvas-apply');
-  await page.waitForFunction(() => window.aioli.error && !window.aioli.pending);
+  await page.waitForFunction(
+    () => window.aioli.state['project-settings-error'] && !window.aioli.pending,
+  );
   assert.equal(await page.evaluate(() => window.aioli.applicationState.cw), 641);
   assert.equal(await page.evaluate(() => window.aioli.editorState['canvas-width']), 641);
-  assert.match(await page.evaluate(() => window.aioli.status), /whole numbers/);
+  assert.match(
+    await page.evaluate(() => window.aioli.state['project-settings-error']),
+    /whole numbers/,
+  );
   await click('close-window');
   await click('file');
   await click('new-project');

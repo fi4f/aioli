@@ -2,6 +2,7 @@ import { resolvePath, resolveModules as loadModules } from './module-loader.js';
 import { validateState } from './state-values.js';
 import { normalizeSource } from './source-text.js';
 import { canvasSize } from './canvas-size.js';
+import { projectName } from './project-settings.js';
 import { sourcePath, sourceKey } from './project-paths.js';
 export { sourcePath, sourceKey, resolvePath };
 export const entryPaths = { main: 'main.lisp', game: 'game.lisp' };
@@ -49,6 +50,7 @@ export function readProject(project) {
   validateState(project.state);
   validateState(project.applicationState ?? {});
   canvasSize(project.state);
+  projectName(project.state);
   const sources = Object.create(null),
     resources = project.resources ?? {};
   for (const [path, text] of Object.entries(project.files)) {

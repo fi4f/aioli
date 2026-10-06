@@ -225,7 +225,7 @@ export class CodeInput {
     const [x, y] = origin;
     const [width, height] = size;
     const lineHeight = Math.max(20, Number(metrics.lineHeight) || LINE_HEIGHT);
-    const gutter = Math.max(24, Number(metrics.gutter) || GUTTER_WIDTH);
+    const gutter = metrics.gutter === 0 ? 0 : Math.max(24, Number(metrics.gutter) || GUTTER_WIDTH);
     this.box = { x, y, w: width, h: height, lineHeight, gutter };
 
     const inline = !readOnly && !tab.startsWith('__');

@@ -147,7 +147,7 @@ try {
   await drag('dock-move-files', 10, 200);
   assert.equal(await page.evaluate(() => window.aioli.state['ui-docks'].files.dock), 'left');
   await click('project');
-  await click('canvas-settings');
+  await click('project-settings');
   await click('canvas-square');
   await click('canvas-apply');
   await page.waitForFunction(

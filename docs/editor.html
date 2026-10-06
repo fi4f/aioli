@@ -26,23 +26,25 @@
         Start with the game and its source. Open tools when you need them. Change the editor using
         the same workflow as changing gameplay.
       </p>
-      <h2 id="canvas-size">Project canvas size</h2>
+      <h2 id="canvas-size">Project settings</h2>
       <p>
         Desktop pane titles can be dragged into floating panels or docked at any workspace edge.
         Pane edges and shared dividers resize panes; Escape cancels dragging. Drop onto a docked
-        pane's side to split its area. Clicking floating content brings its pane to the top.
-        Floating panes collapse to their draggable title bar with an up chevron and expand with a
-        down chevron, and View → Reset pane layout restores defaults. See
+        pane's side to split its area. Clicking floating content brings its pane to the top. Panes
+        minimize into the bottom bar with a down chevron and restore with an up chevron, and View →
+        Reset layout restores defaults. See
         <a href="ui.html">UI components</a> to build reusable editor controls and panes in Lisp.
       </p>
       <p>
-        Choose <strong>Project → Canvas size…</strong> for custom width and height or presets of 320
-        × 240, 640 × 360, and 512 × 512. Each dimension must be a whole number from 16 to 2048.
-        Apply updates the logical canvas, drawing coordinates, shader dimensions, pointer
-        coordinates, and PNG export. The game renders into a pixel buffer at that exact resolution;
-        preview and exported HTML enlarge it without smoothing and preserve its aspect ratio with
-        letterboxing. JSON saves retain the settings; a new project starts at 320 × 240. Changing
-        resolution does not rewrite coordinates in existing scene code.
+        Choose <strong>Project → Settings…</strong> to change the project name and canvas size. The
+        name becomes the exported HTML page title. Apply saves changes together; Cancel discards
+        them. The canvas accepts custom width and height or presets of 320 × 240, 640 × 360, and 512
+        × 512. Each dimension must be a whole number from 16 to 2048. Apply updates the logical
+        canvas, drawing coordinates, shader dimensions, pointer coordinates, and PNG export. The
+        game renders into a pixel buffer at that exact resolution; preview and exported HTML enlarge
+        it without smoothing and preserve its aspect ratio with letterboxing. JSON saves retain the
+        settings; a new project starts at 320 × 240. Changing resolution does not rewrite
+        coordinates in existing scene code.
       </p>
       <pre><code>(defdraw render []
   (background "#272822")
