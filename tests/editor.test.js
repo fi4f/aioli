@@ -8,6 +8,8 @@ import { editorSourcePaths } from '../editor-sources.js';
 import { tabLayout } from '../code-tabs.js';
 import { generatorSources } from './fixtures.js';
 import { defaults } from './fixtures.js';
+import { layoutUI } from '../ui-layout.js';
+import { dockLayout } from '../ui-docking.js';
 const uiSource = readFileSync(
   new URL('../editor/ui/components.lisp', import.meta.url),
   'utf8',
@@ -36,6 +38,16 @@ function editor(width = 1440, height = 900) {
     endScope: () => draw.restore(),
     primitives: {
       ...draw.primitives(),
+      'ui-layout': layoutUI,
+      'ui-dock-layout': dockLayout,
+      'ui-dock-handle': () => {},
+      'ui-dock-preview': () => null,
+      'ui-dock-feedback': () => null,
+      'ui-dock-begin': () => {},
+      'ui-dock-end': () => {},
+      'ui-dock-resizers': () => {},
+      'ui-region': (id, label, origin, size, enabled, checked) =>
+        regions.push({ id, label, origin, size, disabled: !enabled, checked }),
       'game-get': (key) =>
         state[key] ??
         {
@@ -144,6 +156,34 @@ test('menu bar has exactly the requested domains, with disabled editing actions'
     true,
   );
 });
+test('View groups pane visibility before layout, tools and recovery actions', () => {
+  const { r, state, regions } = editor();
+  state.menu = 'view';
+  r.call('editor');
+  const ids = [
+    'files',
+    'code',
+    'game-view',
+    'tools',
+    'generators',
+    'focus-preview-menu',
+    'reset-pane-layout',
+    'commands',
+    'wgsl',
+    'recovery-shell',
+  ];
+  assert.deepEqual(
+    regions.filter((region) => ids.includes(region.id)).map((region) => region.id),
+    ids,
+  );
+  for (const id of ids.slice(0, 5))
+    assert.equal(typeof regions.find((region) => region.id === id).checked, 'boolean');
+  assert.equal(
+    regions.some((region) => region.id === 'hide-game'),
+    false,
+  );
+});
+
 test('Lisp changes editor background and widget appearance without changing the host', () => {
   const { r, draw, state } = editor();
   state['ui-bg'] = '#102030';

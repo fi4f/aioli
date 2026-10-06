@@ -65,6 +65,7 @@ struct Command { bounds: vec4f, color: vec4f, detail: vec4f, flags: vec4f, clip:
 @group(0) @binding(7) var icons: texture_2d<f32>;
 @group(0) @binding(8) var iconSampler: sampler;
 @group(0) @binding(9) var<storage,read> pixelData: array<vec4f>;
+@group(0) @binding(10) var surfaces: texture_2d_array<f32>;
 // PIXEL_FUNCTIONS
 ${quad}
 ${pixelCoverageWGSL}
@@ -117,6 +118,10 @@ ${pixelCoverageWGSL}
       // PIXEL_DISPATCH
       paint.a *= command.detail.z;
     }
+    if (kind == 9u) {
+      let coordinate = clamp(vec2i(relative / command.bounds.zw * command.detail.xy), vec2i(0), vec2i(command.detail.xy) - vec2i(1));
+      paint = textureLoad(surfaces, coordinate, i32(command.detail.z), 0);
+    }
     let alpha = clamp(paint.a, 0.0, 1.0);
     var rgb = mix(color.rgb, paint.rgb, alpha);
     if (command.flags.z == 1.0) {
@@ -162,6 +167,12 @@ export class GPUHost {
         GPUTextureUsage.COPY_DST |
         GPUTextureUsage.RENDER_ATTACHMENT,
     });
+    r.surfaceTextures = [];
+    r.emptySurface = device.createTexture({
+      size: [1, 1, 1],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING,
+    });
     r.screen = device.createBuffer({
       size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -183,6 +194,11 @@ export class GPUHost {
         { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: {} },
         { binding: 8, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 9, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+        {
+          binding: 10,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { viewDimension: '2d-array' },
+        },
       ],
     });
     r.uiPipeline = await device.createRenderPipelineAsync({
@@ -194,6 +210,14 @@ export class GPUHost {
   }
   updateAtlas(metrics) {
     if (this.atlasDensity === metrics.density) return;
+    this.glyphAtlases ??= new Map();
+    const cached = this.glyphAtlases.get(metrics.density);
+    if (cached) {
+      this.atlas = cached;
+      this.atlasDensity = metrics.density;
+      this.bindDirty = true;
+      return;
+    }
     const { density, glyphWidth, glyphHeight } = metrics;
     const atlas = document.createElement('canvas');
     atlas.width = 16 * glyphWidth;
@@ -220,12 +244,19 @@ export class GPUHost {
       atlas.width,
       atlas.height,
     ]);
-    this.atlas?.destroy();
+    if (this.glyphAtlases.size >= 4) {
+      const oldest = this.glyphAtlases.keys().next().value;
+      this.glyphAtlases.get(oldest).destroy();
+      this.glyphAtlases.delete(oldest);
+    }
+    this.glyphAtlases.set(density, texture);
     this.atlas = texture;
     this.atlasDensity = density;
     this.bindDirty = true;
   }
   setIcons(images) {
+    for (const texture of this.iconAtlases?.values() ?? []) texture.destroy();
+    this.iconAtlases = new Map();
     this.iconImages = images;
     this.iconDensity = null;
     this.bindDirty = true;
@@ -233,6 +264,15 @@ export class GPUHost {
   updateIconAtlas(metrics) {
     if (this.iconDensity === metrics.density) return;
     const cell = Math.ceil(16 * metrics.density) + 2;
+    this.iconAtlases ??= new Map();
+    const cached = this.iconAtlases.get(metrics.density);
+    if (cached) {
+      this.iconAtlas = cached;
+      this.iconCell = cell;
+      this.iconDensity = metrics.density;
+      this.bindDirty = true;
+      return;
+    }
     const atlas = document.createElement('canvas');
     atlas.width = cell * 16;
     atlas.height = cell * Math.max(1, Math.ceil((this.iconImages?.length ?? 0) / 16));
@@ -261,7 +301,12 @@ export class GPUHost {
       atlas.width,
       atlas.height,
     ]);
-    this.iconAtlas?.destroy();
+    if (this.iconAtlases.size >= 4) {
+      const oldest = this.iconAtlases.keys().next().value;
+      this.iconAtlases.get(oldest).destroy();
+      this.iconAtlases.delete(oldest);
+    }
+    this.iconAtlases.set(metrics.density, texture);
     this.iconAtlas = texture;
     this.iconDensity = metrics.density;
     this.bindDirty = true;
@@ -341,6 +386,8 @@ export class GPUHost {
     return result;
   }
   async preparePixels(drawList, format = this.format) {
+    for (const command of drawList.commands)
+      if (command.surface) await this.preparePixels(command.surface, 'rgba8unorm');
     const { source, programs } = this.pixelSource(drawList);
     const key = format + source;
     if ((!programs.length && format === this.format) || this.pixelPipelines.has(key)) return;
@@ -378,7 +425,7 @@ export class GPUHost {
       this.pendingPixels.delete(key);
     }
   }
-  draw(drawList, time, output = null) {
+  draw(drawList, time, output = null, depth = 0) {
     // Composite shapes, assets, and nested pixel materials in drawing order.
     const device = this.device,
       metrics = displayMetrics(
@@ -388,8 +435,6 @@ export class GPUHost {
         device.limits.maxTextureDimension2D,
       ),
       { width, height } = metrics;
-    this.updateAtlas(metrics);
-    this.updateIconAtlas(metrics);
     const { source, programs } = this.pixelSource(drawList);
     const format = output?.format ?? this.format;
     const materialPipeline =
@@ -398,10 +443,59 @@ export class GPUHost {
         : this.pixelPipelines.get(format + source);
     if (!materialPipeline) {
       this.preparePixels(drawList, format).catch((e) => this.onError(e.message));
-      return;
+      return false;
     }
+    // Each application gets actual logical pixels, independent of CSS size/DPR.
+    // Layers let multiple surfaces keep their own painter order in the host.
+    const surfaces = drawList.commands.filter((command) => command.surface);
+    let surfaceTexture = this.emptySurface;
+    if (surfaces.length) {
+      const size = [
+        Math.max(...surfaces.map((command) => command.surface.width)),
+        Math.max(...surfaces.map((command) => command.surface.height)),
+        surfaces.length,
+      ];
+      let cached = this.surfaceTextures[depth];
+      if (!cached || size.some((value, index) => value !== cached.size[index])) {
+        cached?.texture.destroy();
+        cached = {
+          size,
+          texture: device.createTexture({
+            size,
+            format: 'rgba8unorm',
+            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+          }),
+        };
+        this.surfaceTextures[depth] = cached;
+      }
+      surfaceTexture = cached.texture;
+      for (let layer = 0; layer < surfaces.length; layer++) {
+        const target = {
+          format: 'rgba8unorm',
+          createView: () =>
+            surfaceTexture.createView({
+              dimension: '2d',
+              baseArrayLayer: layer,
+              arrayLayerCount: 1,
+            }),
+        };
+        if (!this.draw(surfaces[layer].surface, time, target, depth + 1)) return false;
+      }
+    }
+    if (this.boundSurface !== surfaceTexture) {
+      this.boundSurface = surfaceTexture;
+      this.bindDirty = true;
+    }
+    // Child passes use density 1; restore the host's crisp UI glyph atlas.
+    this.updateAtlas(metrics);
+    this.updateIconAtlas(metrics);
     const pixelValues = [];
     const materialCommands = drawList.commands.map((command) => {
+      if (command.surface)
+        return {
+          ...command,
+          detail: [command.surface.width, command.surface.height, surfaces.indexOf(command), 0],
+        };
       if (!command.pixel) return command;
       const { shader, values } = command.pixel;
       const base = pixelValues.length / 4;
@@ -450,6 +544,7 @@ export class GPUHost {
           { binding: 7, resource: this.iconAtlas.createView() },
           { binding: 8, resource: this.iconSampler },
           { binding: 9, resource: { buffer: this.pixelBuffer } },
+          { binding: 10, resource: surfaceTexture.createView({ dimension: '2d-array' }) },
         ],
       });
       this.bindDirty = false;
@@ -466,10 +561,12 @@ export class GPUHost {
       ],
     });
     pass.setPipeline(materialPipeline);
+    pass.setViewport(0, 0, width, height, 0, 1);
     pass.setBindGroup(0, this.uiBind);
     pass.draw(6);
     pass.end();
     device.queue.submit([encoder.finish()]);
+    return true;
   }
   async snapshot(list, time = 0) {
     let output;

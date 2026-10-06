@@ -17,10 +17,12 @@
 (import "./about.lisp")
 (import "./canvas-settings.lisp")
 (import "./asset-preview.lisp")
+(import "./docked-workspace.lisp")
 
 (defn editor []
   ; Keep older command programs that used the modal explorer key working.
   (when (= (get :window) "files") (set! :show-files true) (set! :window ""))
+  (when (= (get :window) "generator") (show-generator-pane))
   (let [w (screen-width) h (screen-height)
         focused (get :preview-focused)
         narrow (< w (get :ui-narrow-width))
@@ -43,16 +45,21 @@
     (editor-menu-bar)
     (fill (get :ui-border)) (rect [0 50] [w 1])
 
+    (if (and (not focused) (not narrow))
+      (docked-workspace w h)
+      (do
     (when (and (not focused) (get :show-files)) (file-explorer 0 51 files-width (- h 81)))
 
     (when code-visible (code-pane files-width code-width h))
 
-    (when (and (> world-width 0) (or focused (not narrow) (and (not code-expanded) (not files-expanded))))
+    (when (and (or focused (get :show-game)) (> world-width 0) (or focused (not narrow) (and (not code-expanded) (not files-expanded))))
       (game-pane world-x world-width h))
 
-    (when (and (not focused) (get :show-tools)) (parameter-pane w h narrow tools-width))
+    (when (and (not focused) (get :show-tools)) (parameter-pane w h narrow tools-width))))
 
     ; Overlay widgets paint last, giving their regions pointer priority.
+    (when (and narrow (not focused) (get :show-generator) (= (get :window) ""))
+      (project-window))
     (when (and (not focused) (not (= (get :window) "")))
       (if (= (get :window) "canvas-settings") (canvas-settings-window)
       (if (= (get :window) "about") (about-aioli)

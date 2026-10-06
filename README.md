@@ -97,7 +97,9 @@ About opens help and documentation.
 - Ctrl/Cmd+Enter evaluates. F2 opens the bundled recovery editor. Escape closes tools.
 - Inline buttons preview `defdraw` and `defsound` against copied state.
 - File operations preserve imported references when dragging files or folders.
-- Project → Canvas size sets logical dimensions; previews and HTML exports keep their aspect ratio.
+- Project → Canvas size sets the pixel buffer resolution; previews and HTML exports enlarge it without smoothing and keep its aspect ratio.
+- Editor UI components use automatic rows, columns, flexible space and scroll containers. Files, Code, Game, Scene inspector and Generator inspector panes can dock, float, resize and collapse; layouts persist with projects. Toggle Game through View → Game view. Generators open as floating inspectors, with source editing in Code. See [the component API](docs/ui.html).
+- Dock onto another pane's side to create nested splits. Resize floating panes by their edges and docked panes by shared dividers; interacting with floating content brings it to the top.
 
 The editable editor policy lives in `editor/policy/files.lisp` and
 `editor/policy/inspector.lisp`: file roles, tabs, dialogs, command filtering,

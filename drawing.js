@@ -14,7 +14,8 @@ const vector = (v, n = 2) => {
  * bounds=[x,y,w,h], color=RGBA, detail=shape/glyph data,
  * meta=[kind, extra, blendMode, reserved], clip=[x,y,w,h].
  * Kinds: 0 rectangle, 1 circle, 2 line, 3 glyph, 4 game, 5 generated image,
- * 6 asset preview, 7 theme-tinted icon mask, 8 nested GPU pixel material.
+ * 6 asset preview, 7 theme-tinted icon mask, 8 nested GPU pixel material,
+ * 9 application pixel buffer.
  */
 export class DrawList {
   constructor(width, height) {
@@ -149,6 +150,18 @@ export class DrawList {
     } else this.emit(kind, [...p, ...size]);
   }
   /** Place an application's private command stream inside a host surface. */
+  rasterComposite(list, origin, size) {
+    const scale = Math.min(size[0] / list.width, size[1] / list.height);
+    const previous = this.commands.length;
+    this.emit(
+      9,
+      [...origin, list.width * scale, list.height * scale],
+      [list.width, list.height, 0, 0],
+    );
+    if (this.commands.length > previous) this.commands.at(-1).surface = list;
+  }
+
+  /** Transform geometry directly, for previews that do not have a pixel canvas. */
   composite(list, origin, size) {
     const scale = Math.min(size[0] / list.width, size[1] / list.height);
     const point = (x, y) => [origin[0] + x * scale, origin[1] + y * scale];

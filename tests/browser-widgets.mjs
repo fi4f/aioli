@@ -40,9 +40,16 @@ const menuRoutes = {
   wgsl: 'view',
 };
 async function click(id) {
+  if (
+    id === 'close-window' &&
+    !(await page.evaluate(() => window.aioli.regions.some((r) => r.id === 'close-window'))) &&
+    (await page.evaluate(() => window.aioli.state['show-generator']))
+  )
+    id = 'close-generator';
   if (['image-generator', 'audio-generator'].includes(id)) {
     const output = id.split('-')[0];
-    await click('generators');
+    if (!(await page.evaluate(() => window.aioli.state['show-generator'])))
+      await click('generators');
     for (let i = 0; i < 8; i++) {
       if (
         (await page.evaluate(() => window.aioli.state['active-generator'])).includes(
@@ -146,6 +153,7 @@ try {
   await page.waitForFunction(() => window.aioli.state.menu === 'view');
   await page.locator('button[data-region="code"]').waitFor({ state: 'attached' });
   await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => !window.aioli.state['show-code'] && !window.aioli.state.menu);
   await page.evaluate(
@@ -220,9 +228,12 @@ try {
       !window.aioli.regions.some((r) => r.id === 'files-tree'),
   );
   assert.equal(await page.evaluate(() => window.aioli.state['show-files']), true);
-  assert.equal(
-    await page.evaluate(() => window.aioli.regions.find((r) => r.id === 'source').origin[0]),
-    56,
+  assert.ok(
+    await page.evaluate(() => {
+      const source = window.aioli.regions.find((r) => r.id === 'source');
+      const files = window.aioli.regions.find((r) => r.id === 'pane-files');
+      return source.origin[0] >= files.origin[0] + files.size[0];
+    }),
   );
   assert.equal(
     await page.evaluate(() => window.aioli.regions.some((r) => r.id === 'hide-files')),

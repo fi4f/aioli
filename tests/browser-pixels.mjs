@@ -63,7 +63,10 @@ try {
   assert.equal(await page.evaluate(() => window.aioli.error), false);
   assert.deepEqual(
     await page.evaluate(() =>
-      window.aioli.commands.filter((c) => c.meta[0] === 8).map((c) => c.pixel.values),
+      window.aioli.commands
+        .find((c) => c.surface)
+        .surface.commands.filter((c) => c.meta[0] === 8)
+        .map((c) => c.pixel.values),
     ),
     [{ capture0: 0.2 }, { capture0: 0.8 }, {}, {}],
   );

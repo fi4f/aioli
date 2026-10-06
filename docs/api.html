@@ -33,6 +33,7 @@
           <li><a href="#shader-math">Shader math</a></li>
           <li><a href="#gameplay">Gameplay and state</a></li>
           <li><a href="#widgets">Lisp widget library</a></li>
+          <li><a href="ui.html">Component layout and dockable panes</a></li>
           <li><a href="#input">Editor input</a></li>
           <li><a href="#buffers">Source buffers</a></li>
           <li><a href="#audio">Procedural audio</a></li>
@@ -621,9 +622,10 @@
       <p>
         See the <a href="projects.html#apis">project API reference</a> for file operations,
         generator previews and exports, and palette commands. Use
-        <code>(set! :show-files true)</code> to show the file pane. Set <code>:window</code> to
-        <code>"generator"</code> or <code>"palette"</code> to open a tool window; set it to
-        <code>""</code> to close it.
+        <code>(set! :show-files true)</code> to show the file pane. Use
+        <code>(open-generator path)</code> to open a floating, dockable inspector and
+        <code>(close-generator)</code> to close it. Set <code>:window</code> to
+        <code>"palette"</code> to open the command palette; set it to <code>""</code> to close it.
       </p>
       <p>
         Image generators use <code>defdraw render</code>; audio generators use

@@ -5,3 +5,5 @@
 (import "./asset-icon.lisp")
 (import "./menu.lisp")
 (import "./tabs.lisp")
+(import "./layout.lisp")
+(import "./docking.lisp")

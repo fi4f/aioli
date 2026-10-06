@@ -5,6 +5,8 @@ import { tokenizeSourceLine } from '../source-tokens.js';
 import { CodeInput } from '../code-input.js';
 import { normalizeSource, displaySource, sourceLine } from '../source-text.js';
 import { DrawList } from '../drawing.js';
+import { readFileSync } from 'node:fs';
+import { createRuntime, parse } from '../lisp.js';
 
 test('display scanning preserves opening quotes and unfinished escapes', () => {
   for (const source of [
@@ -52,7 +54,7 @@ test('source layout paints an unfinished quote in the correct column', () => {
   const editor = new CodeInput(input, {}, () => {});
   const result = editor.layout([0, 0], [400, 100], 'scene', '(fill "hello', false, 0);
   const segments = result.rows[0][2];
-  assert.equal(segments.map((segment) => segment[1]).join(''), '(fill "hello');
+  assert.equal(segments.map((segment) => segment[1]).join(''), '(fill"hello');
   assert.deepEqual(segments.at(-1), [[88, 0], '"hello', 'string']);
 });
 
@@ -143,7 +145,10 @@ test('horizontal scrolling and token clipping keep fallback glyph boundaries ali
   const { editor, input, layout } = sourceEditor('A\u{1f642}B\tC');
   editor.session().col = 2;
   const result = layout();
-  assert.equal(result.rows[0][2].map((segment) => segment[1]).join(''), 'B    C');
+  assert.deepEqual(result.rows[0][2], [
+    [[40, 0], 'B', 'symbol'],
+    [[80, 0], 'C', 'symbol'],
+  ]);
   editor.pointer(40, 0);
   assert.equal(input.selectionStart, 3);
   editor.pointer(80, 0);
@@ -227,4 +232,72 @@ test('themed source metrics keep painting, pointer offsets and hook rows aligned
     gutter: 56,
   });
   assert.deepEqual(painted.caret, [74, 70]);
+});
+
+test('scrolling large buffers reuses indexes and refreshes them after edits', () => {
+  const text = Array.from({ length: 20000 }, (_, row) => `; row ${row}`).join('\n');
+  const { editor, input, sources, layout } = sourceEditor(text);
+  const session = editor.session();
+  const lines = session.lines,
+    offsets = session.offsets;
+  input.setSelectionRange(text.length, text.length);
+  editor.focus = 'code';
+  session.follow = true;
+  layout();
+  assert.deepEqual(layout().caret, [128, 63]);
+  for (let i = 0; i < 100; i++) {
+    editor.wheel(-1, false);
+    layout();
+  }
+  assert.equal(session.lines, lines);
+  assert.equal(session.offsets, offsets);
+  assert.ok(session.lineCache.size <= 128);
+  const row = session.visual[session.scroll].row;
+  editor.pointer(40, 0);
+  assert.equal(input.selectionStart, offsets[row]);
+  input.value = 'new\n' + input.value;
+  input.dispatchEvent(new Event('input'));
+  layout();
+  assert.notEqual(session.lines, lines);
+  assert.equal(session.offsets[1], 4);
+  assert.equal(sources.scene, input.value);
+});
+
+test('a full viewport of dense source stays within the editor evaluation budget', () => {
+  const text = Array(1000).fill('(a [1 2] :x "hi") '.repeat(30)).join('\n');
+  const { editor } = sourceEditor(text);
+  editor.session().scroll = 500;
+  const buffer = editor.layout([0, 0], [1000, 1400], 'scene', text, false, 0);
+  assert.equal(buffer.rows.length, 64);
+  const draw = new DrawList(1000, 1400);
+  const state = Object.fromEntries(
+    [
+      'line-number',
+      'selection',
+      'text',
+      'syntax-comment',
+      'syntax-delimiter',
+      'syntax-number',
+      'syntax-keyword',
+      'syntax-string',
+    ].map((key) => [`ui-${key}`, '#ffffff']),
+  );
+  const runtime = createRuntime(state, {
+    budget: 100000,
+    beginScope: () => draw.scope(),
+    endScope: () => draw.restore(),
+    primitives: {
+      ...draw.primitives(),
+      'buffer-open': () => {},
+      'buffer-rows': () => buffer.rows,
+      'buffer-hooks': () => [],
+      'buffer-selections': () => [],
+      'buffer-caret': () => null,
+    },
+  });
+  runtime.load(
+    parse(readFileSync(new URL('../editor/ui/code-input.lisp', import.meta.url), 'utf8')),
+  );
+  assert.doesNotThrow(() => runtime.call('code-editor', [0, 0], [1000, 1400], 'scene'));
+  assert.ok(draw.commands.some((command) => command.bounds[1] === 63 * 21));
 });

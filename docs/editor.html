@@ -28,10 +28,19 @@
       </p>
       <h2 id="canvas-size">Project canvas size</h2>
       <p>
+        Desktop pane titles can be dragged into floating panels or docked at any workspace edge.
+        Pane edges and shared dividers resize panes; Escape cancels dragging. Drop onto a docked
+        pane's side to split its area. Clicking floating content brings its pane to the top.
+        Floating panes collapse to their draggable title bar with an up chevron and expand with a
+        down chevron, and View → Reset pane layout restores defaults. See
+        <a href="ui.html">UI components</a> to build reusable editor controls and panes in Lisp.
+      </p>
+      <p>
         Choose <strong>Project → Canvas size…</strong> for custom width and height or presets of 320
         × 240, 640 × 360, and 512 × 512. Each dimension must be a whole number from 16 to 2048.
         Apply updates the logical canvas, drawing coordinates, shader dimensions, pointer
-        coordinates, and PNG export. Preview and exported HTML preserve its aspect ratio with
+        coordinates, and PNG export. The game renders into a pixel buffer at that exact resolution;
+        preview and exported HTML enlarge it without smoothing and preserve its aspect ratio with
         letterboxing. JSON saves retain the settings; a new project starts at 320 × 240. Changing
         resolution does not rewrite coordinates in existing scene code.
       </p>
@@ -299,6 +308,14 @@
         survive collapsing and restoring the pane.
       </p>
       <h2>Text generators</h2>
+      <p>
+        Generators open in a floating inspector that can dock beside or within another pane. Its
+        chevron collapses the inspector and X closes it. Next keeps the current placement when
+        switching generators; Code opens the selected generator in the main Code pane. The View menu
+        groups Files, Code, Game, Scene inspector and Generator inspector visibility together,
+        followed by layout controls, tools and recovery actions. Game visibility is controlled
+        through View → Game view.
+      </p>
       <p>
         Text recipes declare <code>(generator :text "Title" "levels/generated.csv")</code> and
         return a string from <code>generate-text</code>. Annotated fields drive the preview.

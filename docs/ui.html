@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>UI components · aioli</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="../">aioli <span>all in one lisp</span></a>
+      <nav aria-label="Documentation">
+        <a href="./">Start</a><a href="language.html">Language</a><a href="api.html">APIs</a
+        ><a href="editor.html">Editor</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">Editor UI API</p>
+      <h1>Compose controls. Let layout place them.</h1>
+      <p class="lead">
+        Build a component tree each frame, then render it into one rectangle. Rows, columns and
+        panels measure their children and choose their positions. Lisp owns painting and behavior;
+        native services measure layout and track pane dragging.
+      </p>
+      <p>
+        The editor imports <code>editor/ui/components.lisp</code>. New editor modules can use these
+        functions directly or import that module. These are editor APIs, outside
+        <code>pixels</code>; exported games do not include the editor library. The older
+        coordinate-based widgets remain available for custom canvases.
+      </p>
+      <h2>A reusable component</h2>
+      <pre><code>(init! :clicks 0)
+(init! :enabled true)
+
+(defn counter-controls [title]
+  (ui/column (map :gap 12)
+    [(ui/label title)
+     (ui/row (map :gap 8 :align "center")
+       [(ui/label (str "Count: " (get :clicks)))
+        (ui/flex)
+        (ui/with (map :disabled (not (get :enabled)))
+          (ui/button :add-click "Add"
+            (fn [] (set! :clicks (+ (get :clicks) 1)))))])
+     (ui/toggle :enable-counter "Enable counter" :enabled)]))
+
+(defn counter-window []
+  (ui/dialog :counter-window "Counter" 400 240
+    (counter-controls "A reusable component")))</code></pre>
+      <p>
+        Call <code>counter-window</code> from the editor's render hook to show it. Constructors
+        produce temporary component values; <code>ui/render</code> performs layout, painting and
+        event handling once. Stable control IDs preserve keyboard focus. Button callbacks run on
+        pointer press or keyboard activation. Store values in state and rebuild the tree next frame;
+        do not persist component trees or callbacks with <code>set!</code>.
+      </p>
+      <h2>Components</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Function</th>
+            <th>Behavior</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>(ui/row options children)</code></td>
+            <td>Places children horizontally.</td>
+          </tr>
+          <tr>
+            <td><code>(ui/column options children)</code></td>
+            <td>Places children vertically.</td>
+          </tr>
+          <tr>
+            <td><code>(ui/panel options children)</code></td>
+            <td>A themed background containing a column.</td>
+          </tr>
+          <tr>
+            <td><code>(ui/label caption)</code>, <code>(ui/muted caption)</code></td>
+            <td>Text measured and painted by the component.</td>
+          </tr>
+          <tr>
+            <td><code>(ui/button id caption action)</code></td>
+            <td>A button with a zero-argument callback.</td>
+          </tr>
+          <tr>
+            <td><code>(ui/toggle id caption key)</code></td>
+            <td>A boolean state control.</td>
+          </tr>
+          <tr>
+            <td><code>(ui/slider id caption key low high)</code></td>
+            <td>A numeric state slider using pointer capture and accessible range input.</td>
+          </tr>
+          <tr>
+            <td><code>(ui/code tab)</code></td>
+            <td>The editor's source-input component. Use one active source input per view.</td>
+          </tr>
+          <tr>
+            <td><code>(ui/space height)</code>, <code>(ui/flex)</code></td>
+            <td>Fixed vertical space or flexible remaining space.</td>
+          </tr>
+          <tr>
+            <td><code>(ui/scroll id key options children)</code></td>
+            <td>
+              A clipped vertical list with wheel scrolling and a draggable scrollbar. The key stores
+              its offset.
+            </td>
+          </tr>
+          <tr>
+            <td><code>(ui/custom options paint)</code></td>
+            <td>
+              An adapter for custom components. The callback receives <code>origin</code> and
+              <code>size</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>(ui/with options component)</code></td>
+            <td>Overrides selected options, preserving the component's other options.</td>
+          </tr>
+          <tr>
+            <td><code>(ui/render origin size component)</code></td>
+            <td>Renders one tree inside a clipped root rectangle.</td>
+          </tr>
+          <tr>
+            <td><code>(ui/dialog id title width height content)</code></td>
+            <td>A centered, viewport-bounded tool window with a title and close button.</td>
+          </tr>
+        </tbody>
+      </table>
+      <h2>Layout options</h2>
+      <p>
+        <code>:gap</code> defaults to 8 pixels. <code>:padding</code> accepts one number or
+        <code>[top right bottom left]</code>. <code>:width</code> and <code>:height</code> set
+        explicit dimensions. <code>:grow</code> shares the remaining space by weight along the
+        parent's main axis. <code>:align</code> sets cross-axis placement to <code>"start"</code>,
+        <code>"center"</code>, <code>"end"</code> or the default <code>"stretch"</code>. Text and
+        controls otherwise use their natural size. Buttons accept <code>:active</code> and
+        <code>:disabled</code>; labels accept <code>:tone "muted"</code>; panels accept
+        <code>:color</code>.
+      </p>
+      <p>
+        Rows do not wrap; overflow is clipped. Use nested rows or a scroll container for larger
+        content. Null/false children let conditional controls disappear without reserving space. A
+        tree is bounded to 512 components and 32 levels, and control IDs must be unique within a
+        tree.
+      </p>
+      <h2>Dockable panes</h2>
+      <pre><code>(init! :example-docks (map))
+
+(defn example-workspace []
+  (ui/dockspace :example-docks [0 51]
+    [(screen-width) (- (screen-height) 81)]
+    [(ui/pane :settings "Settings" (map :dock "left" :extent 280)
+       (counter-controls "Settings"))
+     (ui/pane :main "Main" (map :dock "center" :fixed true)
+       (ui/column (map :padding 16)
+         [(ui/label "The center uses the remaining space.")]))]))</code></pre>
+      <p>
+        <code>ui/pane</code> receives a stable ID, title, options and a component.
+        <code>ui/dockspace</code> receives a state key, workspace bounds and a pane vector. Dock
+        positions are <code>"left"</code>, <code>"right"</code>, <code>"top"</code>,
+        <code>"bottom"</code>, <code>"floating"</code> or <code>"center"</code>.
+        <code>:extent</code> is pixels, or a fraction at most 1 of remaining workspace size.
+        <code>:visible false</code> hides a pane without forgetting its saved placement;
+        <code>:fixed true</code> reserves a center surface. Optional <code>:collapsed</code>,
+        <code>:collapse-id</code> and a zero-argument <code>:collapse</code> callback add a collapse
+        control. Optional <code>:hide-id</code> and a zero-argument <code>:hide</code> callback add
+        a Close icon button. Docked panes minimize to a bottom bar with an icon, title, restore
+        chevron and close button. Click the title or up chevron to restore the saved split and
+        dimensions. The optional <code>:icon</code> chooses the minimized pane's asset icon.
+        Floating panes minimize into the same bottom bar and preserve their position and dimensions.
+      </p>
+      <p>
+        Drag a pane's title to float it. Move to an outer workspace edge to preview docking and hold
+        still for 700 milliseconds and release to attach it. A light gray preview fills blue as the
+        timer advances, then turns green when release will dock. Releasing early keeps the pane
+        floating. Movement beyond a small jitter allowance or changing targets restarts the timer.
+        Drop near the left, right, top or bottom of a docked pane to split that pane's area; the
+        highlighted half shows the result. Splits can be nested. The central part of a pane is a
+        neutral drop zone for keeping a dragged pane floating. Grab a floating pane's edges to
+        resize it, or drag the divider between docked panes to resize both neighbors. Resize cursors
+        indicate the available direction. Escape cancels a drag. Clicking or otherwise interacting
+        with floating content brings that pane to the top. Panes use a down chevron to minimize into
+        the bottom bar, and an up chevron to restore their previous size. Detaching a pane reduces
+        its width and height by 10% and leaves room around its edges to resize it. Newly opened
+        floating panes are centered in the workspace. Positions and dimensions live in a
+        JSON-compatible map under the supplied state key, so project saves and reloads retain
+        dimensions, split ratios and floating stacking order. Hiding a pane frees its area without
+        deleting its saved split; dragging it out removes its old leaf and fills the gap. Panes do
+        not group into tabs.
+      </p>
+      <p>
+        The editor uses this API for Files, Code, Game, Scene inspector and Generator inspector
+        panes. Game starts in the center and can dock, float, collapse or hide. Restore a hidden
+        Game pane through
+        <strong>View → Game view</strong>; its saved placement is retained. Code fills the freed
+        center space when Game is hidden, collapsed or moved. Hiding Game leaves gameplay running;
+        F4 temporarily focuses the preview even when its pane is hidden. Desktop layouts dock;
+        narrow windows use the compact editor layout and preserve desktop placements.
+        <strong>View → Reset pane layout</strong> returns panes to their default docks. The
+        canvas-size dialog, About dialog, command palette, code pane and game pane demonstrate
+        component composition in ordinary editable Lisp files.
+      </p>
+      <p>
+        Opening a generator file starts a floating inspector. Drag its header to dock or split it,
+        use its chevron to collapse it, and its X button to close it. Next switches the inspected
+        generator while preserving placement; Code opens its source in the main Code pane. Preview,
+        annotated fields and output actions resize with the inspector. View groups all pane
+        visibility toggles first, then layout actions, tools and recovery.
+      </p>
+      <p>
+        To update an existing project, press F2 and choose
+        <strong>Project → Use latest editor</strong>. Customized editor files are preserved as
+        backups.
+      </p>
+    </main>
+    <footer><a href="api.html">Back to APIs</a><a href="../">Back to the workshop</a></footer>
+  </body>
+</html>

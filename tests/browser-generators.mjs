@@ -32,6 +32,10 @@ try {
   sources['commands/helper.lisp'] = '(defn helper [] 1)';
   sources['textures/stripe.generator.lisp'] =
     '(generator :image "Custom shape")\n(init! :custom-size 3 ["Size" 0 10 0.5])\n(init! :custom-enabled true ["Enabled"])\n(init! :custom-color "#bbd6a6" ["Tint"])\n(init! :custom-name "Example" ["Name"])\n(init! :custom-choice "one" ["Mode" ["one" "two"]])\n(defdraw render [] (pixels [p time] (background "#101613") (fill (get :custom-color)) (circle [160 120] (* 10 (get :custom-size)))))';
+  sources['textures/stripe.generator.lisp'] += Array.from(
+    { length: 4 },
+    (_, i) => `\n(init! :extra-${i} true ["Extra ${i}"])`,
+  ).join('');
   const project = projectSnapshot(sources, {
     paused: true,
     window: 'generator',
@@ -47,12 +51,17 @@ try {
       window.aioli?.running &&
       window.aioli.regions.some((r) => r.id === 'generator-field-custom-size'),
   );
-  assert.equal(await page.evaluate(() => window.aioli.state.tab), 'game');
+  assert.equal(await page.evaluate(() => window.aioli.state.tab), 'textures/stripe.generator.lisp');
   async function region(id) {
     await page.waitForFunction((id) => window.aioli.regions.some((r) => r.id === id), id);
     return page.evaluate((id) => window.aioli.regions.find((r) => r.id === id), id);
   }
   async function click(id) {
+    if (
+      id === 'close-window' &&
+      !(await page.evaluate(() => window.aioli.regions.some((r) => r.id === 'close-window')))
+    )
+      id = 'close-generator';
     const r = await region(id);
     await page.mouse.click(r.origin[0] + r.size[0] / 2, r.origin[1] + r.size[1] / 2);
     await page.evaluate(

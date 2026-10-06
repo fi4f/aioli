@@ -3,6 +3,8 @@
 (import "./theme.lisp")
 (init! :tab "game")
 (init! :show-code true)
+(init! :show-game true)
+(init! :game-collapsed false)
 (init! :show-tools false)
 (init! :tool "graphics")
 (init! :file-context false)
@@ -50,3 +52,6 @@
 
 (init! :new-file-type "script")
 (init! :new-generator-output "image")
+(init! :ui-docks (map))
+(init! :show-generator false)
+(init! :generator-collapsed false)

@@ -22,8 +22,11 @@ test('theme constants replace saved colors, live edits reapply, and every editor
   )) {
     const source = readFileSync(new URL('../' + file, import.meta.url), 'utf8');
     assert.doesNotMatch(source, /"#[0-9a-f]{3,8}"/i, file);
-    for (const match of source.matchAll(/\(get :(ui-[a-z-]+)\)/g))
+    // ui-docks is saved placement data, rather than a theme constant.
+    for (const match of source.matchAll(/\(get :(ui-[a-z-]+)\)/g)) {
+      if (match[1] === 'ui-docks') continue;
       assert.ok(match[1] in state, match[1]);
+    }
   }
 });
 

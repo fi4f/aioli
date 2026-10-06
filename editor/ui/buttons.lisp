@@ -28,13 +28,12 @@
 
 ; A visible pane folds into a rail without changing its visibility or content.
 (defn ui-pane-toggle [id key caption x y width right]
-  (let [collapsed (get key) origin [x y] size [width 36]
-        points-right (if collapsed (not right) right)]
+  (let [collapsed (get key) origin [x y] size [width 36]]
 
     (fill (if (or (hit? origin size) (focused? id)) (get :ui-hover) (get :ui-panel)))
     (rect origin size)
     (fill (get :ui-text))
-    (ui-chevron (if points-right "r" "l") (+ x 12) (+ y 10) (get :ui-icon-size))
+    (ui-chevron (if collapsed "u" "d") (+ x 12) (+ y 10) (get :ui-icon-size))
     (when (> width 80) (text [(+ x 36) (+ y 12)] caption))
     (region id (str (if collapsed "Expand " "Collapse ") caption) origin size)
     (when (or (activated? id) (and (pointer-pressed?) (hit? origin size)))

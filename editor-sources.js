@@ -7,6 +7,8 @@ export const editorSourcePaths = [
   'editor/policy/files.lisp',
   'editor/policy/inspector.lisp',
   'editor/ui/components.lisp',
+  'editor/ui/layout.lisp',
+  'editor/ui/docking.lisp',
   'editor/ui/code-input.lisp',
   'editor/ui/buttons.lisp',
   'editor/ui/sliders.lisp',
@@ -27,5 +29,6 @@ export const editorSourcePaths = [
   'editor/game-pane.lisp',
   'editor/parameter-pane.lisp',
   'editor/workspace.lisp',
+  'editor/docked-workspace.lisp',
   'editor/asset-preview.lisp',
 ];

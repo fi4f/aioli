@@ -1,4 +1,11 @@
 ; A generator describes its state; this inspector has no recipe-specific controls.
+(defn generator-text-editing? []
+  (and (get :show-generator) (not (= (get :inspector-edit-key) ""))
+       (not (= (generator-edit-kind) "color"))))
+
+(defn toggle-generator-collapse []
+  (set! :generator-collapsed (not (get :generator-collapsed)))
+  (when (get :generator-collapsed) (set! :inspector-edit-key "")))
 (defn generator-field [field x y width]
   (let [key (nth field 0) caption (nth field 1) kind (nth field 2)
         id (str "generator-field-" key)]
@@ -12,54 +19,56 @@
           (when (ui-button id (str caption " / " (if (= kind "data") (slice (json-write (get key)) 0 60) (get key))) [x y] [width 32] false)
             (edit-generator-field key)))))))
 
-(defn generator-window [kind x y w h]
-  (let [path (generator-path) files (generator-files)
-        wide (> w 760) left (if wide (floor (* w 0.5)) w)
-        gx (if wide (+ x left 16) (+ x 16))
-        gy (if wide (+ y 42) (+ y 166)) gw (if wide (- w left 32) (- w 32))
-        output (generator-output) fields (generator-fields)
-        preview-height (if (= output "audio") 48 (if wide 150 90))
-        fy (+ gy preview-height 20)
-        height (max (get :ui-field-height) (- (+ y h) fy 136))]
-    (when (ui-button :generator-select (if (= path "") "No .generator.lisp files" (str path " / Next"))
-                    [(+ x 16) y] [(- w 32) 32] false)
-      (repeat (count files) i
-        (when (= path (nth files i))
-          (open-generator (nth files (mod (+ i 1) (count files)))))))
-    (when (not (= path ""))
-      (code-editor [(+ x 16) (+ y 42)] [(- left 32) (if wide (- h 58) 108)] path)
-      (if (= output "image")
-        (image-preview [gx gy] [(min gw (* preview-height (/ 4 3))) preview-height])
-        (if (= output "text")
-          (do
-            (init! :text-preview-offset 0) (init! :text-preview-x 0)
-            (ui-inspector-scroll :generator-text-scroll :text-preview-offset gx gy gw preview-height (* (generator-text-line-count) 18))
-            (text-preview [gx gy] [(- gw 16) preview-height]))
-          (do (fill (get :ui-accent)) (waveform [gx gy] [gw preview-height] true))))
-      (let [offset (ui-inspector-scroll :generator-inspector-scroll :inspector-offset gx fy gw height (* (count fields) (get :ui-field-height)))
-            first (floor (/ offset (get :ui-field-height)))]
-        (scope
-          (clip [gx fy] [(- gw 16) height])
-          (repeat (min (- (count fields) first) (+ 2 (floor (/ height (get :ui-field-height))))) i
-            (generator-field (nth fields (+ first i)) gx (+ fy (* (+ first i) (get :ui-field-height)) (- 0 offset)) (- gw 16)))))
-      (when (and (not (= (get :inspector-edit-key) ""))
-                 (not (= (generator-edit-kind) "color")))
-        (code-editor [gx (+ y h -122)] [(- gw 76) 32] :__generatorValue)
-        (when (ui-button :inspector-apply "Apply" [(+ gx gw -72) (+ y h -122)] [72 32] false)
-          (apply-generator-field)))
-      (if (= output "image")
-        (do
-          (when (ui-button :generator-keep "Keep" [gx (+ y h -44)] [72 32] false) (save-image-resource))
-          (when (ui-button :generator-export "PNG" [(+ gx 80) (+ y h -44)] [72 32] false) (export-image)))
-        (if (= output "text")
-          (do
-            (scope (clip [gx (+ y h -84)] [gw 34])
-              (fill (get :ui-muted)) (text [gx (+ y h -84)] (str "File: " (generator-filename)))
-              (text [gx (+ y h -66)] "Shift+wheel scrolls sideways"))
-            (when (ui-button :generator-generate "Generate" [gx (+ y h -44)] [88 32] false) (generate-text-preview))
-            (when (ui-button :generator-keep "Keep" [(+ gx 96) (+ y h -44)] [64 32] false) (save-text-resource))
-            (when (ui-button :generator-export "Download" [(+ gx 168) (+ y h -44)] [100 32] false) (export-text)))
-        (do
-          (when (ui-button :generator-play "Play" [gx (+ y h -44)] [72 32] false) (play-generated-sound))
-          (when (ui-button :generator-keep "Keep" [(+ gx 80) (+ y h -44)] [72 32] false) (save-sound-resource))
-          (when (ui-button :generator-export "WAV" [(+ gx 160) (+ y h -44)] [72 32] false) (export-sound))))))))
+(defn generator-field-list [origin size]
+  (let [fields (generator-fields) x (nth origin 0) y (nth origin 1)
+        width (nth size 0) height (max 1 (nth size 1))
+        offset (ui-inspector-scroll :generator-inspector-scroll :inspector-offset x y width height (* (count fields) (get :ui-field-height)))
+        first (min (count fields) (floor (/ offset (get :ui-field-height))))
+        last (min (count fields) (+ first 2 (floor (/ height (get :ui-field-height)))))]
+    (scope (clip origin [(max 0 (- width 16)) height])
+      (mapv (fn [i] (generator-field (nth fields i) x (+ y (* i (get :ui-field-height)) (- 0 offset)) (max 1 (- width 16))))
+        (slice (range (count fields)) first last)))))
+
+(defn generator-preview-content [origin size]
+  (let [output (generator-output) x (nth origin 0) y (nth origin 1)
+        w (nth size 0) h (nth size 1)]
+    (if (= output "image")
+      (image-preview origin [(min w (* h (/ 4 3))) h])
+      (if (= output "text")
+        (do (init! :text-preview-offset 0) (init! :text-preview-x 0)
+          (ui-inspector-scroll :generator-text-scroll :text-preview-offset x y w h (* (generator-text-line-count) 18))
+          (text-preview origin [(max 1 (- w 16)) h]))
+        (do (fill (get :ui-accent)) (waveform origin size true))))))
+
+(defn generator-output-controls []
+  (let [output (generator-output)]
+    (ui/row (map :gap 8)
+      [(if (= output "audio") (ui/button :generator-play "Play" (fn [] (play-generated-sound)))
+         (if (= output "text") (ui/button :generator-generate "Generate" (fn [] (generate-text-preview))) nil))
+       (ui/button :generator-keep "Keep"
+         (fn [] (if (= output "image") (save-image-resource)
+           (if (= output "audio") (save-sound-resource) (save-text-resource)))))
+       (ui/button :generator-export (if (= output "image") "PNG" (if (= output "audio") "WAV" "Download"))
+         (fn [] (if (= output "image") (export-image)
+           (if (= output "audio") (export-sound) (export-text)))))])))
+
+(defn generator-pane-content [origin size]
+  (when (not (get :generator-collapsed))
+    (let [path (generator-path)]
+      (ui/render origin size
+        (ui/column (map :padding 16 :gap 12)
+          [(ui/row (map)
+             [(ui/with (map :grow 1) (ui/button :generator-select
+                (if (= path "") "No generators" (str path " / Next")) (fn [] (select-next-generator))))
+              (ui/button :generator-code "Code" (fn [] (open-generator-code)))])
+           (if (= path "") (ui/muted "Add a .generator.lisp file to begin")
+             (ui/column (map :grow 1 :gap 12)
+               [(ui/custom (map :height (if (= (generator-output) "audio") 48
+                   (min 150 (max 50 (* (nth size 1) 0.25))))) generator-preview-content)
+                (ui/custom (map :grow 1) generator-field-list)
+                (if (generator-text-editing?)
+                  (ui/row (map)
+                    [(ui/with (map :grow 1) (ui/code :__generatorValue))
+                     (ui/button :inspector-apply "Apply" (fn [] (apply-generator-field)))]) nil)
+                (if (= (generator-output) "text") (ui/muted (str "File: " (generator-filename))) nil)
+                (generator-output-controls)]))])))))

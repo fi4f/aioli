@@ -40,6 +40,9 @@ import { ResourceIcons } from './resource-icons.js';
 import { planFileMove } from './file-moves.js';
 import { refreshLinkedAssets } from './linked-assets.js';
 import { CodeInput } from './code-input.js';
+import { layoutUI } from './ui-layout.js';
+import { dockLayout, DockInteraction } from './ui-docking.js';
+import { removeLeaf } from './ui-dock-tree.js';
 import { editorSourcePaths } from './editor-sources.js';
 import { openTab, closeTab, renameTab, tabLayout } from './code-tabs.js';
 import { AssetPreview } from './asset-preview.js';
@@ -63,6 +66,7 @@ const resourceIcons = new ResourceIcons((images) => gpu?.setIcons(images));
 
 /** Browser services for the Lisp editor; appearance and layout stay in Lisp. */
 const audioOutput = new AudioOutput();
+const dockInteraction = new DockInteraction();
 const $ = (id) => document.getElementById(id),
   canvas = $('app'),
   storageKey = 'aioli.project';
@@ -259,6 +263,7 @@ function topRegion(x, y) {
   return regions.findLast(
     (r) =>
       inBox(x, y, r.origin, r.size) &&
+      dockInteraction.visible(r, x, y) &&
       (!r.clip || inBox(x, y, r.clip.slice(0, 2), r.clip.slice(2))),
   );
 }
@@ -319,6 +324,7 @@ function previewAsset(path) {
  * consume input or perform file/audio actions; only the active/recovery editor can.
  */
 function makeRuntime(target, candidateSources = sources, candidateResources = resources) {
+  const dockScopes = [];
   let draw,
     items = [],
     patch = [],
@@ -724,7 +730,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           if (sourceRole(path, result) === 'generator')
             return evaluateGeneratorSelection(path).then((ok) => {
               if (ok) {
-                state.window = 'generator';
+                showGeneratorPane(path);
                 state['selected-file'] = path;
                 state['inspector-offset'] = 0;
                 state['text-preview-offset'] = state['text-preview-x'] = 0;
@@ -930,15 +936,46 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       },
       'open-generator': actions(async (path) => {
         if (!path) {
-          state.window = 'generator';
+          showGeneratorPane();
           return;
         }
         if (sourceRole(path, result) !== 'generator' || !(sourceKey(path) in sources))
           throw new Error('Expected a .generator.lisp file');
         if (await evaluateGeneratorSelection(path)) {
-          state.window = 'generator';
+          showGeneratorPane(path);
           state['inspector-offset'] = 0;
           state['text-preview-offset'] = state['text-preview-x'] = 0;
+        }
+      }),
+      'show-generator-pane': actions(() => showGeneratorPane(state['active-generator'])),
+      'close-generator': actions(() => {
+        state['show-generator'] = false;
+        state['inspector-edit-key'] = '';
+        dirty = true;
+      }),
+      'open-generator-code': actions(() => {
+        const path = state['active-generator'];
+        if (path) {
+          openTab(state, sources, sourceKey(path), runtime);
+          state['show-code'] = true;
+          state['inspector-edit-key'] = '';
+          if (innerWidth < (state['ui-narrow-width'] ?? 850)) state['show-generator'] = false;
+        }
+      }),
+      'select-next-generator': actions(async () => {
+        const files = Object.keys(sources)
+          .map(sourcePath)
+          .filter((path) => sourceRole(path, runtime) === 'generator')
+          .sort();
+        if (files.length) {
+          const next = files[(files.indexOf(state['active-generator']) + 1) % files.length];
+          if (await evaluateGeneratorSelection(next)) {
+            if (state['show-code']) openTab(state, sources, sourceKey(next), runtime);
+            state['inspector-offset'] = 0;
+            state['inspector-edit-key'] = '';
+            state['text-preview-offset'] = state['text-preview-x'] = 0;
+            dirty = true;
+          }
         }
       }),
       'edit-generator-field': actions((key) => {
@@ -1024,6 +1061,65 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         exportGeneratedSound(path, false),
       ),
       'pointer-x': () => pointer.x,
+      'ui-layout': (component, origin, size) => layoutUI(component, origin, size, target),
+      'ui-dock-layout': (placements, panes, origin, size, key) => {
+        const entries = dockLayout(placements, panes, origin, size);
+        if (live()) dockInteraction.observe(key, placements, panes, origin, size, entries);
+        return entries;
+      },
+      'ui-dock-begin': (key, id) => dockScopes.push({ key, id, start: items.length }),
+      'ui-dock-end': () => {
+        const scope = dockScopes.pop();
+        for (const item of items.slice(scope.start)) {
+          item.dockOwner ??= scope.id;
+          item.dockKey ??= scope.key;
+        }
+      },
+      'ui-dock-resizers': (key) => {
+        if (live()) items.push(...dockInteraction.resizeRegions(key));
+      },
+      'ui-region': (id, label, origin, size, enabled, checked, decorative) => {
+        items.push({
+          id,
+          label,
+          origin,
+          size,
+          disabled: !enabled,
+          checked,
+          decorative,
+          clip: [...draw.state.clip],
+        });
+      },
+      'ui-dock-preview': () => (live() ? (dockInteraction.preview?.rect ?? null) : null),
+      'ui-dock-feedback': () => (live() ? (dockInteraction.preview ?? null) : null),
+      'ui-dock-handle': (
+        key,
+        id,
+        label,
+        origin,
+        size,
+        paneOrigin,
+        paneSize,
+        workspaceOrigin,
+        workspaceSize,
+        dockDefault,
+        dockKind,
+      ) => {
+        if (!live() || size.some((n) => n <= 0)) return;
+        items.push({
+          id: `dock-${dockKind}-${id}`,
+          label,
+          origin,
+          size,
+          dockPane: id,
+          dockKey: key,
+          dockDefault,
+          dockKind,
+          decorative: true,
+          dockRect: [...paneOrigin, ...paneSize],
+          dockWorkspace: [...workspaceOrigin, ...workspaceSize],
+        });
+      },
       'pointer-y': () => pointer.y,
       'pointer-down?': () => live() && pointer.down,
       'pointer-pressed?': () => live() && pointer.pressed,
@@ -1073,7 +1169,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         const application = result.gameRuntime ?? gameRuntime;
         const scene = 'scene' in result ? result.scene : activeScene;
         if (application)
-          draw.composite(
+          draw.rasterComposite(
             drawApplication({ runtime: application, scene }, canvasSize(target)),
             origin,
             size,
@@ -1453,7 +1549,12 @@ async function evaluate({
     applicationState = gameTarget;
     activeScene = nextScene;
     if (sceneChanged) sceneTime = 0;
-    const pixelPrograms = gpu?.pixelSource(stagedDraw);
+    // Shader inspection includes applications rendered into nested pixel buffers.
+    const materialCommands = (list) =>
+      list.commands.flatMap((command) =>
+        command.surface ? materialCommands(command.surface) : [command],
+      );
+    const pixelPrograms = gpu?.pixelSource({ commands: materialCommands(stagedDraw) });
     compiled = {
       code: pixelPrograms?.source ?? '',
       primitives:
@@ -1489,6 +1590,33 @@ async function evaluate({
 }
 async function evaluateGeneratorSelection(path) {
   return evaluate({ generator: path });
+}
+function showGeneratorPane(path = '') {
+  state.window = '';
+  state['show-generator'] = true;
+  state['generator-collapsed'] = false;
+  state['preview-focused'] = false;
+  state['inspector-edit-key'] = '';
+  const width = Math.min(560, Math.max(120, innerWidth - 32));
+  const height = Math.min(680, Math.max(80, innerHeight - 100));
+  const placements = state['ui-docks'] ?? {};
+  state['ui-docks'] = {
+    ...placements,
+    ...(placements._tree ? { _tree: removeLeaf(placements._tree, 'generator') } : {}),
+    generator: {
+      dock: 'floating',
+      x: (innerWidth - width) / 2,
+      y: Math.max(51, 51 + (innerHeight - 81 - height) / 2),
+      width,
+      height,
+      z: Math.max(0, ...Object.values(placements).map((entry) => Number(entry?.z) || 0)) + 1,
+    },
+  };
+  if (path && sourceKey(path) in sources) {
+    openTab(state, sources, sourceKey(path), runtime);
+    state['show-code'] = true;
+  }
+  dirty = true;
 }
 function refreshAudio(force = false) {
   if (!runtime) return;
@@ -1600,7 +1728,9 @@ async function exportGeneratedSound(path, shouldDownload) {
 // Hidden accessibility mirrors never paint the editor. Lisp regions define them.
 let accessibilitySignature = '';
 function accessibility() {
-  const current = regions.filter((r) => !r.scrollKey && !['source', 'world'].includes(r.id)),
+  const current = regions.filter(
+      (r) => !r.decorative && !r.scrollKey && !['source', 'world'].includes(r.id),
+    ),
     signature = JSON.stringify(current);
   if (signature === accessibilitySignature) {
     $('accessibility')
@@ -1622,6 +1752,7 @@ function accessibility() {
       control.dataset.key = r.key;
       control.setAttribute('aria-label', r.label);
       control.oninput = () => {
+        dockInteraction.promote(state, r);
         state[r.key] = Number(control.value);
         if (r.key.startsWith('__scene-')) {
           const key = r.key.slice(8);
@@ -1635,7 +1766,13 @@ function accessibility() {
     } else {
       control = document.createElement('button');
       control.textContent = r.label;
-      control.onclick = () => activations.add(r.id);
+      control.disabled = Boolean(r.disabled);
+      control.onclick = () => {
+        if (dockInteraction.promote(state, r)) dirty = true;
+        activations.add(r.id);
+      };
+      if (!r.menuItem && typeof r.checked === 'boolean')
+        control.setAttribute('aria-pressed', String(r.checked));
       if (r.menuItem) {
         control.disabled = r.disabled;
         control.setAttribute(
@@ -1647,6 +1784,7 @@ function accessibility() {
     }
     control.dataset.region = r.id;
     control.onfocus = () => {
+      if (dockInteraction.promote(state, r)) dirty = true;
       code.focus = 'ui';
       keys.clear();
     };
@@ -1683,7 +1821,7 @@ function openFileContext(row, x, y) {
 }
 function saveFilePath() {
   if (['image-asset', 'audio-asset'].includes(state.window)) return state['preview-path'];
-  if (state.window === 'generator') return state['active-generator'];
+  if (state['show-generator'] && code.tab === '__generatorValue') return state['active-generator'];
   if (state.tab in sources && !state.tab.startsWith('__')) return sourcePath(state.tab);
   return state['selected-file'] in resources ? state['selected-file'] : '';
 }
@@ -1901,6 +2039,7 @@ canvas.addEventListener('pointerdown', (e) => {
   pointer.x = e.clientX;
   pointer.y = e.clientY;
   if (e.button === 2) {
+    if (dockInteraction.promote(state, topRegion(pointer.x, pointer.y))) dirty = true;
     openFileContext(fileRegionAt(pointer.x, pointer.y), pointer.x, pointer.y);
     return;
   }
@@ -1908,6 +2047,8 @@ canvas.addEventListener('pointerdown', (e) => {
   pointer.down = true;
   pointer.pressed = true;
   pointer.target = topRegion(pointer.x, pointer.y);
+  if (dockInteraction.promote(state, pointer.target)) dirty = true;
+  dockInteraction.begin(state, pointer.target, pointer.x, pointer.y);
   canvas.setPointerCapture(e.pointerId);
   if (
     !pending &&
@@ -1938,6 +2079,13 @@ canvas.addEventListener('pointermove', (e) => {
   pointer.moved = true;
   pointer.x = e.clientX;
   pointer.y = e.clientY;
+  if (pointer.down && dockInteraction.move(pointer.x, pointer.y)) {
+    dirty = true;
+    canvas.style.cursor = dockInteraction.cursor(dockInteraction.drag.region);
+    return;
+  }
+  const dockHandle = pointer.down ? pointer.target : topRegion(pointer.x, pointer.y);
+  canvas.style.cursor = dockInteraction.cursor(dockHandle, pointer.down);
   if (pointer.down && fileDrag && Math.hypot(pointer.x - fileDrag.x, pointer.y - fileDrag.y) > 6) {
     fileDrag.active = true;
     updateFileDrag();
@@ -1945,6 +2093,7 @@ canvas.addEventListener('pointermove', (e) => {
   if (pointer.down && code.drag) code.pointer(pointer.x, pointer.y, true);
 });
 const release = () => {
+  dockInteraction.end();
   pointer.down = false;
   pointer.capture = null;
   pointer.target = null;
@@ -1968,10 +2117,14 @@ canvas.addEventListener('pointerup', () => {
   }
   release();
 });
-canvas.addEventListener('pointercancel', release);
+canvas.addEventListener('pointercancel', () => {
+  dockInteraction.end(true);
+  release();
+});
 canvas.addEventListener(
   'wheel',
   (e) => {
+    if (dockInteraction.promote(state, topRegion(e.clientX, e.clientY))) dirty = true;
     const scroll = regions.findLast(
       (r) => r.scrollKey && inBox(e.clientX, e.clientY, r.origin, r.size),
     );
@@ -2069,6 +2222,7 @@ function enterRecovery() {
   editorFailed = false;
   state.tab = 'main';
   state['show-code'] = true;
+  state['preview-focused'] = false;
   state['show-tools'] = false;
   state['file-path-editing'] = false;
   state.menu = false;
@@ -2087,6 +2241,12 @@ function togglePreviewFocus() {
   dirty = true;
 }
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && dockInteraction.drag) {
+    dockInteraction.end(true);
+    release();
+    e.preventDefault();
+    return;
+  }
   if (e.key === 'Escape' && fileDrag) {
     e.preventDefault();
     release();
@@ -2166,6 +2326,7 @@ document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'p') {
     e.preventDefault();
     state.window = state.window === 'palette' ? '' : 'palette';
+    if (state.window === 'palette') state['preview-focused'] = false;
     sources.__palette = '';
     keys.clear();
     return;
@@ -2204,6 +2365,7 @@ document.addEventListener('keyup', (e) =>
 );
 window.addEventListener('blur', () => {
   keys.clear();
+  dockInteraction.end(true);
   release();
 });
 $('file-input').onchange = async (e) => {
@@ -2302,6 +2464,7 @@ $('generator-color').addEventListener('change', () => {
 });
 
 function frame(now) {
+  dockInteraction.tick(now);
   // Gameplay may pause/fail independently. Keep the editor available for repairs.
   const dt = Math.min((now - lastFrame) / 1000, 0.04);
   lastFrame = now;
@@ -2397,6 +2560,9 @@ if (!runtime) {
 requestAnimationFrame(frame);
 // Read-only snapshots for integration checks, not a second editor control API.
 window.aioli = {
+  get dockPreview() {
+    return dockInteraction.preview ? structuredClone(dockInteraction.preview) : null;
+  },
   get state() {
     return { ...applicationState, ...state };
   },

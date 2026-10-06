@@ -13,11 +13,40 @@
   (menu-title :edit "Edit" 192 56)
   (menu-title :about "About" 248 72))
 
+; Visibility toggles, layout actions, tools, then recovery.
+(defn editor-view-menu [x y width w]
+  (when (menu-action :files "Files pane" "" x (+ y 4) width true (get :show-files))
+    (set! :show-files (not (get :show-files))) (set! :file-path-editing false))
+  (when (menu-action :code "Code pane" "" x (+ y 34) width true
+          (and (get :show-code) (or (>= w (get :ui-narrow-width)) (not (get :show-files)))))
+    (set! :show-code (if (and (< w (get :ui-narrow-width)) (get :show-files)) true (not (get :show-code))))
+    (when (< w (get :ui-narrow-width)) (set! :show-files false)))
+  (when (menu-action :game-view "Game view" "" x (+ y 64) width true (get :show-game))
+    (set! :show-game (not (get :show-game))) (set! :preview-focused false)
+    (when (and (< w (get :ui-narrow-width)) (get :show-game))
+      (set! :show-code false) (set! :show-files false)))
+  (when (menu-action :tools "Scene inspector" "" x (+ y 94) width true (get :show-tools))
+    (set! :show-tools (not (get :show-tools))))
+  (when (menu-action :generators "Generator inspector" "" x (+ y 124) width true (get :show-generator))
+    (if (get :show-generator) (close-generator) (open-generator (generator-path))))
+  (menu-divider x (+ y 159) width)
+  (when (menu-action :focus-preview-menu (if (get :preview-focused) "Restore editor" "Focus preview") "F4"
+          x (+ y 164) width true (get :preview-focused)) (toggle-preview-focus))
+  (when (menu-action :reset-pane-layout "Reset pane layout" "" x (+ y 194) width true nil) (set! :ui-docks (map)))
+  (menu-divider x (+ y 229) width)
+  (when (menu-action :commands "Command palette" "Ctrl+Shift+P" x (+ y 234) width true nil) (set! :window "palette"))
+  (when (menu-action :wgsl "Compiled WGSL" "" x (+ y 264) width true nil)
+    (set! :tab "wgsl") (set! :show-code true) (set! :show-files false))
+  (menu-divider x (+ y 299) width)
+  (when (menu-action :recovery-shell "Recovery shell" "F2" x (+ y 304) width true nil) (open-recovery))
+  (when (recovery?)
+    (when (menu-action :leave-recovery "Project editor" "" x (+ y 334) width true nil) (leave-recovery))))
+
 (defn editor-menu [w h]
   (let [kind (get :menu) width (min 312 (- w 16))
         anchor (if (= kind "file") 8 (if (= kind "project") 56 (if (= kind "view") 136 (if (= kind "edit") 192 248))))
         x (min anchor (- w width 8)) y 52
-        height (if (= kind "file") 384 (if (= kind "project") (if (recovery?) 204 164) (if (= kind "view") (if (recovery?) 308 276) (if (= kind "edit") 204 102))))]
+        height (if (= kind "file") 384 (if (= kind "project") (if (recovery?) 204 164) (if (= kind "view") (if (recovery?) 374 344) (if (= kind "edit") 204 102))))]
     ; A background region dismisses the menu without also activating a pane.
     (region :menu-dismiss "Close menu" [0 50] [w (- h 80)])
     (when (and (pointer-pressed?) (hit? [0 50] [w (- h 80)])) (set! :menu false))
@@ -51,21 +80,7 @@
             (when (recovery?)
               (when (menu-action :upgrade-editor "Use latest editor" "" x (+ y 164) width true nil) (upgrade-editor))))
           (if (= kind "view")
-            (do
-              (when (menu-action :code "Code pane" "" x (+ y 4) width true (and (get :show-code) (or (>= w (get :ui-narrow-width)) (not (get :show-files)))))
-                (set! :show-code (if (and (< w (get :ui-narrow-width)) (get :show-files)) true (not (get :show-code))))
-                (when (< w (get :ui-narrow-width)) (set! :show-files false)))
-              (when (menu-action :files "Files pane" "" x (+ y 34) width true (get :show-files))
-                (set! :show-files (not (get :show-files))) (set! :file-path-editing false))
-              (when (menu-action :tools "Scene inspector" "" x (+ y 64) width true (get :show-tools)) (set! :show-tools (not (get :show-tools))))
-              (when (menu-action :focus-preview-menu (if (get :preview-focused) "Restore editor" "Focus preview") "F4" x (+ y 94) width true (get :preview-focused)) (toggle-preview-focus))
-              (menu-divider x (+ y 129) width)
-              (when (menu-action :generators "Generator inspector" "" x (+ y 134) width true nil) (open-generator (generator-path)))
-              (when (menu-action :commands "Command palette" "Ctrl+Shift+P" x (+ y 164) width true nil) (set! :window "palette"))
-              (when (menu-action :wgsl "Compiled WGSL" "" x (+ y 198) width true nil) (set! :tab "wgsl") (set! :show-code true) (set! :show-files false))
-              (when (menu-action :recovery-shell "Recovery shell" "F2" x (+ y 238) width true nil) (open-recovery))
-              (when (recovery?)
-                (when (menu-action :leave-recovery "Project editor" "" x (+ y 268) width true nil) (leave-recovery))))
+            (editor-view-menu x y width w)
             (if (= kind "edit")
               (do
                 (when (menu-action :undo "Undo" "Ctrl+Z" x (+ y 4) width (can-edit-buffer? :undo) nil) (edit-buffer :undo))

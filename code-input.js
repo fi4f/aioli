@@ -145,6 +145,7 @@ export class CodeInput {
   }
 
   switch(tab, text, readOnly = false) {
+    if (this.tab === tab && this.session()?.text === text) return;
     // Native textarea offsets must address the same LF text as source layout.
     text = normalizeSource(text);
     if (!readOnly && tab in this.sources) this.sources[tab] = text;
@@ -167,18 +168,16 @@ export class CodeInput {
     if (!this.box) return;
     const bounds = this.box;
     const session = this.session();
-    const lines = session.text.split('\n');
+    const lines = session.lines;
     const visual = Math.max(0, Math.floor((y - bounds.y) / bounds.lineHeight) + session.scroll);
     const row =
       session.visual?.[Math.min(visual, session.visual.length - 1)]?.row ?? lines.length - 1;
-    const line = sourceLine(lines[row]);
+    const line = this.lineData(row).mapping;
     const column = Math.min(
       line.width,
       Math.max(0, Math.round((x - bounds.x - bounds.gutter) / GLYPH_WIDTH) + session.col),
     );
-    const index =
-      lines.slice(0, row).reduce((offset, line) => offset + line.length + 1, 0) +
-      line.offsetAtColumn(column);
+    const index = session.offsets[row] + line.offsetAtColumn(column);
     if (!drag) this.anchor = index;
     session.start = Math.min(this.anchor, index);
     session.end = Math.max(this.anchor, index);
@@ -193,6 +192,24 @@ export class CodeInput {
     if (!session) return;
     if (horizontal) session.col = Math.max(0, session.col + Math.sign(delta) * 4);
     else session.scroll = Math.max(0, session.scroll + Math.sign(delta) * 3);
+  }
+
+  /** Cache only a small working set; scrolling must not rescan the whole file. */
+  lineData(row) {
+    const session = this.session();
+    if (!session.lineCache.has(row)) {
+      if (session.lineCache.size >= MAX_VISIBLE_ROWS * 2)
+        session.lineCache.delete(session.lineCache.keys().next().value);
+      const text = session.lines[row];
+      session.lineCache.set(row, {
+        mapping: sourceLine(text),
+        tokens: tokenizeSourceLine(text).map((token) => ({
+          text: displaySource(token.text),
+          kind: token.kind,
+        })),
+      });
+    }
+    return session.lineCache.get(row);
   }
 
   /**
@@ -211,21 +228,27 @@ export class CodeInput {
     const gutter = Math.max(24, Number(metrics.gutter) || GUTTER_WIDTH);
     this.box = { x, y, w: width, h: height, lineHeight, gutter };
 
-    const lines = text.split('\n');
     const inline = !readOnly && !tab.startsWith('__');
     if (session.visualText !== text || session.inline !== inline) {
       session.visualText = text;
       session.inline = inline;
+      session.lines = text.split('\n');
+      session.offsets = [0];
+      for (const line of session.lines)
+        session.offsets.push(session.offsets.at(-1) + line.length + 1);
+      session.lineCache = new Map();
       const hooks = inline ? sourceHookLines(text) : [];
       session.visual = [];
       session.lineRows = [];
-      for (let row = 0; row < lines.length; row++) {
-        for (const hook of hooks.filter((hook) => hook.row === row))
-          session.visual.push({ row, hook });
+      let hookIndex = 0;
+      for (let row = 0; row < session.lines.length; row++) {
+        while (hooks[hookIndex]?.row === row)
+          session.visual.push({ row, hook: hooks[hookIndex++] });
         session.lineRows.push(session.visual.length);
         session.visual.push({ row });
       }
     }
+    const lines = session.lines;
     const visual = session.visual;
     const visibleRows = Math.max(1, Math.floor(height / lineHeight));
     const visibleColumns = Math.max(1, Math.floor((width - gutter) / GLYPH_WIDTH));
@@ -234,9 +257,17 @@ export class CodeInput {
       session.end = this.input.selectionEnd;
     }
     const caret = this.input.selectionDirection === 'backward' ? session.start : session.end;
-    const beforeCaret = text.slice(0, caret).split('\n');
-    const caretRow = beforeCaret.length - 1;
-    const caretColumn = sourceLine(lines[caretRow]).columnAtOffset(beforeCaret.at(-1).length);
+    let low = 0,
+      high = lines.length - 1;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (session.offsets[middle] <= caret) low = middle;
+      else high = middle - 1;
+    }
+    const caretRow = low;
+    const caretColumn = this.lineData(caretRow).mapping.columnAtOffset(
+      caret - session.offsets[caretRow],
+    );
 
     const caretVisualRow = session.lineRows[caretRow];
 
@@ -253,8 +284,6 @@ export class CodeInput {
     session.scroll = Math.min(session.scroll, Math.max(0, visual.length - visibleRows));
 
     const result = { rows: [], hooks: [], selections: [], caret: null };
-    const offsets = [0];
-    for (const line of lines) offsets.push(offsets.at(-1) + line.length + 1);
     const endRow = Math.min(
       visual.length,
       session.scroll + Math.min(visibleRows + 1, MAX_VISIBLE_ROWS),
@@ -271,9 +300,9 @@ export class CodeInput {
         ]);
         continue;
       }
-      const lineOffset = offsets[row];
+      const lineOffset = session.offsets[row];
       const line = lines[row];
-      const mapping = sourceLine(line);
+      const { mapping, tokens } = this.lineData(row);
       const textX = x + gutter;
 
       if (
@@ -295,11 +324,12 @@ export class CodeInput {
 
       const segments = [];
       let column = 0;
-      for (const token of tokenizeSourceLine(line)) {
-        const display = displaySource(token.text);
+      for (const token of tokens) {
+        const display = token.text;
         const start = Math.max(session.col, column);
         const end = Math.min(session.col + visibleColumns, column + display.length);
-        if (end > start) {
+        // Blank cells still advance columns, but need no glyphs or Lisp calls.
+        if (end > start && token.kind !== 'whitespace') {
           segments.push([
             [textX + (start - session.col) * GLYPH_WIDTH, top],
             display.slice(start - column, end - column),
@@ -308,6 +338,7 @@ export class CodeInput {
         }
         // Painting, scrolling and selection all count the same display cells.
         column += display.length;
+        if (column >= session.col + visibleColumns) break;
       }
       result.rows.push([
         [x, top],

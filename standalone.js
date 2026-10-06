@@ -131,7 +131,7 @@ export async function startApplication(project, canvas) {
       const { origin, size } = surface();
       draw = new DrawList(canvas.clientWidth, canvas.clientHeight);
       draw.surface(origin, size);
-      draw.composite(drawApplication({ runtime, scene }, logicalSize), origin, size);
+      draw.rasterComposite(drawApplication({ runtime, scene }, logicalSize), origin, size);
       gpu.draw(draw, elapsed);
       draw = null;
       pointer.pressed = false;

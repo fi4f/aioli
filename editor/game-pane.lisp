@@ -14,4 +14,8 @@
                     [(+ world-x (max 0 (- world-width 144))) 58] [(min 136 world-width) 32]
                     (get :preview-focused))
       (toggle-preview-focus))
-    (surface [sx sy] [sw sh])))
+    (when (or (get :preview-focused) (not (get :game-collapsed))) (surface [sx sy] [sw sh]))
+    (when (not (get :preview-focused))
+      (when (ui-chevron-button :collapse-game (if (get :game-collapsed) "Expand Game" "Collapse Game")
+                      (if (get :game-collapsed) "u" "d") [(+ world-x 8) 58] [32 32])
+        (set! :game-collapsed (not (get :game-collapsed)))))))

@@ -1,9 +1,12 @@
 ; editor/tool-window.lisp / live Lisp drawing and interaction.
 (defn project-window []
-  (let [kind (get :window)
+  (let [kind (if (and (= (get :window) "") (get :show-generator)) "generator" (get :window))
         w (min (if (= kind "palette") 720 960) (- (screen-width) 32))
-        h (min (if (= kind "palette") 480 720) (- (screen-height) 100))
-        x (/ (- (screen-width) w) 2) y 64]
+        h (min (if (= kind "palette") 480 (if (and (= kind "generator") (get :generator-collapsed)) 48 720)) (- (screen-height) 100))
+        x (/ (- (screen-width) w) 2)
+        y (if (= kind "generator")
+            (if (get :generator-collapsed) (- (screen-height) h 30)
+              (max 51 (+ 51 (/ (- (screen-height) 81 h) 2)))) 64)]
     ; This region intercepts background clicks without consuming child controls.
     (region :window "Project tool window" [x y] [w h])
     (fill (get :ui-shadow)) (rect [(- x 2) (- y 2)] [(+ w 4) (+ h 4)])
@@ -14,13 +17,17 @@
         (if (or (= kind "hooks") (= kind "hook-draw") (= kind "hook-sound")) (hook-title)
           (generator-title))))
     (when (ui-close-button :close-window "Close preview" [(+ x w -40) (+ y 4)] [32 32])
-      (set! :window ""))
+      (if (= kind "generator") (close-generator) (set! :window "")))
+    (when (= kind "generator")
+      (when (ui-chevron-button :collapse-generator (if (get :generator-collapsed) "Expand generator" "Collapse generator")
+                (if (get :generator-collapsed) "u" "d") [(+ x w -76) (+ y 4)] [32 32])
+        (toggle-generator-collapse)))
     (scope
       (clip [x (+ y 42)] [w (- h 42)])
       (if (= kind "palette") (command-palette x (+ y 48) w (- h 48))
         (if (or (= kind "hooks") (= kind "hook-draw") (= kind "hook-sound"))
           (hook-window kind x (+ y 48) w (- h 48))
-          (generator-window kind x (+ y 48) w (- h 48)))))))
+          (generator-pane-content [x (+ y 48)] [w (- h 48)]))))))
 
 
 ; Each hook can be inspected separately from the game's draw/update lifecycle.

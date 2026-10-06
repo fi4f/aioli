@@ -5,6 +5,7 @@ import { engineServices } from '../engine-services.js';
 import { parse } from '../lisp.js';
 import { compilePixelShader } from '../shader.js';
 import { projectSnapshot, readProject } from '../project.js';
+import { DrawList } from '../drawing.js';
 
 test('canvas dimensions validate and round-trip through project settings without exposing editor state', () => {
   assert.deepEqual(canvasSize(), [320, 240]);
@@ -27,4 +28,15 @@ test('shader dimensions use GPU size uniforms through symbols and canvas accesso
   assert.match(shader.code, /u\.data\[0\]\.y/);
   assert.match(shader.code, /u\.data\[0\]\.z/);
   assert.deepEqual(shader.params, []);
+});
+
+test('game surfaces preserve logical commands until rendered into their pixel buffer', () => {
+  const game = new DrawList(64, 64);
+  game.circle([32, 32], 20);
+  const host = new DrawList(1000, 800);
+  host.rasterComposite(game, [20, 30], [512, 512]);
+  assert.equal(host.commands.length, 1);
+  assert.deepEqual(host.commands[0].bounds, [20, 30, 512, 512]);
+  assert.equal(host.commands[0].surface, game);
+  assert.deepEqual(game.commands[0].bounds, [12, 12, 40, 40]);
 });
