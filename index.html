@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8">
+  <title>Aioli</title>
+  <textarea id="source" rows="12" cols="80" aria-label="Lisp source" spellcheck="false">(on render (context)
+  ((sh ()
+    (let uv (/ p (vec2 w h)))
+    (return (vec4 uv 0 1))) context))</textarea>
+  <button id="run" type="button">Run</button>
+  <label><input id="debug" type="checkbox" checked> Lisp diagnostics</label>
+  <pre id="error" role="alert"></pre>
+  <p>WebGPU canvas</p>
+  <canvas id="canvas" width="640" height="480" aria-label="Graphics output"></canvas>
+  <p><label for="javascript">Generated JavaScript</label></p>
+  <textarea id="javascript" rows="12" cols="80" readonly spellcheck="false"></textarea>
+  <p><label for="wgsl">Generated WGSL</label></p>
+  <textarea id="wgsl" rows="16" cols="80" readonly spellcheck="false"></textarea>
+  <script type="module">
+    import { Aioli, formatDiagnostic } from './aioli.js';
+
+    const showError = error => {
+      const message = formatDiagnostic(error);
+      document.getElementById('error').textContent = message;
+      console.error(message);
+    };
+    const run = document.getElementById('run');
+    run.disabled = true;
+    const runtime = new Aioli({ onError: showError });
+    try {
+      await runtime.attach(document.getElementById('canvas'));
+      run.disabled = false;
+    } catch (error) { showError(error); }
+
+    const generated = document.getElementById('javascript');
+    const wgsl = document.getElementById('wgsl');
+    const showProgram = program => {
+      generated.value = program.javascript;
+      wgsl.value = program.shaders.map(shader => shader.wgsl).join('\n\n');
+    };
+    const debug = document.getElementById('debug');
+    const build = () => runtime.compileScene(document.getElementById('source').value, { debug: debug.checked });
+    if (!run.disabled) showProgram(build());
+
+    document.getElementById('run').onclick = () => {
+      generated.value = '';
+      wgsl.value = '';
+      document.getElementById('error').textContent = '';
+      try {
+        const program = build();
+        showProgram(program);
+        runtime.activate(program);
+      } catch (error) {
+        showError(error);
+      }
+    };
+    debug.onchange = () => {
+      generated.value = '';
+      wgsl.value = '';
+      document.getElementById('error').textContent = '';
+      try { showProgram(build()); }
+      catch (error) {
+        document.getElementById('error').textContent = formatDiagnostic(error);
+      }
+    };
+  </script>
+</html>

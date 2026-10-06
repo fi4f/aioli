@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8">
+  <title>Aioli embedded demos</title>
+  <canvas id="first" width="320" height="240"></canvas>
+  <canvas id="second" width="240" height="180"></canvas>
+  <pre id="error" role="alert"></pre>
+  <script type="module">
+    import { Aioli, formatDiagnostic } from './aioli.js';
+
+    const report = error => {
+      document.getElementById('error').textContent += formatDiagnostic(error) + '\n';
+      console.error(formatDiagnostic(error));
+    };
+    try {
+      const first = new Aioli({ onError: report });
+      const second = new Aioli({ onError: report });
+      await first.attach(document.getElementById('first'));
+      await second.attach(document.getElementById('second'));
+      await first.load('./examples/blue.lisp');
+      await second.load('./examples/red.lisp');
+    } catch (error) { report(error); }
+  </script>
+</html>
