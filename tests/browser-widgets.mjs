@@ -232,7 +232,7 @@ try {
     await page.evaluate(() => {
       const source = window.aioli.regions.find((r) => r.id === 'source');
       const files = window.aioli.regions.find((r) => r.id === 'pane-files');
-      return source.origin[0] >= files.origin[0] + files.size[0];
+      return source.origin[1] + source.size[1] <= files.origin[1] && files.size[1] === 34;
     }),
   );
   assert.equal(

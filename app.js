@@ -2210,7 +2210,9 @@ canvas.addEventListener(
       return;
     }
     const r = topRegion(e.clientX, e.clientY);
-    if (r?.id === 'source') {
+    // Inline preview controls belong to the source viewport. They must not
+    // become wheel dead zones as their rows pass underneath a stationary pointer.
+    if (r?.id === 'source' || r?.id.startsWith('inspect-hook-')) {
       e.preventDefault();
       code.wheel(e.deltaY || e.deltaX, e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY));
     }
