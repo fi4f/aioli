@@ -7,7 +7,7 @@ import { engineServices } from '../engine-services.js';
 import { stageScene } from '../scenes.js';
 import { projectSnapshot, readProject } from '../project.js';
 
-const path = 'examples/kaboom.scene.lisp';
+const path = 'examples/boo-patrol.scene.lisp';
 const source = readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 function game() {
   const state = {},
@@ -23,68 +23,68 @@ function game() {
   return { state, keys, sounds, runtime };
 }
 
-test('Kaboom collision, controls, damage and restart work with ordinary engine services', () => {
+test('Boo Patrol collision, controls, damage and restart work with ordinary engine services', () => {
   const { state, keys, runtime } = game();
-  for (let i = 0; i < 3; i++) state[`kaboom-enemy-${i}-hp`] = 0;
+  for (let i = 0; i < 3; i++) state[`boo-enemy-${i}-hp`] = 0;
   keys.add('w');
   for (let i = 0; i < 200; i++) runtime.call('update', 0.05);
-  assert.ok(state['kaboom-x'] > 8.5 && state['kaboom-x'] < 8.83, 'stops against outer wall');
+  assert.ok(state['boo-x'] > 8.5 && state['boo-x'] < 8.83, 'stops against outer wall');
   keys.clear();
   keys.add('ArrowRight');
   runtime.call('update', 0.05);
-  assert.ok(state['kaboom-angle'] > 0);
+  assert.ok(state['boo-angle'] > 0);
   keys.clear();
   keys.add('r');
   runtime.call('update', 0.05);
-  assert.equal(state['kaboom-x'], 1.5);
-  assert.equal(state['kaboom-health'], 100);
+  assert.equal(state['boo-x'], 1.5);
+  assert.equal(state['boo-health'], 100);
   keys.clear();
-  state['kaboom-enemy-0-x'] = 1.8;
+  state['boo-enemy-0-x'] = 1.8;
   runtime.call('update', 0.05);
-  assert.equal(state['kaboom-health'], 88);
+  assert.equal(state['boo-health'], 88);
   runtime.call('update', 0.05);
-  assert.equal(state['kaboom-health'], 88, 'contact damage has a cooldown');
-  state['kaboom-health'] = 0;
+  assert.equal(state['boo-health'], 88, 'contact damage has a cooldown');
+  state['boo-health'] = 0;
   keys.add('w');
   runtime.call('update', 0.05);
-  assert.equal(state['kaboom-x'], 1.5, 'dead players cannot move');
+  assert.equal(state['boo-x'], 1.5, 'dead players cannot move');
 });
 
-test('Kaboom shots hit the nearest visible monster, obey walls, and unlock the exit', () => {
+test('Boo Patrol shots hit the nearest visible monster, obey walls, and unlock the exit', () => {
   const { state, runtime, sounds, keys } = game();
   for (let i = 0; i < 3; i++) {
-    state[`kaboom-enemy-${i}-x`] = 4.5 + i;
-    state[`kaboom-enemy-${i}-y`] = 1.5;
+    state[`boo-enemy-${i}-x`] = 4.5 + i;
+    state[`boo-enemy-${i}-y`] = 1.5;
   }
-  runtime.call('kaboom-fire');
-  assert.equal(state['kaboom-enemy-0-hp'], 1);
-  assert.equal(state['kaboom-enemy-1-hp'], 2);
-  for (let i = 0; i < 5; i++) runtime.call('kaboom-fire');
-  assert.equal(state['kaboom-kills'], 3);
-  assert.equal(state['kaboom-won'], false);
-  state['kaboom-x'] = 8.5;
-  state['kaboom-y'] = 8.5;
+  runtime.call('boo-fire');
+  assert.equal(state['boo-enemy-0-hp'], 1);
+  assert.equal(state['boo-enemy-1-hp'], 2);
+  for (let i = 0; i < 5; i++) runtime.call('boo-fire');
+  assert.equal(state['boo-kills'], 3);
+  assert.equal(state['boo-won'], false);
+  state['boo-x'] = 8.5;
+  state['boo-y'] = 8.5;
   runtime.call('update', 0.016);
-  assert.equal(state['kaboom-won'], true);
-  assert.ok(sounds.includes('kaboom-victory'));
+  assert.equal(state['boo-won'], true);
+  assert.ok(sounds.includes('boo-victory'));
   keys.add('r');
   runtime.call('update', 0.016);
   keys.clear();
-  state['kaboom-y'] = 2.5;
-  state['kaboom-enemy-0-y'] = 2.5;
-  runtime.call('kaboom-fire');
-  assert.equal(state['kaboom-enemy-0-hp'], 2, 'stone wall blocks shots');
+  state['boo-y'] = 2.5;
+  state['boo-enemy-0-y'] = 2.5;
+  runtime.call('boo-fire');
+  assert.equal(state['boo-enemy-0-hp'], 2, 'stone wall blocks shots');
   keys.add(' ');
   runtime.call('update', 0.016);
   assert.equal(
-    sounds.filter((s) => s === 'kaboom-pistol').length,
+    sounds.filter((s) => s === 'boo-lantern').length,
     7,
     'held trigger respects cooldown',
   );
-  assert.equal(runtime.collectSound('kaboom-pistol').length, 2);
+  assert.equal(runtime.collectSound('boo-lantern').length, 2);
 });
 
-test('Kaboom render stays within the standard budget across the walkable maze', () => {
+test('Boo Patrol render stays within the standard budget across the walkable maze', () => {
   const { runtime, state } = game();
   const application = engineServices().create(state);
   const scene = stageScene({ [path]: source }, path, application, () =>
@@ -94,11 +94,11 @@ test('Kaboom render stays within the standard budget across the walkable maze', 
   const before = { ...state };
   for (let y = 1; y < 9; y++)
     for (let x = 1; x < 9; x++) {
-      if (runtime.call('kaboom-wall?', x, y)) continue;
-      state['kaboom-x'] = x + 0.5;
-      state['kaboom-y'] = y + 0.5;
+      if (runtime.call('boo-wall?', x, y)) continue;
+      state['boo-x'] = x + 0.5;
+      state['boo-y'] = y + 0.5;
       for (const angle of [0, 0.7854, 1.5708, 3.14159, -1.5708]) {
-        state['kaboom-angle'] = angle;
+        state['boo-angle'] = angle;
         const commands = runtime.drawFrame().commands;
         assert.ok(commands.length > 100 && commands.length < 300);
       }
@@ -108,13 +108,13 @@ test('Kaboom render stays within the standard budget across the walkable maze', 
   assert.deepEqual(state, before, 'drawing does not mutate inspector state');
 });
 
-test('Kaboom traces the world and sprite depth on the GPU without CPU column rays', () => {
+test('Boo Patrol traces the world and sprite depth on the GPU without CPU column rays', () => {
   const { runtime, state } = game();
-  state['kaboom-enemy-0-x'] = 4;
-  state['kaboom-enemy-0-y'] = 1.5;
-  state['kaboom-enemy-1-hp'] = 0;
-  state['kaboom-enemy-2-hp'] = 0;
-  runtime.global['kaboom-ray'] = () => {
+  state['boo-enemy-0-x'] = 4;
+  state['boo-enemy-0-y'] = 1.5;
+  state['boo-enemy-1-hp'] = 0;
+  state['boo-enemy-2-hp'] = 0;
+  runtime.global['boo-ray'] = () => {
     throw new Error('CPU visibility ray during drawing');
   };
   const commands = runtime.drawFrame().commands;
@@ -135,7 +135,7 @@ test('Kaboom traces the world and sprite depth on the GPU without CPU column ray
   );
 });
 
-test('Kaboom HUD and end screens use full-size glyphs on whole pixel boundaries', () => {
+test('Boo Patrol HUD and end screens use full-size glyphs on whole pixel boundaries', () => {
   for (const [width, height] of [
     [320, 240],
     [640, 360],
@@ -147,7 +147,7 @@ test('Kaboom HUD and end screens use full-size glyphs on whole pixel boundaries'
     runtime.load(parse(source));
     runtime.call('enter');
     for (const dead of [false, true]) {
-      state['kaboom-health'] = dead ? 0 : 100;
+      state['boo-health'] = dead ? 0 : 100;
       const glyphs = runtime
         .drawFrame(width, height)
         .commands.filter((command) => command.meta[0] === 3);

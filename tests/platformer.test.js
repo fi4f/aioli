@@ -19,7 +19,7 @@ function game() {
   };
   return { state, keys, sounds, runtime, step };
 }
-test('Pocket Peaks supports grounded motion, variable jump height and coin blocks', () => {
+test('Moonlit Mail supports grounded motion, variable jump height and coin blocks', () => {
   const { state, keys, runtime, step } = game();
   step(10);
   assert.equal(state['peak-y'], 192);
@@ -45,10 +45,10 @@ test('Pocket Peaks supports grounded motion, variable jump height and coin block
   assert.equal(state['peak-coins'], 1);
 });
 
-test('Pocket Peaks jump can reach the four-tile-high platforms and their coins', () => {
+test('Moonlit Mail jump can reach the four-tile-high platforms and their coins', () => {
   const { state, keys, step } = game();
   state['peak-x'] = 400;
-  state['peak-slime-1-alive'] = false;
+  state['peak-ghost-1-alive'] = false;
   keys.add(' ');
   let highest = state['peak-y'];
   // Jump beside the platform rather than into its underside.
@@ -60,7 +60,7 @@ test('Pocket Peaks jump can reach the four-tile-high platforms and their coins',
   assert.ok(highest + 16 < 144, 'feet rise above the four-tile-high platform');
 });
 
-test('Pocket Peaks allows ledge grace jumps and buffers a jump just before landing', () => {
+test('Moonlit Mail allows ledge grace jumps and buffers a jump just before landing', () => {
   const ledge = game();
   ledge.state['peak-x'] = 289;
   ledge.step();
@@ -80,7 +80,7 @@ test('Pocket Peaks allows ledge grace jumps and buffers a jump just before landi
   for (let i = 0; i < 10 && landing.state['peak-vy'] >= 0; i++) landing.step();
   assert.ok(landing.state['peak-vy'] < 0, 'buffered jump fires after landing');
 });
-test('Pocket Peaks pits respawn at checkpoints, stomps bounce, and restart resets progress', () => {
+test('Moonlit Mail pits respawn at checkpoints, stomps bounce, and restart resets progress', () => {
   const { state, keys, runtime, step } = game();
   state['peak-x'] = 600;
   step();
@@ -89,24 +89,24 @@ test('Pocket Peaks pits respawn at checkpoints, stomps bounce, and restart reset
   step();
   assert.equal(state['peak-x'], 592);
   assert.equal(state['peak-lives'], 2);
-  state['peak-x'] = state['peak-slime-0-x'];
+  state['peak-x'] = state['peak-ghost-0-x'];
   state['peak-y'] = 178;
   state['peak-vy'] = 180;
   state['peak-invincible'] = 0;
   step(4);
-  assert.equal(state['peak-slime-0-alive'], false);
+  assert.equal(state['peak-ghost-0-alive'], false);
   assert.ok(state['peak-vy'] < 0);
   keys.add('r');
   step();
   assert.equal(state['peak-x'], 32);
   assert.equal(state['peak-lives'], 3);
   assert.equal(state['peak-checkpoint'], false);
-  assert.equal(state['peak-slime-0-alive'], true);
+  assert.equal(state['peak-ghost-0-alive'], true);
   state['peak-x'] = 1250;
   step();
   assert.equal(state['peak-won'], true);
 });
-test('Pocket Peaks render is bounded and does not mutate gameplay state', () => {
+test('Moonlit Mail render is bounded and does not mutate gameplay state', () => {
   const { state, runtime } = game();
   for (const camera of [0, 250, 600, 992]) {
     state['peak-camera'] = camera;
@@ -118,7 +118,7 @@ test('Pocket Peaks render is bounded and does not mutate gameplay state', () => 
   }
 });
 
-test('Pocket Peaks can be completed through real running and jumping inputs without teleporting', () => {
+test('Moonlit Mail can be completed through real running and jumping inputs without teleporting', () => {
   const { state, keys, runtime, step } = game();
   keys.add('d');
   keys.add('x');
@@ -128,9 +128,9 @@ test('Pocket Peaks can be completed through real running and jumping inputs with
       !runtime.call('peak-solid?', x + 38, 209) ||
       [0, 1, 2, 3].some(
         (i) =>
-          state[`peak-slime-${i}-alive`] &&
-          state[`peak-slime-${i}-x`] - x > -8 &&
-          state[`peak-slime-${i}-x`] - x < 30,
+          state[`peak-ghost-${i}-alive`] &&
+          state[`peak-ghost-${i}-x`] - x > -8 &&
+          state[`peak-ghost-${i}-x`] - x < 30,
       );
     if (state['peak-grounded'] && hazard) keys.add(' ');
     else if (state['peak-vy'] >= 0) keys.delete(' ');

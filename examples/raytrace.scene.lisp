@@ -1,4 +1,4 @@
-; NEON ORBITS — analytic raytracing, written entirely in ordinary pixel Lisp.
+; GHOST ORBITS — analytic raytracing, written entirely in ordinary pixel Lisp.
 ; Play this scene, click Game, and press F4 for the full view.
 ; A/D or Left/Right: orbit. W/S or Up/Down: zoom. Space: freeze the orbits.
 ; R: reset the camera. Inspector exposes camera, light and reflection settings.
@@ -61,14 +61,21 @@
           point (+ eye (* ray (min hit-t 100)))
           pick2 (step s2 s1) pick3 (step s3 (min s1 s2))
           center (mix (mix c1 c2 pick2) c3 pick3)
-          albedo (mix (mix [0.12 0.78 0.9] [0.95 0.3 0.18] pick2) [0.7 0.25 1] pick3)
+          albedo (mix (mix [0.62 0.82 0.75] [0.9 0.65 0.72] pick2) [0.7 0.61 0.85] pick3)
           normal (normalize (- point center))
+          face (step 0.25 normal.z)
+          eyes (- 1 (step 0.085 (length [(- (abs normal.x) 0.22) (- normal.y 0.13)])))
+          smile (* (- 1 (step 0.13 (abs normal.x)))
+                   (- 1 (step 0.025 (abs (- (+ normal.y 0.15) (* 0.4 normal.x normal.x))))))
+          cheeks (- 1 (step 0.1 (length [(- (abs normal.x) 0.38) (+ normal.y 0.04)])))
+          painted (mix (mix albedo [0.92 0.55 0.67] (* face cheeks))
+                       [0.055 0.06 0.1] (* face (max eyes smile)))
           light (normalize [-3 5 2])
           diffuse (max 0 (dot normal light))
           specular (pow (max 0 (dot normal (normalize (- light ray)))) 64)
           rim (pow (- 1 (max 0 (dot normal (- ray)))) 3)
           sky (mix [0.025 0.035 0.09] [0.2 0.1 0.32] (pow (max 0 (- 1 (abs ray.y))) 4))
-          sphere-color (+ (* albedo (+ 0.16 (* (get :orbit-light) diffuse)))
+          sphere-color (+ (* painted (+ 0.16 (* (get :orbit-light) diffuse)))
                           (* [1 0.85 0.7] specular (get :orbit-light)) (* [0.3 0.6 1] rim 0.5))
           reflected (reflect ray [0 1 0])
           origin (+ point [0 0.015 0])
@@ -88,9 +95,16 @@
           reflection-hit (- 1 (step 999 reflection-t))
           rp2 (step rt2 rt1) rp3 (step rt3 (min rt1 rt2))
           reflection-center (mix (mix c1 c2 rp2) c3 rp3)
-          reflection-albedo (mix (mix [0.12 0.78 0.9] [0.95 0.3 0.18] rp2) [0.7 0.25 1] rp3)
+          reflection-albedo (mix (mix [0.62 0.82 0.75] [0.9 0.65 0.72] rp2) [0.7 0.61 0.85] rp3)
           reflection-normal (normalize (- (+ origin (* reflected (min reflection-t 100))) reflection-center))
-          reflection-color (* reflection-albedo (+ 0.16 (* (get :orbit-light) (max 0 (dot reflection-normal light)))))
+          rface (step 0.25 reflection-normal.z)
+          reyes (- 1 (step 0.085 (length [(- (abs reflection-normal.x) 0.22) (- reflection-normal.y 0.13)])))
+          rsmile (* (- 1 (step 0.13 (abs reflection-normal.x)))
+                    (- 1 (step 0.025 (abs (- (+ reflection-normal.y 0.15) (* 0.4 reflection-normal.x reflection-normal.x))))))
+          rcheeks (- 1 (step 0.1 (length [(- (abs reflection-normal.x) 0.38) (+ reflection-normal.y 0.04)])))
+          rpainted (mix (mix reflection-albedo [0.92 0.55 0.67] (* rface rcheeks))
+                        [0.055 0.06 0.1] (* rface (max reyes rsmile)))
+          reflection-color (* rpainted (+ 0.16 (* (get :orbit-light) (max 0 (dot reflection-normal light)))))
           checker (mod (+ (floor point.x) (floor point.z)) 2)
           grid (mix [0.045 0.065 0.1] [0.12 0.16 0.22] checker)
           ; Distance from the light ray to each sphere gives a smooth penumbra.
@@ -108,7 +122,7 @@
           final (+ (mix scene-color sky (* hit fog)) glow)
           vignette (clamp (- 1 (* 0.14 (dot uv uv))) 0.35 1)]
       (background (* (pow (max final [0 0 0]) [0.8 0.8 0.8]) vignette))))
-  (fill "#66d9ef") (text [10 10] "NEON ORBITS")
+  (fill "#d5c5ed") (text [10 10] "GHOST ORBITS")
   (fill "#a6a69c")
   (text [10 (- (canvas-height) 28)] "A/D orbit  W/S zoom")
   (text [10 (- (canvas-height) 14)] (if (get :orbit-frozen) "Space resume  R reset" "Space freeze  R reset")))

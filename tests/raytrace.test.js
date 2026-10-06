@@ -6,7 +6,7 @@ import { engineServices } from '../engine-services.js';
 import { compilePixelShader } from '../shader.js';
 const source = readFileSync(new URL('../examples/raytrace.scene.lisp', import.meta.url), 'utf8');
 
-test('Neon Orbits compiles a single pixel program and its camera/pause/reset controls work', () => {
+test('Ghost Orbits compiles a single pixel program and its camera/pause/reset controls work', () => {
   const keys = new Set(),
     state = {};
   const runtime = engineServices({ key: (key) => keys.has(key) }).create(state);

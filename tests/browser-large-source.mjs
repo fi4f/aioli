@@ -20,8 +20,8 @@ try {
   await page.waitForFunction(() => window.aioli?.running);
   const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
   Object.assign(project.state, {
-    tab: 'examples/kaboom.scene.lisp',
-    'code-tabs': ['examples/kaboom.scene.lisp'],
+    tab: 'examples/boo-patrol.scene.lisp',
+    'code-tabs': ['examples/boo-patrol.scene.lisp'],
     'show-code': true,
     'show-files': false,
     'show-game': false,
@@ -32,7 +32,7 @@ try {
     buffer: Buffer.from(JSON.stringify(project)),
   });
   await page.waitForFunction(
-    () => !window.aioli.pending && window.aioli.state.tab === 'examples/kaboom.scene.lisp',
+    () => !window.aioli.pending && window.aioli.state.tab === 'examples/boo-patrol.scene.lisp',
   );
   const frame = () =>
     page.evaluate(
@@ -103,7 +103,7 @@ try {
   }
   assert.deepEqual(errors, []);
   console.log(
-    'Kaboom source stays responsive while scrolling in both directions across wide and tall viewports',
+    'Boo Patrol source stays responsive while scrolling in both directions across wide and tall viewports',
   );
 } finally {
   await browser.close();

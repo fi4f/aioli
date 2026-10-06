@@ -174,50 +174,81 @@
         automatically. Customized components and existing theme files are preserved. The static
         documentation mirrors the default palette; editing a project theme affects that project.
       </p>
-      <h2 id="kaboom">Play Kaboom</h2>
+      <h2 id="boo-patrol">Play Boo Patrol</h2>
       <p>
         Expand <code>examples/</code> in Files and click the play button beside
-        <code>kaboom.scene.lisp</code>. Click the preview to direct keyboard input to the game;
+        <code>boo-patrol.scene.lisp</code>. Click the preview to direct keyboard input to the game;
         <kbd>F4</kbd> enlarges it and restores your previous editor layout when toggled again. W/S
-        or Up/Down walk, A/D strafe, Left/Right or Q/E turn, Space fires, and R restarts. Defeat
-        three monsters with two hits each, then reach the green gate at the southeast corner of the
-        minimap. Contact with monsters costs health; walls block movement and shots.
+        or Up/Down walk, A/D strafe, Left/Right or Q/E turn, Space shines a moon lantern, and R
+        restarts. Tuck in three ghosts with two flashes each, then reach the moon gate at the
+        southeast corner of the minimap. Contact with ghosts costs health; walls block movement and
+        shots.
       </p>
       <p>
         The entire example is ordinary Lisp: GPU grid raycasting traces every canvas column, shades
-        brickwork, casts perspective floor and ceiling textures, and depth-tests monster pixels. The
+        brickwork, casts perspective floor and ceiling textures, and depth-tests ghost pixels. The
         default 320-wide canvas gives 320 single-pixel columns; larger canvases add detail, and
-        wider aspect ratios increase the field of view. Walls and grounded monster sprites share the
-        same projection. Movement, collisions and shooting stay on the CPU. The pistol has walking
-        bob and recoil, without imported art. Edit its annotated movement settings in the scene
-        inspector, inspect the pistol and minimap <code>defdraw</code> hooks, or listen to its
+        wider aspect ratios increase the field of view. Walls and ghost sprites share the same
+        projection. Movement, collisions and shooting stay on the CPU. The lantern has walking bob
+        and recoil, without imported art. Edit its annotated movement settings in the scene
+        inspector, inspect the lantern and minimap <code>defdraw</code> hooks, or listen to its
         procedural <code>defsound</code> hooks. To launch it as your application, put
-        <code>(start-scene "examples/kaboom.scene.lisp")</code> in <code>game.lisp</code>; HTML
+        <code>(start-scene "examples/boo-patrol.scene.lisp")</code> in <code>game.lisp</code>; HTML
         export then bundles it with the runtime. Existing saves receive the example once, preserving
         custom copies and later deletions.
       </p>
-      <h2 id="neon-orbits">Play Neon Orbits</h2>
+      <h2 id="ghost-orbits">Play Ghost Orbits</h2>
       <p>
         In a new project, expand <code>examples/</code> in Files and play
-        <code>raytrace.scene.lisp</code>. This asset-free pixel shader traces three animated
-        spheres, a checkerboard floor, reflected rays and soft shadows. Click Game, then use A/D or
-        Left/Right to orbit, W/S or Up/Down to zoom, Space to freeze/resume, and R to reset the
-        camera. F4 enlarges Game. Inspector controls the camera height, lighting and reflection
-        strength. Existing projects can add the source through File → Open file. Set
-        <code>(start-scene "examples/raytrace.scene.lisp")</code> in <code>game.lisp</code>
+        <code>raytrace.scene.lisp</code>. This asset-free pixel shader traces three animated pastel
+        spheres with shy faces, a checkerboard floor, reflected rays (including the faces) and soft
+        shadows. Click Game, then use A/D or Left/Right to orbit, W/S or Up/Down to zoom, Space to
+        freeze/resume, and R to reset the camera. F4 enlarges Game. Inspector controls the camera
+        height, lighting and reflection strength. Existing projects can add the source through File
+        → Open file. Set <code>(start-scene "examples/raytrace.scene.lisp")</code> in
+        <code>game.lisp</code>
         to use it as the application entry; HTML export runs it offline.
       </p>
-      <h2 id="pocket-peaks">Play Pocket Peaks</h2>
+      <h2 id="moonlit-mail">Play Moonlit Mail</h2>
       <p>
         Play <code>examples/platformer.scene.lisp</code> from Files in a new project. This original
-        side-scrolling platformer has an orange courier, coins, gold coin blocks, patrolling slimes,
-        pits, a checkpoint and a finish flag. A/D or arrows move, Space/W/Up jump, X runs, and R
-        restarts. Release jump early for a shorter hop. Stomp slimes from above; side contact costs
-        a life. The checkpoint preserves collected coins and defeated enemies after a fall. Collect
-        all 15 coins, or simply reach the finish. Inspector exposes speed, jump strength and
-        gravity. Existing projects can add the source through File → Open file. Use
-        <code>(start-scene "examples/platformer.scene.lisp")</code> in <code>game.lisp</code>
+        side-scrolling platformer has a ghost courier, lost lights, lantern reward blocks,
+        patrolling ghosts, mossy tombstones, pits, a checkpoint lantern and a home lantern. A/D or
+        arrows move, Space/W/Up jump, X runs, and R restarts. Release jump early for a shorter hop.
+        Stomp ghosts from above; side contact costs a life. The checkpoint preserves collected
+        lights and defeated enemies after a fall. Collect all 15 lights, or simply reach the finish.
+        Inspector exposes speed, jump strength and gravity. Existing projects can add the source
+        through File → Open file. Use <code>(start-scene "examples/platformer.scene.lisp")</code> in
+        <code>game.lisp</code>
         as the application entry for offline HTML export.
+      </p>
+      <h2 id="moon-dash">Play Moon Dash</h2>
+      <p>
+        Play <code>examples/moon-dash.scene.lisp</code> for an original one-button rhythm runner.
+        Space, W, Up or a click starts the run and jumps; holding jump hops again on landing. Guide
+        the smiling cube past lavender spikes, raised blocks and pits through a 40-beat moonlit
+        course. R retries; best progress stays visible between attempts. Blocks can be landed on
+        from above, but touching their sides ends the run. Inspector exposes tempo (80�160 BPM) and
+        the obstacle chart, whose entries are <code>[beat "spike"]</code>,
+        <code>[beat "double"]</code>, <code>[beat "block"]</code> or <code>[beat "gap"]</code>.
+        Speed, gravity and jump strength scale together so the same chart works at each tempo.
+        Sounds and graphics are procedural, with inspectable draw and sound hooks. Set
+        <code>(start-scene "examples/moon-dash.scene.lisp")</code> in <code>game.lisp</code>
+        to export it as an offline application.
+      </p>
+      <h2 id="night-garden">The quiet night gallery</h2>
+      <p>
+        The visual examples share Garden's creepy, cute mood.
+        <strong>Wisp Weather</strong> (<code>plasma.scene.lisp</code>) layers GPU plasma fog behind
+        little spirits; its inspector controls mist speed, spirit color, glow and moon size.
+        <strong>Moon Bloom</strong>
+        (<code>bloom.scene.lisp</code>) combines additive GPU petals with a sleepy flower face,
+        mossy graves and floating seeds; adjust petal radius, glow, rotation speed and center size.
+        <strong>Wisp Trails</strong> (<code>feedback.scene.lisp</code>) fades the entire previous
+        RGBA canvas toward midnight blue as a ghost wanders across it. Adjust retention, spirit size
+        and color to change its echoes. Fresh history uses alpha zero, so the first frame starts
+        with the intended background. All three can be played from Files and exported by choosing
+        their scene in <code>game.lisp</code>.
       </p>
       <h2 id="menus">The menu bar</h2>
       <p>

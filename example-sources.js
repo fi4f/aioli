@@ -4,9 +4,10 @@ export const exampleScenePaths = [
   'examples/bloom.scene.lisp',
   'examples/plasma.scene.lisp',
   'examples/feedback.scene.lisp',
-  'examples/kaboom.scene.lisp',
+  'examples/boo-patrol.scene.lisp',
   'examples/raytrace.scene.lisp',
   'examples/platformer.scene.lisp',
+  'examples/moon-dash.scene.lisp',
 ];
 
 export const exampleToolPaths = [

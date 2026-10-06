@@ -55,40 +55,40 @@ try {
     await page.evaluate(() => window.aioli.status),
   );
   await mkdir('artifacts', { recursive: true });
-  await page.screenshot({ path: 'artifacts/pocket-peaks.png' });
+  await page.screenshot({ path: 'artifacts/moonlit-mail.png' });
   await page.keyboard.down('r');
   await page.waitForFunction(() => window.aioli.applicationState['peak-x'] === 32);
   await page.keyboard.up('r');
   await page.keyboard.press('F4');
   const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
   project.files['game.lisp'] = '(start-scene "examples/platformer.scene.lisp")';
-  project.state['project-name'] = 'Pocket Peaks';
+  project.state['project-name'] = 'Moonlit Mail';
   await page.locator('#file-input').setInputFiles({
-    name: 'pocket-peaks.json',
+    name: 'moonlit-mail.json',
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(project)),
   });
   await page.waitForFunction(
-    () => !window.aioli.pending && window.aioli.state['project-name'] === 'Pocket Peaks',
+    () => !window.aioli.pending && window.aioli.state['project-name'] === 'Moonlit Mail',
   );
   await click('file');
   const download = page.waitForEvent('download');
   await click('export-html');
-  const file = path.resolve('artifacts/pocket-peaks.html');
+  const file = path.resolve('artifacts/moonlit-mail.html');
   await (await download).saveAs(file);
   const offline = await browser.newPage({ viewport: { width: 960, height: 720 } });
   offline.on('pageerror', (error) => errors.push(error.message));
   await offline.goto(pathToFileURL(file).href);
   await offline.waitForFunction(() => window.aioliApplication?.scene);
-  assert.equal(await offline.title(), 'Pocket Peaks');
+  assert.equal(await offline.title(), 'Moonlit Mail');
   await offline.keyboard.down('d');
   await offline.waitForFunction(() => window.aioliApplication.runtime.state['peak-x'] > 60);
   await offline.keyboard.up('d');
   assert.equal(await offline.locator('#error').textContent(), '');
-  await offline.screenshot({ path: 'artifacts/pocket-peaks-offline.png' });
+  await offline.screenshot({ path: 'artifacts/moonlit-mail-offline.png' });
   assert.deepEqual(errors, []);
   console.log(
-    'Pocket Peaks gallery play, movement, jumping, camera scrolling, restart and offline HTML export passed',
+    'Moonlit Mail gallery play, movement, jumping, camera scrolling, restart and offline HTML export passed',
   );
 } finally {
   await browser.close();

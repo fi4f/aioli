@@ -32,42 +32,42 @@ try {
   await click('view');
   await click('files');
   await click('folder-examples');
-  await click('play-examples/kaboom.scene.lisp');
+  await click('play-examples/boo-patrol.scene.lisp');
   await page.waitForFunction(
     () =>
       !window.aioli.pending &&
-      window.aioli.applicationState['active-scene'] === 'examples/kaboom.scene.lisp',
+      window.aioli.applicationState['active-scene'] === 'examples/boo-patrol.scene.lisp',
   );
   await click('world');
   await page.keyboard.press('F4');
-  const initial = await page.evaluate(() => window.aioli.applicationState['kaboom-x']);
+  const initial = await page.evaluate(() => window.aioli.applicationState['boo-x']);
   await page.keyboard.down('w');
-  await page.waitForFunction((x) => window.aioli.applicationState['kaboom-x'] > x + 0.4, initial);
+  await page.waitForFunction((x) => window.aioli.applicationState['boo-x'] > x + 0.4, initial);
   await page.keyboard.up('w');
-  const walked = await page.evaluate(() => window.aioli.applicationState['kaboom-x']);
+  const walked = await page.evaluate(() => window.aioli.applicationState['boo-x']);
   await page.keyboard.down('s');
-  await page.waitForFunction((x) => window.aioli.applicationState['kaboom-x'] < x - 0.1, walked);
+  await page.waitForFunction((x) => window.aioli.applicationState['boo-x'] < x - 0.1, walked);
   await page.keyboard.up('s');
   await page.keyboard.down('q');
-  await page.waitForFunction(() => window.aioli.applicationState['kaboom-angle'] < -0.1);
+  await page.waitForFunction(() => window.aioli.applicationState['boo-angle'] < -0.1);
   await page.keyboard.up('q');
   await page.keyboard.down('r');
-  await page.waitForFunction(() => Math.abs(window.aioli.applicationState['kaboom-angle']) < 0.001);
+  await page.waitForFunction(() => Math.abs(window.aioli.applicationState['boo-angle']) < 0.001);
   await page.keyboard.up('r');
   await page.keyboard.down(' ');
-  await page.waitForFunction(() => window.aioli.applicationState['kaboom-enemy-0-hp'] === 0);
+  await page.waitForFunction(() => window.aioli.applicationState['boo-enemy-0-hp'] === 0);
   await page.keyboard.up(' ');
-  assert.equal(await page.evaluate(() => window.aioli.applicationState['kaboom-kills']), 1);
+  assert.equal(await page.evaluate(() => window.aioli.applicationState['boo-kills']), 1);
   await page.keyboard.down('r');
-  await page.waitForFunction(() => window.aioli.applicationState['kaboom-kills'] === 0);
+  await page.waitForFunction(() => window.aioli.applicationState['boo-kills'] === 0);
   await page.keyboard.up('r');
   await mkdir('artifacts', { recursive: true });
-  await page.screenshot({ path: 'artifacts/kaboom.png' });
+  await page.screenshot({ path: 'artifacts/boo-patrol.png' });
   assert.equal(await page.evaluate(() => window.aioli.error), false);
   await page.keyboard.press('F4');
   // Use the actual project export with this scene as the application entry.
   const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
-  project.files['game.lisp'] = '(start-scene "examples/kaboom.scene.lisp")';
+  project.files['game.lisp'] = '(start-scene "examples/boo-patrol.scene.lisp")';
   project.state['canvas-width'] = 640;
   project.state['canvas-height'] = 360;
   await page.locator('#file-input').setInputFiles({
@@ -78,12 +78,12 @@ try {
   await page.waitForFunction(
     () =>
       !window.aioli.pending &&
-      window.aioli.applicationState['active-scene'] === 'examples/kaboom.scene.lisp',
+      window.aioli.applicationState['active-scene'] === 'examples/boo-patrol.scene.lisp',
   );
   await click('file');
   const downloaded = page.waitForEvent('download');
   await click('export-html');
-  const file = path.resolve('artifacts/kaboom.html');
+  const file = path.resolve('artifacts/boo-patrol.html');
   await (await downloaded).saveAs(file);
   const offline = await browser.newPage({ viewport: { width: 960, height: 720 } });
   offline.on('pageerror', (e) => errors.push(e.message));
@@ -91,7 +91,7 @@ try {
   await offline.waitForFunction(() => window.aioliApplication?.scene);
   assert.equal(
     await offline.evaluate(() => window.aioliApplication.runtime.state['active-scene']),
-    'examples/kaboom.scene.lisp',
+    'examples/boo-patrol.scene.lisp',
   );
   const size = await page.evaluate(() => {
     const draw = window.aioli.commands.find((command) => command.surface).surface;
@@ -101,12 +101,12 @@ try {
   assert.equal(size[1], 360);
   assert.ok(size[2] <= 4, 'one world pass and at most three enemy quads');
   await offline.keyboard.down('w');
-  await offline.waitForFunction(() => window.aioliApplication.runtime.state['kaboom-x'] > 1.9);
+  await offline.waitForFunction(() => window.aioliApplication.runtime.state['boo-x'] > 1.9);
   await offline.keyboard.up('w');
-  await offline.screenshot({ path: 'artifacts/kaboom-export.png' });
+  await offline.screenshot({ path: 'artifacts/boo-export.png' });
   assert.equal(await offline.locator('#error').textContent(), '');
   assert.deepEqual(errors, []);
-  console.log('Kaboom editor play, movement, shooting, restart and offline HTML export passed');
+  console.log('Boo Patrol editor play, movement, shooting, restart and offline HTML export passed');
 } finally {
   await browser.close();
   await new Promise((r) => server.close(r));

@@ -1,72 +1,49 @@
-; init! sets defaults only when state is absent.
-; Hot edits preserve the running world.
-(init! :x 160 ["Player X" 6 314 1])
-(init! :y 190 ["Player Y" 0 240 1])
-(init! :vy 0 ["Vertical speed" -200 320 1])
-(init! :speed 75 ["Walk speed" 20 160 1])
-(init! :wind 3 ["Wind" 0 10 0.1])
-(init! :moon 20 ["Moon radius" 4 40 1])
-(init! :glow 0.65 ["Glow" 0 1 0.01])
-(init! :accent "#c4ef9b" ["Palette"])
-(init! :pitch 440 ["Start Hz" 40 1200 1])
-(init! :end-pitch 880 ["End Hz" 40 1600 1])
-(init! :duration 0.3 ["Duration" 0.05 1 0.01])
-(init! :volume 0.35 ["Gain" 0 0.6 0.01])
-(init! :wave "sine" ["Wave" ["sine" "triangle" "square" "sawtooth" "noise"]])
-(init! :overtone true ["Mix overtone"])
+; MOON BLOOM — additive petals, sleepy seed spirits and a mossy garden.
+(init! :glow 0.55 ["Petal glow" 0 1 0.01])
+(init! :accent "#d0ddd1" ["Flower face"])
+(init! :moon 20 ["Flower center" 8 32 1])
+(init! :petal-radius 17 ["Petal radius" 8 28 1])
+(init! :bloom-speed 0.15 ["Bloom speed" 0 0.5 0.01])
 
-(defn update [dt]
-  (when (or (key? "ArrowLeft") (key? "a"))
-    (set! :x (- (get :x) (* (get :speed) dt))))
-  (when (or (key? "ArrowRight") (key? "d"))
-    (set! :x (+ (get :x) (* (get :speed) dt))))
-  (set! :x (clamp (get :x) 6 314))
-
-  (when (and (or (key? " ") (key? "w")
-                 (key? "ArrowUp"))
-             (>= (get :y) 190))
-    (set! :vy -130)
-    (play-sound))
-
-  (set! :vy (+ (get :vy) (* 320 dt)))
-  (set! :y (+ (get :y) (* (get :vy) dt)))
-  (when (> (get :y) 190)
-    (set! :y 190)
-    (set! :vy 0)))
-
-; A patch is an ordinary Lisp function.
-; Each voice mixes into one procedural buffer.
-; waveform, start Hz, end Hz, duration, gain
-(defn sound []
-  (voice (get :wave)
-         (get :pitch)
-         (get :end-pitch)
-         (get :duration)
-         (get :volume))
-  (when (get :overtone)
-    (voice :triangle
-           (* (get :pitch) 0.5)
-           (* (get :end-pitch) 0.5)
-           (get :duration)
-           (* (get :volume) 0.25))))
-
-; A procedural bloom: transform, mix, glow.
-(defdraw render []
+(defdraw bloom-flower [] ["Sleepy moonflower"]
   (pixels [p time]
-  (background "#101b25")
-  (translate [160 120])
+    (translate [(/ width 2) (/ height 2)])
+    (scope
+      (blend :add) (opacity (get :glow))
+      (repeat 16 i
+        (scope
+          (rotate (+ (* i 0.3927) (* time (get :bloom-speed))))
+          (fill (mix [0.32 0.22 0.42] [0.27 0.42 0.36] (/ i 16)))
+          (circle [(+ 36 (* 6 (sin time))) 0]
+                  (+ (get :petal-radius) (* 3 (sin (+ time i)))))))))
   (scope
-    (blend :add)
-    (opacity (get :glow))
-    (repeat 16 i
-      (scope
-        (rotate (+ (* i 0.3927) (* time 0.15)))
-        (fill (mix [0.2 0.5 0.7]
-                   [0.8 0.9 0.4]
-                   (/ i 16)))
-        (circle [(+ 40 (* 12 (sin time))) 0]
-                (+ 15 (* 5 (sin (+ time i))))))))
-  (fill (get :accent))
-  (circle [0 0] (get :moon))
-  (fill "#101b25")
-  (circle [4 -4] (* (get :moon) 0.7))))
+    (translate [(/ (canvas-width) 2) (/ (canvas-height) 2)])
+    (fill (get :accent)) (circle [0 0] (get :moon))
+    (fill "#263040")
+    (line [-9 -2] [-4 0] 1) (line [-4 0] [-1 -2] 1)
+    (line [1 -2] [4 0] 1) (line [4 0] [9 -2] 1)
+    (line [-2 7] [2 7] 1)
+    (fill "#d695ad") (circle [-12 4] 3) (circle [12 4] 3)))
+
+(init! :bloom-clock 0)
+(defn update [dt] (set! :bloom-clock (+ (get :bloom-clock) dt)))
+
+(defdraw render []
+  (background "#101923")
+  (let [w (canvas-width) h (canvas-height) time (get :bloom-clock)]
+    (fill "#26323c") (rect [0 (- h 28)] [w 28])
+    (fill "#698e7e") (rect [0 (- h 29)] [w 2])
+    (repeat 5 i
+      (let [x (* w (/ (+ i 0.5) 5)) y (- h 29)]
+        (fill "#3a4352") (circle [x (- y 12)] 8) (rect [(- x 8) (- y 12)] [16 12])
+        (fill "#7a8390") (line [(- x 3) (- y 9)] [(+ x 3) (- y 9)] 1)
+        (line [x (- y 12)] [x (- y 6)] 1)))
+    (fill "#698e7e") (rect [(- (/ w 2) 2) (/ h 2)] [4 (- (/ h 2) 29)])
+    (bloom-flower)
+    (repeat 9 i
+      (let [x (+ (* w (/ (+ i 0.5) 9)) (* 4 (sin (+ time i))))
+            y (+ (* h 0.35) (* 30 (sin (+ (* time 0.3) (* i 2)))))]
+        (fill "#bbd8c8") (circle [x y] 3) (rect [(- x 3) y] [6 3])
+        (fill "#263040") (circle [(- x 1) y] 0.6) (circle [(+ x 1) y] 0.6)))
+    (fill "#d5c5ed") (text [10 10] "MOON BLOOM")
+    (fill "#b0b3bc") (text [10 (- h 16)] "ghosts love moonflowers")))

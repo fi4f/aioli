@@ -8,11 +8,11 @@ import { exportHTML } from '../html-export.js';
 test('project settings validate together and persist while older projects receive a name fallback', () => {
   assert.equal(projectName(), 'Untitled project');
   const settings = projectSettings({
-    'project-name': '  Kaboom  ',
+    'project-name': '  Boo Patrol  ',
     'canvas-width': 64,
     'canvas-height': 64,
   });
-  assert.equal(settings['project-name'], 'Kaboom');
+  assert.equal(settings['project-name'], 'Boo Patrol');
   assert.deepEqual(readProject(projectSnapshot({ main: '', game: '' }, settings)).state, settings);
   for (const name of ['', ' ', 'bad\nname', 'x'.repeat(121), 3])
     assert.throws(() => projectName({ 'project-name': name }), /Project name/);

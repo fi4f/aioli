@@ -60,11 +60,11 @@ try {
   await page.waitForFunction(() => window.aioli.applicationState['orbit-angle'] === 0.35);
   await page.keyboard.up('r');
   await mkdir('artifacts', { recursive: true });
-  await page.screenshot({ path: 'artifacts/neon-orbits.png' });
+  await page.screenshot({ path: 'artifacts/ghost-orbits.png' });
   await page.keyboard.press('F4');
   const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
   project.files['game.lisp'] = '(start-scene "examples/raytrace.scene.lisp")';
-  project.state['project-name'] = 'Neon Orbits';
+  project.state['project-name'] = 'Ghost Orbits';
   await page.locator('#file-input').setInputFiles({
     name: 'raytrace.json',
     mimeType: 'application/json',
@@ -79,7 +79,7 @@ try {
   const downloading = page.waitForEvent('download');
   await click('export-html');
   const html = await downloading,
-    htmlPath = path.resolve('artifacts/neon-orbits.html');
+    htmlPath = path.resolve('artifacts/ghost-orbits.html');
   await html.saveAs(htmlPath);
   const offline = await browser.newPage({ viewport: { width: 960, height: 720 } });
   offline.on('pageerror', (error) => errors.push(error.message));
@@ -88,12 +88,12 @@ try {
     () => window.aioliApplication?.runtime.state['active-scene'] === 'examples/raytrace.scene.lisp',
   );
   assert.equal(await offline.locator('#error').textContent(), '');
-  assert.equal(await offline.title(), 'Neon Orbits');
-  await offline.screenshot({ path: 'artifacts/neon-orbits-offline.png' });
+  assert.equal(await offline.title(), 'Ghost Orbits');
+  await offline.screenshot({ path: 'artifacts/ghost-orbits-offline.png' });
   assert.equal(await page.evaluate(() => window.aioli.error), false);
   assert.deepEqual(errors, []);
   console.log(
-    'Neon Orbits gallery play, GPU compilation, camera, freeze/reset controls and offline export passed',
+    'Ghost Orbits gallery play, GPU compilation, camera, freeze/reset controls and offline export passed',
   );
 } finally {
   await browser.close();

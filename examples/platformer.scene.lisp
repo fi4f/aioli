@@ -1,7 +1,7 @@
 ; POCKET PEAKS — an original, asset-free side-scrolling platformer.
 ; A/D or arrows move. Space/W/Up jump; release early for a short hop.
-; Hold X to run. R restarts. Collect coins, bump gold blocks and stomp slimes.
-; The blue checkpoint saves your progress through the level; reach the flag!
+; Hold X to run. R restarts. Collect lost lights, bump lantern blocks and boop mischievous ghosts.
+; The blue lantern saves your progress; deliver the lights to the pink lantern!
 ; Collision uses 16-pixel tiles and four small physics steps per frame.
 
 (init! :peak-x 32)
@@ -28,11 +28,11 @@
 (init! :peak-invincible 0)
 (init! :peak-facing 1)
 (repeat 4 i
-  (init! (str "peak-slime-" i "-x") (nth [256 464 864 1184] i))
-  (init! (str "peak-slime-" i "-dir") 1)
-  (init! (str "peak-slime-" i "-alive") true))
+  (init! (str "peak-ghost-" i "-x") (nth [256 464 864 1184] i))
+  (init! (str "peak-ghost-" i "-dir") 1)
+  (init! (str "peak-ghost-" i "-alive") true))
 
-(defn peak-slime-key [i suffix] (str "peak-slime-" i suffix))
+(defn peak-ghost-key [i suffix] (str "peak-ghost-" i suffix))
 (defn peak-coins []
   [[96 174] [144 142] [208 110] [240 110] [368 126] [416 126]
    [544 142] [608 174] [760 126] [824 126] [1072 142] [1152 174]])
@@ -72,9 +72,9 @@
   (set! :peak-checkpoint false) (set! :peak-won false) (set! :peak-over false)
   (set! :peak-invincible 0) (set! :peak-jump-held false) (set! :peak-facing 1)
   (repeat 4 i
-    (set! (peak-slime-key i "-x") (nth [256 464 864 1184] i))
-    (set! (peak-slime-key i "-dir") 1)
-    (set! (peak-slime-key i "-alive") true)))
+    (set! (peak-ghost-key i "-x") (nth [256 464 864 1184] i))
+    (set! (peak-ghost-key i "-dir") 1)
+    (set! (peak-ghost-key i "-alive") true)))
 (defn enter [] (peak-reset))
 (defn peak-take-hit [pit]
   (when (or pit (= (get :peak-invincible) 0))
@@ -105,7 +105,7 @@
       (set! :peak-y next))))
 
 (defn update [delta]
-  (let [dt (min 0.05 delta) jump (or (key? " ") (key? "w") (key? "ArrowUp")) reset (key? "r")]
+  (let [dt (clamp delta 0 0.05) jump (or (key? " ") (key? "w") (key? "ArrowUp")) reset (key? "r")]
     (when (and reset (not (get :peak-reset-held))) (peak-reset))
     (set! :peak-reset-held reset)
     (set! :peak-clock (+ (get :peak-clock) dt))
@@ -127,15 +127,15 @@
           (set! :peak-grounded false) (play-sound "peak-jump"))
         (repeat 4 step (peak-step (/ dt 4)))
         (repeat 4 i
-          (when (get (peak-slime-key i "-alive"))
-            (let [key (peak-slime-key i "-x") dir-key (peak-slime-key i "-dir")
+          (when (get (peak-ghost-key i "-alive"))
+            (let [key (peak-ghost-key i "-x") dir-key (peak-ghost-key i "-dir")
                   lo (nth [224 416 816 1120] i) hi (nth [272 480 896 1200] i)
                   sx (+ (get key) (* (get dir-key) 28 dt))]
               (when (or (< sx lo) (> sx hi)) (set! dir-key (- (get dir-key))))
               (set! key (clamp sx lo hi))
               (when (peak-overlap? (get :peak-x) (get :peak-y) 12 16 (get key) 196 14 12)
                 (if (and (> (get :peak-vy) 0) (<= old-bottom 202))
-                  (do (set! (peak-slime-key i "-alive") false) (set! :peak-vy -150)
+                  (do (set! (peak-ghost-key i "-alive") false) (set! :peak-vy -150)
                       (set! :peak-grounded false) (play-sound "peak-stomp"))
                   (when (= (get :peak-invincible) 0)
                     (peak-take-hit false) (set! :peak-vy -120)
@@ -161,56 +161,73 @@
 (defsound peak-win [] ["Finish"]
   (voice :triangle 330 660 0.45 0.14) (voice :sine 660 990 0.45 0.08))
 
-(defn peak-draw-tile [tile x y row]
-  (fill (if (= tile 1) "#9e6749" (if (= tile 3) "#efb74d" (if (= tile 4) "#a88b73" "#cd7854"))))
-  (rect [x y] [16 16])
-  (fill (if (= tile 1) "#764c3e" "#995b4a"))
-  (rect [x (+ y 15)] [16 1]) (rect [(+ x 15) y] [1 16])
-  (if (= tile 1)
-    (do
-      (fill "#bd8a5b") (rect [(+ x 3) (+ y 8)] [4 2]) (rect [(+ x 10) (+ y 12)] [3 2])
-      (when (= row 13) (fill "#67a85b") (rect [x y] [16 4])
-        (fill "#b5d76d") (rect [x y] [16 1])))
-    (do (fill "#f2b276") (rect [(+ x 1) (+ y 1)] [14 2])
-      (when (= tile 3)
-        (fill "#fff1bd") (rect [(+ x 5) (+ y 4)] [6 2]) (rect [(+ x 9) (+ y 6)] [2 3])
-        (rect [(+ x 7) (+ y 8)] [4 2]) (rect [(+ x 7) (+ y 12)] [2 2])))))
-(defn peak-draw-player [x y]
-  (let [step (if (and (get :peak-grounded) (> (abs (get :peak-vx)) 8))
-              (round (* 2 (sin (* (get :peak-clock) 18)))) 0)]
-    (fill "#a65843") (rect [(+ x 1) y] [10 15])
-    (fill "#ee9f4b") (rect [x y] [12 7])
-    (fill "#ffe2b2") (rect [(+ x 3) (+ y 2)] [6 4])
-    (fill "#34364f") (rect [(+ x (if (> (get :peak-facing) 0) 7 3)) (+ y 3)] [2 2])
-    (fill "#438a91") (rect [(+ x 2) (+ y 7)] [8 6])
-    (fill "#e16679") (rect [(- x 2) (+ y 7)] [10 2])
-    (fill "#34364f") (rect [(+ x 1) (+ y 13 step)] [4 3])
-    (rect [(+ x 7) (+ y 13 (- step))] [4 3])))
-(defn peak-flag [x checkpoint]
-  (fill "#faf0c9") (rect [x 160] [2 48])
-  (fill (if checkpoint (if (get :peak-checkpoint) "#45b9b0" "#829898") "#e16679"))
-  (rect [(+ x 2) 160] [16 11])
-  (fill "#faf0c9") (rect [(+ x 6) 163] [5 5]))
 
+; Small inspectable drawables keep the scenery separate from the physics.
+(defdraw peak-tombstone [x y] ["Sleepy tombstone" [50 208]]
+  (fill "#273d47") (circle [(+ x 7) (- y 15)] 7) (rect [x (- y 15)] [14 15])
+  (fill "#587176") (circle [(+ x 7) (- y 16)] 6) (rect [(+ x 1) (- y 16)] [12 15])
+  (fill "#80968c") (rect [(+ x 3) (- y 17)] [8 2])
+  (fill "#324950") (rect [(+ x 5) (- y 12)] [4 1]) (rect [(+ x 5) (- y 9)] [4 1])
+  (fill "#83b89d") (rect [(- x 2) (- y 2)] [18 2]))
+(defdraw peak-ghost [x y color] ["Bashful ghost" [40 192 "#d5eadb"]]
+  (fill "#24454d") (circle [(+ x 6) (+ y 6)] 6) (rect [x (+ y 6)] [12 8])
+  (fill color) (circle [(+ x 6) (+ y 5)] 5) (rect [(+ x 1) (+ y 5)] [10 8])
+  (repeat 3 i (circle [(+ x 2 (* i 4)) (+ y 13)] 2))
+  (fill "#203747") (rect [(+ x 3) (+ y 5)] [2 3]) (rect [(+ x 8) (+ y 5)] [2 3])
+  (rect [(+ x 5) (+ y 10)] [2 1])
+  (fill "#e3a1b2") (rect [(+ x 1) (+ y 8)] [2 1]) (rect [(+ x 9) (+ y 8)] [2 1]))
+(defdraw peak-draw-player [x y] ["Ghost courier" [32 192]]
+  (peak-ghost x y "#d5eadb")
+  (fill "#ba83ab") (rect [(- x 2) (+ y 9)] [10 2])
+  (fill "#f0cfa5") (rect [(+ x 8) (+ y 10)] [5 5])
+  (fill "#94749b") (rect [(+ x 9) (+ y 11)] [3 1])
+  (fill "#cce7b2") (rect [(+ x 3) (- y 2)] [3 2]))
+(defdraw peak-flag [x checkpoint] ["Home lantern" [60 false]]
+  (fill "#40555b") (rect [x 162] [2 46])
+  (fill "#a0b7a4") (rect [(- x 4) 159] [10 2])
+  (fill (if checkpoint (if (get :peak-checkpoint) "#87d4cc" "#657f8a") "#e4adc5"))
+  (rect [(- x 3) 163] [8 12])
+  (fill "#e6efba") (rect [(- x 1) 165] [4 7])
+  (fill "#33494c") (rect [(- x 5) 175] [12 2]))
+(defdraw peak-draw-tile [tile x y row]
+  (fill (cond (= tile 1) "#263f43" (= tile 3) "#8b7894" (= tile 4) "#465967" true "#4d6570"))
+  (rect [x y] [16 16])
+  (fill "#1b3039") (rect [x (+ y 15)] [16 1]) (rect [(+ x 15) y] [1 16])
+  (if (= tile 1)
+    (do (fill "#385451") (rect [(+ x 3) (+ y 8)] [4 2]) (rect [(+ x 10) (+ y 12)] [3 2])
+      (when (= row 13) (fill "#6b967b") (rect [x y] [16 3]) (fill "#a0b89b") (rect [x y] [16 1])))
+    (do (fill "#81948c") (rect [(+ x 1) (+ y 1)] [14 2])
+      (when (= tile 3) (fill "#e4e8ae") (rect [(+ x 5) (+ y 4)] [6 8])
+        (fill "#7e647c") (rect [(+ x 7) (+ y 6)] [2 4])))))
+(defdraw peak-background [cam clock]
+  (pixels [p time]
+    (background (mix [0.05 0.08 0.14] [0.1 0.17 0.23] (clamp (/ p.y 240) 0 1)))
+    (fill (rgba 0.5 0.65 0.8 (* 0.045 (noise (* p 0.1))))) (rect [0 0] [320 240]))
+  (fill "#d2e3ae") (circle [260 55] 21)
+  (fill "#101d2c") (circle [269 49] 19)
+  (repeat 22 i
+    (let [x (mod (+ (* i 47) 13) 320) y (+ 30 (mod (* i 29) 100))]
+      (fill "#6f879a") (rect [x y] [1 1])))
+  (repeat 8 i
+    (let [x (- (mod (- (* i 64) (* cam 0.2)) 440) 40)]
+      (fill "#203640") (circle [x 205] 62)
+      (fill "#182d39") (rect [(+ x 20) 114] [5 96])
+      (line [(+ x 22) 152] [(+ x 6) 137] 3) (line [(+ x 22) 167] [(+ x 39) 143] 3)))
+  (repeat 7 i
+    (peak-tombstone (- (mod (- (+ (* i 61) 19) (* cam 0.45)) 410) 35) 208))
+  (repeat 8 i
+    (let [x (mod (+ (* i 43) (* clock 5) (- (* cam 0.35))) 320)
+          y (+ 150 (* 10 (sin (+ clock i))))]
+      (fill "#9bbf9b") (rect [x y] [2 2])))
+  (fill "#2c4650") (rect [0 196] [320 6]))
 (defdraw render []
-  (background "#34364f")
+  (background "#101b2b")
   (let [zoom (min (/ (canvas-width) 320) (/ (canvas-height) 240))
         cam (round (get :peak-camera)) clock (get :peak-clock)]
     (scope
       (translate [(/ (- (canvas-width) (* 320 zoom)) 2) (/ (- (canvas-height) (* 240 zoom)) 2)])
       (scale zoom) (clip [0 0] [320 240])
-      (pixels [p time]
-        (background (mix [0.72 0.8 0.88] [1 0.84 0.68] (clamp (/ p.y 200) 0 1))))
-      (fill "#ffe9ab") (circle [254 62] 22)
-      (repeat 5 i
-        (let [x (- (mod (- (+ (* i 91) 25 (* clock 3)) (* cam 0.12)) 410) 40)
-              y (+ 45 (* (mod i 3) 18))]
-          (fill "#fff2df") (circle [x y] 9) (circle [(+ x 12) (- y 3)] 12)
-          (circle [(+ x 25) y] 9) (rect [x y] [25 8])))
-      (repeat 6 i
-        (fill "#a4b8bb") (circle [(- (mod (- (* i 90) (* cam 0.2)) 500) 80) 208] 75))
-      (repeat 6 i
-        (fill "#86a6a3") (circle [(- (mod (- (+ (* i 87) 20) (* cam 0.4)) 500) 70) 218] 48))
+      (peak-background cam clock)
       (repeat 22 col
         (let [world (+ (floor (/ cam 16)) col) x (- (* world 16) cam)]
           (repeat 15 row
@@ -220,35 +237,28 @@
       (repeat 12 i
         (when (not (contains? (get :peak-collected) i))
           (let [coin (nth (peak-coins) i) x (- (nth coin 0) cam)
-                y (round (+ (nth coin 1) (* 2 (sin (+ (* clock 3) i))))) ]
-            (fill "#bb7d3a") (circle [x (+ y 1)] 5)
-            (fill "#f5ca67") (circle [x y] 4)
-            (fill "#fff3bd") (rect [(- x 1) (- y 2)] [2 4]))))
+                y (round (+ (nth coin 1) (* 2 (sin (+ (* clock 3) i)))))]
+            (fill "#5d8079") (circle [x y] 5)
+            (fill "#d9eab0") (circle [x y] 3)
+            (fill "#f4edc9") (rect [(- x 1) (- y 1)] [2 2]))))
       (repeat 4 i
-        (when (get (peak-slime-key i "-alive"))
-          (let [x (round (- (get (peak-slime-key i "-x")) cam))]
-            (fill "#945370") (circle [(+ x 7) 201] 7)
-            (fill "#d97c87") (rect [x 201] [14 7]) (circle [(+ x 7) 201] 6)
-            (fill "#fff3d2") (rect [(+ x 3) 198] [3 3]) (rect [(+ x 9) 198] [3 3])
-            (fill "#34364f") (rect [(+ x 4) 199] [2 2]) (rect [(+ x 10) 199] [2 2]))))
+        (when (get (peak-ghost-key i "-alive"))
+          (peak-ghost (round (- (get (peak-ghost-key i "-x")) cam)) 192 "#b19cc5")))
       (when (or (= (get :peak-invincible) 0) (= (mod (floor (* clock 12)) 2) 0))
         (peak-draw-player (round (- (get :peak-x) cam)) (round (get :peak-y)))))
-  ; Full-size glyphs, independent of fractional sprite/world scaling.
   (let [font (max 1 (floor (min (/ (canvas-width) 320) (/ (canvas-height) 240))))
         bottom (- (canvas-height) (* 24 font))]
-    (fill "#34364f") (rect [0 0] [(canvas-width) (* 24 font)])
-    (rect [0 bottom] [(canvas-width) (* 24 font)])
+    (fill "#101b2b") (rect [0 0] [(canvas-width) (* 24 font)]) (rect [0 bottom] [(canvas-width) (* 24 font)])
     (scope (scale font)
-      (fill "#ffe9ab") (text [8 4] "POCKET PEAKS")
-      (fill "#f5ca67") (text [132 4] (str "COINS " (get :peak-coins)))
-      (fill "#eeb2b6") (text [242 4] (str "HP " (get :peak-lives))))
+      (fill "#d5eadb") (text [8 4] "MOONLIT MAIL")
+      (fill "#d9eab0") (text [128 4] (str "LIGHTS " (get :peak-coins)))
+      (fill "#e3a1b2") (text [248 4] (str "HP " (get :peak-lives))))
     (scope (translate [(* 8 font) (+ bottom (* 4 font))]) (scale font)
-      (fill "#e4d8d3") (text [0 0] "AD MOVE  SPACE JUMP  X RUN  R RESET"))
+      (fill "#a9c1bd") (text [0 0] "AD MOVE  SPACE JUMP  X RUN  R RESET"))
     (when (or (get :peak-over) (get :peak-won))
-      (let [x (floor (/ (- (canvas-width) (* 256 font)) 2))
-            y (floor (/ (- (canvas-height) (* 80 font)) 2))]
-        (fill "#34364f") (rect [x y] [(* 256 font) (* 80 font)])
+      (let [x (floor (/ (- (canvas-width) (* 256 font)) 2)) y (floor (/ (- (canvas-height) (* 80 font)) 2))]
+        (fill "#243944") (rect [x y] [(* 256 font) (* 80 font)])
         (scope (translate [(+ x (* 16 font)) (+ y (* 10 font))]) (scale font)
-          (fill "#ffe9ab") (text [0 0] (if (get :peak-won) "DELIVERY COMPLETE!" "TRY AGAIN, COURIER!"))
-          (fill "#f5ca67") (text [0 24] (str "COINS " (get :peak-coins) "/15"))
-          (fill "#e4d8d3") (text [0 48] "PRESS R TO RESTART")))))))
+          (fill "#d5eadb") (text [0 0] (if (get :peak-won) "THE LIGHTS ARE HOME!" "TAKE A LITTLE GHOST NAP"))
+          (fill "#d9eab0") (text [0 24] (str "LIGHTS " (get :peak-coins) "/15"))
+          (fill "#a9c1bd") (text [0 48] "PRESS R TO RESTART")))))))
