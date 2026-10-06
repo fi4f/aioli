@@ -51,6 +51,15 @@ does not recompile the program. Translation, scale, clipping, opacity and blendi
 apply to the complete composition. Keep ordinary function calls, mutation,
 browser operations and audio outside `pixels`.
 
+Inside `pixels`, `width` and `height` are logical canvas dimensions.
+`(previous-pixel p)` returns the previous completed canvas color. Bind it with
+`let` and use `.x/.y/.z/.w` for red/green/blue/alpha. Samples outside the canvas,
+and the initial history, are transparent black. History includes shapes/text,
+is private to each canvas, and resets on accepted re-evaluation, scene changes,
+restart or canvas resizing. Preview scaling preserves it. PNG exports and paused
+previews do not advance live history. Play `examples/feedback.scene.lisp` for trails.
+See [feedback details](docs/language.html#feedback).
+
 Optional `init`, `reload` and `update [dt]` hooks manage application lifecycle.
 Scenes have private functions and shared application state; `exit` runs before
 an incoming scene's `init` and `enter`. Failed evaluation or GPU validation
@@ -170,6 +179,7 @@ the full shape/text/pixel composition, including row padding for unusual canvas 
 npm test
 npm run format:check
 node tests/browser-pixels.mjs
+node tests/browser-feedback.mjs
 node tests/browser-pixel-generator.mjs
 node tests/browser-scene-inspector.mjs
 node tests/browser-folders.mjs

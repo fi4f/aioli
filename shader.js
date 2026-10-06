@@ -16,6 +16,15 @@ fn cover_line(p: vec2f, start: vec2f, end: vec2f, width: f32) -> f32 {
   return 1.0 - step(width * 0.5, length(relative - segment * projection));
 }
 `;
+// Nearest logical-pixel sampling. New textures are initialized to transparent black.
+export const previousPixelWGSL = `
+fn previousPixel(point: vec2f, canvasSize: vec2f) -> vec4f {
+  if (any(point < vec2f(0.0)) || any(point >= canvasSize)) { return vec4f(0.0); }
+  let dimensions = textureDimensions(previousFrame);
+  let coordinate = vec2i(floor((floor(point) + vec2f(0.5)) / canvasSize * vec2f(dimensions)));
+  return textureLoad(previousFrame, coordinate, 0);
+}
+`;
 const number = (n) => (Number.isInteger(n) ? `${n}.0` : String(n));
 export function rgba(value) {
   if (!/^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(value))
@@ -35,7 +44,8 @@ export function compilePixelShader(nodes, state = {}) {
   const extraHelpers = new Map();
   let serial = 0,
     primitives = 0,
-    statements = 0;
+    statements = 0,
+    usesPrevious = false;
   // Slot zero is time/width/height. Each state parameter gets one aligned vec4.
   function uniform(key) {
     if (!(key in state))
@@ -101,6 +111,14 @@ export function compilePixelShader(nodes, state = {}) {
       if (args.length !== 1 || !isSym(args[0]) || !args[0].name.startsWith(':'))
         throw new Error('Use (param :state-key)');
       return uniform(args[0].name.slice(1));
+    }
+    if (name === 'previous-pixel') {
+      if (args.length !== 1) throw new Error('Use (previous-pixel position)');
+      usesPrevious = true;
+      return {
+        code: `previousPixel(${typed(args[0], 'vec2f', locals)}, u.data[0].yz)`,
+        type: 'vec4f',
+      };
     }
     if (name === 'grid-ray') {
       if (
@@ -296,10 +314,12 @@ export function compilePixelShader(nodes, state = {}) {
   const drawing = body(nodes);
   const code = `struct Uniforms { data: array<vec4f, 64> }
 @group(0) @binding(0) var<uniform> u: Uniforms;
+@group(0) @binding(1) var previousFrame: texture_2d<f32>;
 struct Draw { p: vec2f, color: vec4f, paint: vec4f, opacity: f32, mode: u32 }
 fn hash(p: vec2f) -> f32 { return fract(sin(dot(p, vec2f(127.1,311.7))) * 43758.5453); }
 fn rotatePoint(p: vec2f, a: f32) -> vec2f { return vec2f(cos(a)*p.x-sin(a)*p.y, sin(a)*p.x+cos(a)*p.y); }
 ${pixelCoverageWGSL}
+${previousPixelWGSL}
 ${[...extraHelpers.values()].join('\n')}
 fn composite(d: ptr<function, Draw>, coverage: f32) {
   let a=clamp((*d).paint.a*(*d).opacity*coverage,0.0,1.0);
@@ -320,5 +340,12 @@ fn composite(d: ptr<function, Draw>, coverage: f32) {
   ${drawing}
   return d.color;
 }`;
-  return { code, params, primitives, pixelBody: drawing, extraHelpers: [...extraHelpers.values()] };
+  return {
+    code,
+    params,
+    primitives,
+    pixelBody: drawing,
+    extraHelpers: [...extraHelpers.values()],
+    usesPrevious,
+  };
 }

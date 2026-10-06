@@ -90,5 +90,6 @@ export function drawApplication(application, size) {
   const draw = application.runtime.drawFrame(...size);
   if (application.scene)
     draw.commands.push(...application.scene.runtime.drawFrame(...size).commands);
+  draw.historyKey = application.scene?.runtime ?? application.runtime;
   return draw;
 }

@@ -27,6 +27,13 @@ defsound defines reusable audio. start-scene selects a scene.
 canvas-width/canvas-height return logical canvas dimensions.
 Nested pixels compile GPU math, capturing arguments and state.
 Keep mutation, browser calls and audio outside pixel blocks.
+Inside pixels, width/height give logical dimensions.
+(previous-pixel p) samples the previous completed canvas as RGBA.
+Bind it with let; .x/.y/.z/.w are red/green/blue/alpha.
+Initial/out-of-bounds history is transparent black. History is private,
+resets with scenes/re-evaluation/size, and stays entirely on the GPU.
+PNG export and paused previews do not advance it.
+Try examples/feedback.scene.lisp for trails.
 
 EDITOR
 Edit editor/theme.lisp for colors and sizes.

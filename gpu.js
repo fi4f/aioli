@@ -1,4 +1,4 @@
-import { rgba, pixelCoverageWGSL } from './shader.js';
+import { rgba, pixelCoverageWGSL, previousPixelWGSL } from './shader.js';
 import { binCommands, GLYPH_WIDTH, GLYPH_HEIGHT } from './drawing.js';
 
 // Lisp layout and input stay in CSS pixels; only the renderer uses device pixels.
@@ -66,6 +66,8 @@ struct Command { bounds: vec4f, color: vec4f, detail: vec4f, flags: vec4f, clip:
 @group(0) @binding(8) var iconSampler: sampler;
 @group(0) @binding(9) var<storage,read> pixelData: array<vec4f>;
 @group(0) @binding(10) var surfaces: texture_2d_array<f32>;
+@group(0) @binding(11) var previousFrame: texture_2d<f32>;
+${previousPixelWGSL}
 // PIXEL_FUNCTIONS
 ${quad}
 ${pixelCoverageWGSL}
@@ -153,7 +155,12 @@ export class GPUHost {
     r.canvas = canvas;
     r.context = canvas.getContext('webgpu');
     r.format = navigator.gpu.getPreferredCanvasFormat();
-    r.context.configure({ device, format: r.format, alphaMode: 'opaque' });
+    r.context.configure({
+      device,
+      format: r.format,
+      alphaMode: 'opaque',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+    });
     device.lost.then((info) =>
       onError(`WebGPU device lost: ${info.message || info.reason}. Reload to reconnect.`, true),
     );
@@ -166,6 +173,12 @@ export class GPUHost {
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.COPY_DST |
         GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    r.histories = new Map();
+    r.emptyHistory = device.createTexture({
+      size: [1, 1],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING,
     });
     r.surfaceTextures = [];
     r.emptySurface = device.createTexture({
@@ -199,6 +212,7 @@ export class GPUHost {
           visibility: GPUShaderStage.FRAGMENT,
           texture: { viewDimension: '2d-array' },
         },
+        { binding: 11, visibility: GPUShaderStage.FRAGMENT, texture: {} },
       ],
     });
     r.uiPipeline = await device.createRenderPipelineAsync({
@@ -357,7 +371,8 @@ export class GPUHost {
     const shader = programs[0];
     let helpers = shader.code
       .slice(shader.code.indexOf('struct Draw'), shader.code.indexOf('@vertex'))
-      .replace(pixelCoverageWGSL, '');
+      .replace(pixelCoverageWGSL, '')
+      .replace(previousPixelWGSL, '');
     for (const helper of shader.extraHelpers ?? []) helpers = helpers.replace(helper, '');
     helpers +=
       '\n' + [...new Set(programs.flatMap((program) => program.extraHelpers ?? []))].join('\n');
@@ -428,7 +443,60 @@ export class GPUHost {
       this.pendingPixels.delete(key);
     }
   }
-  draw(drawList, time, output = null, depth = 0) {
+  historyFor(list, metrics, format, frame) {
+    const key = list.historyKey ?? list;
+    let history = this.histories.get(key);
+    const logical = [list.width, list.height];
+    if (!frame.advance || list.historyAdvance === false)
+      return history && logical.every((value, index) => value === history.logical[index])
+        ? history
+        : null;
+    if (
+      history &&
+      (history.width !== metrics.width ||
+        history.height !== metrics.height ||
+        history.format !== format ||
+        logical.some((value, index) => value !== history.logical[index]))
+    ) {
+      if (frame.pending.has(key))
+        throw new Error('Canvas history dimensions changed within one frame');
+      history.texture.destroy();
+      history.next.destroy();
+      this.histories.delete(key);
+      history = null;
+    }
+    if (!history) {
+      // Keep inactive runtimes bounded without evicting textures used by this frame.
+      if (this.histories.size >= 16) {
+        const unused = [...this.histories.keys()].find((owner) => !frame.pending.has(owner));
+        if (!unused) throw new Error('Maximum 16 feedback canvases per frame');
+        this.histories.get(unused).texture.destroy();
+        this.histories.get(unused).next.destroy();
+        this.histories.delete(unused);
+      }
+      const makeTexture = () =>
+        this.device.createTexture({
+          size: [metrics.width, metrics.height],
+          format,
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        });
+      history = {
+        width: metrics.width,
+        height: metrics.height,
+        format,
+        logical,
+        texture: makeTexture(),
+        next: makeTexture(),
+      };
+      this.histories.set(key, history);
+    } else {
+      this.histories.delete(key);
+      this.histories.set(key, history);
+    }
+    return history;
+  }
+  draw(drawList, time, output = null, depth = 0, frame = null) {
+    frame ??= { advance: true, pending: new Map() };
     // Composite shapes, assets, and nested pixel materials in drawing order.
     const device = this.device,
       metrics = displayMetrics(
@@ -466,7 +534,10 @@ export class GPUHost {
           texture: device.createTexture({
             size,
             format: 'rgba8unorm',
-            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+            usage:
+              GPUTextureUsage.RENDER_ATTACHMENT |
+              GPUTextureUsage.TEXTURE_BINDING |
+              GPUTextureUsage.COPY_SRC,
           }),
         };
         this.surfaceTextures[depth] = cached;
@@ -475,6 +546,8 @@ export class GPUHost {
       for (let layer = 0; layer < surfaces.length; layer++) {
         const target = {
           format: 'rgba8unorm',
+          texture: surfaceTexture,
+          origin: [0, 0, layer],
           createView: () =>
             surfaceTexture.createView({
               dimension: '2d',
@@ -482,11 +555,21 @@ export class GPUHost {
               arrayLayerCount: 1,
             }),
         };
-        if (!this.draw(surfaces[layer].surface, time, target, depth + 1)) return false;
+        if (!this.draw(surfaces[layer].surface, time, target, depth + 1, frame)) return false;
       }
     }
     if (this.boundSurface !== surfaceTexture) {
       this.boundSurface = surfaceTexture;
+      this.bindDirty = true;
+    }
+    const history =
+      programs.some((program) => program.usesPrevious) ||
+      this.histories.has(drawList.historyKey ?? drawList)
+        ? this.historyFor(drawList, metrics, format, frame)
+        : null;
+    const previous = history?.texture ?? this.emptyHistory;
+    if (this.boundPrevious !== previous) {
+      this.boundPrevious = previous;
       this.bindDirty = true;
     }
     // Child passes use density 1; restore the host's crisp UI glyph atlas.
@@ -548,15 +631,17 @@ export class GPUHost {
           { binding: 8, resource: this.iconSampler },
           { binding: 9, resource: { buffer: this.pixelBuffer } },
           { binding: 10, resource: surfaceTexture.createView({ dimension: '2d-array' }) },
+          { binding: 11, resource: previous.createView() },
         ],
       });
       this.bindDirty = false;
     }
+    const targetTexture = output?.texture ?? output ?? this.context.getCurrentTexture();
     const encoder = device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
-          view: (output ?? this.context.getCurrentTexture()).createView(),
+          view: (output ?? targetTexture).createView(),
           clearValue: { r: 0, g: 0, b: 0, a: 1 },
           loadOp: 'clear',
           storeOp: 'store',
@@ -568,7 +653,21 @@ export class GPUHost {
     pass.setBindGroup(0, this.uiBind);
     pass.draw(6);
     pass.end();
+    if (history && frame.advance && drawList.historyAdvance !== false) {
+      // Preserve this canvas before sibling passes reuse their surface layers.
+      encoder.copyTextureToTexture(
+        { texture: targetTexture, origin: output?.origin ?? [0, 0, 0] },
+        { texture: history.next },
+        [width, height],
+      );
+      frame.pending.set(drawList.historyKey ?? drawList, history);
+    }
     device.queue.submit([encoder.finish()]);
+    // Publish only after the whole composition succeeds. Duplicate views and
+    // nested canvases all read the same previous frame, even across submissions.
+    if (depth === 0)
+      for (const saved of frame.pending.values())
+        [saved.texture, saved.next] = [saved.next, saved.texture];
     return true;
   }
   async snapshot(list, time = 0) {
@@ -580,7 +679,7 @@ export class GPUHost {
         format: 'rgba8unorm',
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
       });
-      this.draw(list, time, output);
+      this.draw(list, time, output, 0, { advance: false, pending: new Map() });
     }
     const texture = output;
     const { width, height } = texture;

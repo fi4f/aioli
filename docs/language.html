@@ -300,6 +300,38 @@ true false nil           ; CPU booleans and null</code></pre>
         uniforms without recompiling the program. Supported captures are finite numbers, hex colors,
         and numeric vectors; convert booleans to numbers outside the block when needed.
       </p>
+      <h3 id="feedback">Previous-frame pixels</h3>
+      <pre><code>(defdraw render []
+  (pixels [p time]
+    (let [old (previous-pixel p)]
+      (rgba (* old.x 0.96) (* old.y 0.96) (* old.z 0.96) 1)))
+  (fill "#66d9ef")
+  (circle [160 120] 10))</code></pre>
+      <p>
+        <code>(previous-pixel position)</code> is available only inside <code>pixels</code>. It
+        returns the previous completed canvas's RGBA color, with components from zero to one. Bind
+        it with <code>let</code>: <code>old.x</code> is red, <code>old.y</code> green,
+        <code>old.z</code> blue and <code>old.w</code> alpha; <code>old.xyz</code> selects RGB.
+        Sample a neighbor with <code>(previous-pixel [(+ p.x 1) p.y])</code>.
+      </p>
+      <p>
+        Coordinates use logical canvas pixels and are floored, with nearest sampling. Out-of-bounds
+        positions return transparent black. History starts as transparent black and stores the full
+        RGBA8 composition, including regular shapes and text. Completed canvas samples are opaque
+        (alpha one); initial and out-of-bounds samples have alpha zero. All pixel blocks and
+        duplicate views of one canvas read the same previous frame; they never read another block's
+        current output. Runtime canvases, generators and isolated hook previews each have private
+        history.
+      </p>
+      <p>
+        Accepted re-evaluation, restart, scene changes and canvas-size changes reset history.
+        Scaling the embedded preview or resizing an exported window preserves it while the logical
+        canvas size is unchanged. Paused game previews and PNG exports do not advance live history.
+        A PNG render evaluates against the latest saved history. Feedback stays on the GPU, using
+        two history textures; no pixel readback to JavaScript is needed for animation. The renderer
+        retains at most 16 feedback canvases and allocates history only when this feature is used.
+        Play <code>examples/feedback.scene.lisp</code> for moving trails with inspector controls.
+      </p>
       <p>
         Keep gameplay, browser access, sound, mutation, conditions and calls to ordinary Lisp
         functions outside <code>pixels</code>. None of those execute per pixel. Compose pixel

@@ -21,6 +21,11 @@ export class DrawList {
   constructor(width, height) {
     this.width = width;
     this.height = height;
+    // Host identity is transient and must not appear in serialized command snapshots.
+    Object.defineProperties(this, {
+      historyKey: { value: null, writable: true },
+      historyAdvance: { value: true, writable: true },
+    });
     this.commands = [];
     this.stack = [];
     this.state = {

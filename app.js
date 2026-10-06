@@ -672,7 +672,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         if (hookPreview?.draw) {
           const canvas = hookPreview.draw;
           const scale = Math.min(size[0] / canvas.width, size[1] / canvas.height);
-          draw.composite(
+          draw.rasterComposite(
             canvas,
             [
               origin[0] + (size[0] - canvas.width * scale) / 2,
@@ -975,7 +975,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           'image',
           result,
         );
-        if (program) draw.composite(program.runtime.drawFrame(), origin, size);
+        if (program) draw.rasterComposite(program.runtime.drawFrame(), origin, size);
       },
       'export-image': actions((path = 'assets/generated.png') => exportGeneratedImage(path, true)),
       'save-image-resource': actions((path = 'assets/generated.png') =>
@@ -1097,12 +1097,11 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         draw.surface(origin, size);
         const application = result.gameRuntime ?? gameRuntime;
         const scene = 'scene' in result ? result.scene : activeScene;
-        if (application)
-          draw.rasterComposite(
-            drawApplication({ runtime: application, scene }, canvasSize(target)),
-            origin,
-            size,
-          );
+        if (application) {
+          const canvas = drawApplication({ runtime: application, scene }, canvasSize(target));
+          canvas.historyAdvance = !target.paused;
+          draw.rasterComposite(canvas, origin, size);
+        }
         items.push({ id: 'world', label: 'Game', origin, size });
       },
       'buffer-open': (origin, size, tab) => {
@@ -1221,16 +1220,10 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       'export-png': actions(async () => {
         try {
           if (!gpu) throw new Error('WebGPU is unavailable');
-          const size = canvasSize(state),
-            list = new DrawList(...size);
-          list.surface([0, 0], size);
-          list.composite(
-            drawApplication({ runtime: gameRuntime, scene: activeScene }, size),
-            [0, 0],
-            size,
-          );
+          const size = canvasSize(state);
+          const list = drawApplication({ runtime: gameRuntime, scene: activeScene }, size);
           download(
-            await gpu.snapshot(list, activeScene ? sceneTime : time, applicationState, state),
+            await gpu.snapshot(list, activeScene ? sceneTime : time),
             'image/png',
             'aioli.png',
           );
@@ -1244,6 +1237,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
   services.attach(result);
   result.drawEditor = () => {
     draw = new DrawList(innerWidth, innerHeight);
+    draw.historyKey = result;
     items = [];
     try {
       result.call(result.global.render?.hook?.kind === 'draw' ? 'render' : 'editor');
@@ -1589,9 +1583,7 @@ async function storeGenerated(path, blob, shouldDownload) {
   if (persisted) report(`Saved ${path}${shouldDownload ? ' and downloaded' : ' to project'}`);
 }
 async function exportGeneratedImage(path, shouldDownload) {
-  if (!gpu || !lastDraw) throw new Error('WebGPU is unavailable');
-  // Submit current GUI parameters before reading back, even between frames.
-  gpu.draw(lastDraw, activeScene ? sceneTime : time);
+  if (!gpu) throw new Error('WebGPU is unavailable');
   const program = outputGenerator(generatorPrograms, state, 'image', activeEditor());
   const list = program.runtime.drawFrame();
   await storeGenerated(path, await gpu.snapshot(list, 0), shouldDownload);

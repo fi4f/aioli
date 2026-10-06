@@ -295,6 +295,14 @@
              (noise (* p 0.1))))
   (rect [0 0] [width height])))</code></pre>
       <p>
+        <code>(previous-pixel position)</code> samples the previous completed composition inside a
+        pixel block. The position is a 2D vector in logical pixels; the result is RGBA. Bind the
+        result with <code>let</code> and read .x/.y/.z/.w for red/green/blue/alpha. Initial and
+        out-of-bounds samples are transparent black. Canvas history is private and resets on
+        re-evaluation, scene/restart and logical size changes. PNG export and paused previews do not
+        advance it. See <a href="language.html#feedback">feedback semantics and examples</a>.
+      </p>
+      <p>
         The compiler supports a maximum of 63 state parameters and bounded shader expansion.
         Expressions must satisfy WGSL type rules; errors keep the previous shader active.
       </p>

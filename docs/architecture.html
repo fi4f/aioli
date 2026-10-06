@@ -50,7 +50,11 @@
         legacy scene/image shader texture passes. Native drawing/GPU code stays native for
         predictable throughput. Bindings are cached per draw list; pixel source/pipelines are
         bounded caches. PNG export renders the full composition and correctly handles GPU row
-        alignment.
+        alignment. Feedback canvases keep two GPU history textures. Passes read the previous texture
+        and capture the current composition into the other; the host publishes the new history only
+        after the whole composition succeeds. This preserves private history across nested and
+        duplicate views. Preview scaling does not change logical buffer dimensions. Snapshot/paused
+        passes are read-only; inactive history entries are bounded and destroyed.
       </p>
       <h2>Editable editor policy</h2>
       <p>

@@ -53,7 +53,7 @@ try {
   );
   await click('view');
   await click('generators');
-  await page.waitForFunction(() => window.aioli.editorState.window === 'generator');
+  await page.waitForFunction(() => window.aioli.editorState['show-generator']);
   await mkdir('artifacts', { recursive: true });
   const pngPromise = page.waitForEvent('download');
   await click('generator-export');

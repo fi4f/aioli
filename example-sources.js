@@ -3,6 +3,7 @@ export const exampleScenePaths = [
   'examples/garden.scene.lisp',
   'examples/bloom.scene.lisp',
   'examples/plasma.scene.lisp',
+  'examples/feedback.scene.lisp',
   'examples/kaboom.scene.lisp',
   'examples/raytrace.scene.lisp',
   'examples/platformer.scene.lisp',

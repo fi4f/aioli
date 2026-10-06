@@ -72,6 +72,7 @@ export function engineServices({
       name ??= 'render';
       const previous = frameDraw;
       frameDraw = new DrawList(width, height);
+      frameDraw.historyKey = runtime;
       try {
         if (typeof runtime.global[name] === 'function') runtime.call(name, ...args);
         return frameDraw;
