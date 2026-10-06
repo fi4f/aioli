@@ -1174,7 +1174,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
             origin,
             size,
           );
-        items.push({ id: 'world', label: 'Game viewport', origin, size });
+        items.push({ id: 'world', label: 'Game', origin, size });
       },
       'buffer-open': (origin, size, tab) => {
         const text =
@@ -1205,7 +1205,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
             keys.clear();
             $('text-input').focus({ preventScroll: true });
           }
-          items.push({ id: 'source', label: 'Source editor', origin, size });
+          items.push({ id: 'source', label: 'Code', origin, size });
         }
       },
       'buffer-rows': () => buffer.rows,

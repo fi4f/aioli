@@ -2,7 +2,7 @@
 (defn code-pane [x width height]
   (let [collapsed (get :code-collapsed)]
   (fill (get :ui-panel)) (rect [x 51] [width (- height 81)])
-  (ui-pane-toggle :collapse-code :code-collapsed "Code editor"
+  (ui-pane-toggle :collapse-code :code-collapsed "Code"
                   (if collapsed x (+ x width -40)) 51 40 false)
   (if collapsed
     (asset-icon "code" (+ x 12) 99)

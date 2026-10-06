@@ -98,7 +98,7 @@ try {
   await page.keyboard.press('Enter');
   await frame();
   assert.equal((await region('pane-code')).size[1], 34);
-  assert.equal((await region('collapse-code')).label, 'Expand Code editor');
+  assert.equal((await region('collapse-code')).label, 'Expand Code');
   assert.equal(await region('dock-move-code'), undefined);
   assert.equal((await region('pane-code')).origin[1], 836);
   assert.equal(await region('dock-resize-code'), undefined);
@@ -108,7 +108,7 @@ try {
   await page.screenshot({ path: 'artifacts/floating-pane-collapsed.png' });
   await click('collapse-code');
   assert.equal((await region('pane-code')).size[1], before.height);
-  assert.equal((await region('collapse-code')).label, 'Collapse Code editor');
+  assert.equal((await region('collapse-code')).label, 'Collapse Code');
   const grip = await region('dock-resize-code');
   await page.mouse.move(grip.origin[0] + 6, grip.origin[1] + 6);
   await page.mouse.down();

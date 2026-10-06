@@ -55,19 +55,19 @@
   (let [game-centered (and (get :show-game)
           (= (lookup (lookup (get :ui-docks) :game (map)) :dock "center") "center"))]
   (ui/dockspace :ui-docks [0 51] [w (max 0 (- h 81))]
-    [(ui/pane :files "Project files"
+    [(ui/pane :files "Files"
        (map :dock "left" :extent (get :ui-files-width) :visible (get :show-files)
             :icon "folder" :hide-id :close-files :hide (fn [] (set! :show-files false))
             :collapsed (get :files-collapsed) :collapse-id :collapse-files
             :collapse (fn [] (set! :files-collapsed (not (get :files-collapsed)))))
        (ui/custom (map) (fn [p s] (file-explorer-body (nth p 0) (nth p 1) (nth s 0) (nth s 1) false))))
-     (ui/pane :code "Code editor"
+     (ui/pane :code "Code"
        (map :dock (if game-centered "left" "center") :extent (get :ui-code-fraction) :visible (get :show-code)
             :icon "code" :hide-id :close-code :hide (fn [] (set! :show-code false))
             :collapsed (get :code-collapsed) :collapse-id :collapse-code
             :collapse (fn [] (set! :code-collapsed (not (get :code-collapsed)))))
        (ui/custom (map) code-pane-content))
-     (ui/pane :inspector "Scene inspector"
+     (ui/pane :inspector "Inspector"
        (map :dock "right" :extent (get :ui-inspector-width) :visible (get :show-tools)
             :icon "scene" :hide-id :close-inspector :hide (fn [] (set! :show-tools false))
             :collapsed (get :inspector-collapsed) :collapse-id :collapse-inspector

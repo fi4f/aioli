@@ -4,7 +4,7 @@
   (let [collapsed (get :files-collapsed) header (if chrome 36 0)]
   (fill (get :ui-panel)) (rect [x y] [w h])
   (fill (get :ui-border)) (rect [(+ x w -1) y] [1 h])
-  (when chrome (ui-pane-toggle :collapse-files :files-collapsed "Project files" x y w false))
+  (when chrome (ui-pane-toggle :collapse-files :files-collapsed "Files" x y w false))
   (if collapsed
     (asset-icon "folder" (+ x 12) (+ y 48))
   (let [tree-height (max (get :ui-file-row-height) (- h header 20))

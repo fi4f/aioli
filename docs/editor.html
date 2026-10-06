@@ -53,10 +53,9 @@
   (rect [0 0] [(canvas-width) 2]))</code></pre>
       <h2>The workspace</h2>
       <p>
-        <strong>View → Code pane</strong> shows or hides source.
-        <strong>View → Scene inspector</strong> views and edits live game/scene state.
-        <strong>Project → Run / Evaluate</strong> evaluates the current project. On a narrow screen,
-        hide Code to see the game at a useful size.
+        <strong>View → Code</strong> shows or hides source. <strong>View → Inspector</strong> views
+        and edits live game/scene state. <strong>Project → Run / Evaluate</strong> evaluates the
+        current project. On a narrow screen, hide Code to see the game at a useful size.
       </p>
       <p>
         Source tabs initially contain <code>main.lisp</code> and <code>game.lisp</code>. Clicking
@@ -264,13 +263,13 @@
         File / New project starts the default application in examples/garden.scene.lisp. Open file
         adds an individual source or asset to the project; Save file downloads the current source
         draft or asset. Project open/save remain separate. Drag files onto folders in Files to move
-        them; drop on the Project files header to move to the root. Moves update relative imports
-        and literal paths, preserve tabs, and reject occupied destinations.
+        them; drop on the Files header to move to the root. Moves update relative imports and
+        literal paths, preserve tabs, and reject occupied destinations.
       </p>
       <h2>Scene inspector and playback</h2>
       <p>
-        View → Scene inspector displays fields belonging to the currently running scene, including
-        its imports and fields created by its hooks. If no scene is active, it inspects game.lisp
+        View → Inspector displays fields belonging to the currently running scene, including its
+        imports and fields created by its hooks. If no scene is active, it inspects game.lisp
         instead. Values left in shared state by earlier scenes and unrelated game.lisp fields are
         hidden. It supports sliders, choices, booleans, colors, editable text and structured JSON
         values. Optional
@@ -312,9 +311,8 @@
         Generators open in a floating inspector that can dock beside or within another pane. Its
         chevron collapses the inspector and X closes it. Next keeps the current placement when
         switching generators; Code opens the selected generator in the main Code pane. The View menu
-        groups Files, Code, Game, Scene inspector and Generator inspector visibility together,
-        followed by layout controls, tools and recovery actions. Game visibility is controlled
-        through View → Game view.
+        groups Files, Code, Game, Inspector and Generators visibility together, followed by layout
+        controls, tools and recovery actions. Game visibility is controlled through View → Game.
       </p>
       <p>
         Text recipes declare <code>(generator :text "Title" "levels/generated.csv")</code> and

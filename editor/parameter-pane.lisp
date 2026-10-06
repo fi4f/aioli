@@ -21,7 +21,7 @@
         x (- w pane-width) y 124 width (- pane-width 32)
         fields (scene-fields) height (max (get :ui-field-height) (- h y 94))]
     (fill (get :ui-panel)) (rect [x 51] [pane-width (- h 81)])
-    (ui-pane-toggle :collapse-inspector :inspector-collapsed "Scene inspector" x 51 pane-width true)
+    (ui-pane-toggle :collapse-inspector :inspector-collapsed "Inspector" x 51 pane-width true)
     (if collapsed
       (asset-icon "scene" (+ x 12) 99)
       (do
