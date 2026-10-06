@@ -30,7 +30,7 @@ export class CodeInput {
     this.sessions.delete(key);
     this.history.delete(key);
   }
-  constructor(input, sources, onEdit) {
+  constructor(input, sources, onEdit, { indentOnTab = true } = {}) {
     this.input = input;
     this.sources = sources;
     this.onEdit = onEdit;
@@ -73,7 +73,7 @@ export class CodeInput {
         this.edit(event.key.toLowerCase() === 'y' || event.shiftKey ? 'redo' : 'undo');
         return;
       }
-      if (event.key === 'Tab' && !input.readOnly) {
+      if (event.key === 'Tab' && !input.readOnly && indentOnTab) {
         event.preventDefault();
         input.setRangeText('  ', input.selectionStart, input.selectionEnd, 'end');
         input.dispatchEvent(new Event('input'));

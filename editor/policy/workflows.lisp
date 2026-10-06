@@ -49,7 +49,8 @@
       (merge (map :context-path path :context-kind kind :context-x x :context-y y :file-context true)
         (if (= kind "file") (map :selected-file path) (map))))))
 (defn editor-save-file-path [workspace sources assets input-tab]
-  (if (contains? ["image-asset" "audio-asset"] (lookup workspace :window)) (lookup workspace :preview-path "")
+  (if (and (lookup workspace :show-preview false)
+           (contains? ["image-asset" "audio-asset"] (lookup workspace :preview-kind))) (lookup workspace :preview-path "")
     (if (and (lookup workspace :show-generator) (= input-tab "__generatorValue")) (lookup workspace :active-generator "")
       (let [tab (lookup workspace :tab "")]
         (if (and (contains? sources tab) (not (starts-with? tab "__"))) (editor-source-path tab)
@@ -74,10 +75,22 @@
 (defn editor-file-moved [workspace path]
   (let [parts (split path "/") folder (join (slice parts 0 -1) "/") expanded (lookup workspace :open-folders [])]
     (map :selected-file path :open-folders (if (or (= folder "") (contains? expanded folder)) expanded (conj expanded folder)))))
-(defn editor-settings-open [settings]
+(defn editor-tool-show [workspace id width height pane-width pane-height]
+  (let [placements (lookup workspace :ui-docks (map))
+        w (min pane-width (max 120 (- width 32))) h (min pane-height (max 80 (- height 100)))
+        saved (lookup placements id
+          (map :dock "floating" :x (/ (- width w) 2) :y (max 51 (+ 51 (/ (- height 81 h) 2)))
+            :width w :height h))]
+    (map :window "" :menu false :preview-focused false
+      :ui-docks (assoc placements id (assoc saved :z (+ 1 (dock-highest-z placements)))))))
+(defn editor-preview-show [workspace kind width height]
+  (merge (editor-tool-show workspace "preview" width height 760 560)
+    (map :show-preview true :preview-collapsed false :preview-kind kind :input-tab "")))
+(defn editor-settings-open [settings workspace width height]
   (map :buffers (map :__projectName (str (lookup settings :project-name)) :__canvasWidth (str (lookup settings :canvas-width))
                     :__canvasHeight (str (lookup settings :canvas-height)))
-    :state (map :input-tab "" :project-settings-error "" :window "project-settings" :menu false)))
+    :state (merge (editor-tool-show workspace "settings" width height 560 480)
+      (map :input-tab "" :project-settings-error "" :show-project-settings true :settings-collapsed false))))
 (defn editor-settings-request [buffers]
   (map :project-name (lookup buffers :__projectName) :canvas-width (parse-number (lookup buffers :__canvasWidth))
        :canvas-height (parse-number (lookup buffers :__canvasHeight))))

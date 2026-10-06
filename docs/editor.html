@@ -36,6 +36,14 @@
         <a href="ui.html">UI components</a> to build reusable editor controls and panes in Lisp.
       </p>
       <p>
+        Project Settings uses its own dockable pane. Image, audio and kept text assets, plus
+        <code>defdraw</code> and <code>defsound</code> inspection, share a dockable Preview pane.
+        Switching previews or closing and reopening one preserves its placement. Both panes can stay
+        open together; minimize and restore preserve image pan/zoom and in-progress settings fields.
+        Settings stack their controls and scroll when docked into a narrow or short area. Focus
+        preview hides these panes temporarily and restores them with the rest of the layout.
+      </p>
+      <p>
         Choose <strong>Project → Settings…</strong> to change the project name and canvas size. The
         name becomes the exported HTML page title. Apply saves changes together; Cancel discards
         them. The canvas accepts custom width and height or presets of 320 × 240, 640 × 360, and 512
@@ -72,6 +80,13 @@
         Clicking audio opens a waveform with Play/Pause, Stop and click/drag seeking. Closing the
         preview (or Escape) stops audio playback. See
         <a href="projects.html#previews">asset previews</a>.
+      </p>
+      <p>
+        Source remains editable while drawing and sound hooks are being inspected. The JSON argument
+        field uses a separate input buffer; it never switches the source editor away from your file.
+        Click Preview to rerun the hook against the current code and arguments. Code selects the
+        hook's source tab while keeping its preview open. Closing a sound preview stops its
+        playback.
       </p>
       <p>
         The root <code>main.lisp</code> and <code>editor/ui/components.lisp</code> import the editor
@@ -235,6 +250,19 @@
         Sounds and graphics are procedural, with inspectable draw and sound hooks. Set
         <code>(start-scene "examples/moon-dash.scene.lisp")</code> in <code>game.lisp</code>
         to export it as an offline application.
+      </p>
+      <p>
+        Open <code>examples/generators/moon-dash.generator.lisp</code> for an obstacle chart text
+        generator. Seed gives repeatable variations, Spacing sets the number of beats between
+        available obstacle slots, and Obstacle chance controls how many slots are filled. Gentle
+        uses spikes and blocks; Spooky adds gaps; Spicy also adds double spikes. The first obstacle
+        is at beat 4, and no obstacles appear after beat 36, keeping the existing 40-beat finish.
+        The preview updates when you change a field. Generate repeats the same chart for the same
+        settings. Keep stores <code>levels/moon-dash-chart.lisp</code> as a text asset; Download
+        also saves a local copy. Copy its vector into the <code>:dash-level</code> declaration in
+        <code>moon-dash.scene.lisp</code>. Because <code>init!</code> preserves existing state, use
+        Project → Reset state after replacing the chart. Keeping the output alone does not change
+        the running scene.
       </p>
       <h2 id="night-garden">The quiet night gallery</h2>
       <p>

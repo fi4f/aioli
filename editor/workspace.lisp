@@ -63,12 +63,12 @@
     ; Overlay widgets paint last, giving their regions pointer priority.
     (when (and narrow (not focused) (get :show-generator) (= (get :window) ""))
       (project-window))
+    (when (and narrow (not focused))
+      (ui/dockspace :ui-docks [0 51] [w (max 0 (- h 81))] [(settings-pane) (preview-pane)]))
     (when (and (not focused) (not (= (get :window) "")))
-      (if (= (get :window) "project-settings") (project-settings-window)
       (if (= (get :window) "about") (about-aioli)
         (if (= (get :window) "file-path") (file-path-dialog)
-          (if (or (= (get :window) "image-asset") (= (get :window) "audio-asset") (= (get :window) "text-asset"))
-            (asset-preview-window) (project-window))))))
+          (project-window))))
     (when (not (= (file-drag-path) ""))
       (scope
         (fill (get :ui-selection)) (rect [(+ (pointer-x) 12) (+ (pointer-y) 12)] [240 30])

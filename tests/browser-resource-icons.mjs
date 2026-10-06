@@ -84,7 +84,7 @@ try {
   await click('file-editor/icon/code.png');
   await page.waitForFunction(() => window.aioli.preview.ready);
   assert.equal(await page.evaluate(() => window.aioli.preview.width), 64);
-  assert.equal(await page.evaluate(() => window.aioli.state.window), 'image-asset');
+  assert.equal(await page.evaluate(() => window.aioli.state['preview-kind']), 'image-asset');
   await mkdir('artifacts', { recursive: true });
   await page.screenshot({ path: 'artifacts/editor-icon-resource.png' });
   assert.ok(

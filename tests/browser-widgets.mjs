@@ -519,7 +519,7 @@ try {
   await page.waitForFunction(
     () => window.aioli.preview.ready && window.aioli.preview.width === 320,
   );
-  assert.equal(await page.evaluate(() => window.aioli.state.window), 'image-asset');
+  assert.equal(await page.evaluate(() => window.aioli.state['preview-kind']), 'image-asset');
   await page.waitForFunction(() => window.aioli.commands.some((c) => c.meta[0] === 6));
   const area = await page.evaluate(() =>
     window.aioli.regions.find((r) => r.id === 'asset-image-area'),
@@ -543,7 +543,7 @@ try {
   await click('close-window');
   await click('file-assets/generated.wav');
   await page.waitForFunction(() => window.aioli.preview.ready && window.aioli.preview.duration > 1);
-  assert.equal(await page.evaluate(() => window.aioli.state.window), 'audio-asset');
+  assert.equal(await page.evaluate(() => window.aioli.state['preview-kind']), 'audio-asset');
   await click('asset-play');
   await page.waitForFunction(
     () => window.aioli.preview.playing && window.aioli.preview.position > 0.05,

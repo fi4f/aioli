@@ -8,7 +8,7 @@
         [(ui/custom (map :height 34) (fn [p s] (code-tab-strip (nth p 0) (nth p 1) (nth s 0))))
          (ui/muted (active-code-path))
          (ui/with (map :grow 1)
-           (if (and (= (get :window) "") (not (generator-text-editing?)))
+           (if (not (preview-input-active?))
              (if (= (get :tab) "") (ui/muted "Open a source file from Files") (ui/code (get :tab)))
              (ui/muted "Tool input active")))]))))
 
@@ -51,6 +51,25 @@
              [(ui/with (map :grow 1) (ui/code :__sceneValue))
               (ui/button :scene-inspector-apply "Apply" (fn [] (apply-scene-field)))]) nil)]))))
 
+(defn settings-pane []
+  (ui/pane :settings "Project Settings"
+    (map :dock "floating" :visible (get :show-project-settings) :icon "main"
+      :collapsed (get :settings-collapsed) :collapse-id :collapse-settings
+      :collapse (fn [] (set! :settings-collapsed (not (get :settings-collapsed))))
+      :hide-id :close-project-settings
+      :hide (fn [] (set! :show-project-settings false) (set! :input-tab "")))
+    (ui/custom (map) project-settings-content)))
+(defn preview-pane []
+  (ui/pane :preview
+    (if (contains? ["hook-draw" "hook-sound" "hooks"] (get :preview-kind))
+      (hook-title) (get :preview-path))
+    (map :dock "floating" :visible (get :show-preview)
+      :icon (if (contains? ["hook-sound" "audio-asset"] (get :preview-kind)) "audio" "image")
+      :collapsed (get :preview-collapsed) :collapse-id :collapse-preview
+      :collapse (fn [] (set! :preview-collapsed (not (get :preview-collapsed))))
+      :hide-id :close-window :hide (fn [] (close-asset-preview)))
+    (ui/custom (map) preview-pane-content)))
+
 (defn docked-workspace [w h]
   (let [game-centered (and (get :show-game)
           (= (lookup (lookup (get :ui-docks) :game (map)) :dock "center") "center"))]
@@ -85,4 +104,6 @@
             :collapsed (get :generator-collapsed) :collapse-id :collapse-generator
             :collapse toggle-generator-collapse
             :hide-id :close-generator :hide-label "X" :hide (fn [] (close-generator)))
-       (ui/custom (map) generator-pane-content))])))
+       (ui/custom (map) generator-pane-content))
+     (settings-pane)
+     (preview-pane)])))

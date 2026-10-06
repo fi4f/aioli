@@ -219,13 +219,13 @@ async function inspectHook(path, name, args) {
     };
   hookPreview = result;
   sources.__hookArgs = JSON.stringify(result.args);
-  code.forgetBuffer('__hookArgs');
+  fields.forgetBuffer('__hookArgs');
   if (result.kind === 'draw' && gpu) await gpu.preparePixels(result.draw);
+  showPreviewPane(result.kind === 'sound' ? 'hook-sound' : 'hook-draw');
   if (result.kind === 'sound') {
     state['preview-path'] = `Sound hook / ${result.title}`;
     await assetPreview.open(state['preview-path'], result.resource, 'audio');
-    state.window = 'hook-sound';
-  } else state.window = 'hook-draw';
+  }
   report(`Preview / ${result.title}`);
 }
 
@@ -279,7 +279,7 @@ function defer(action) {
   }, 0);
 }
 // A new keystroke invalidates any older asynchronous GPU compilation immediately.
-const code = new CodeInput($('text-input'), sources, (tab) => {
+function bufferEdited(tab) {
   if (['__projectName', '__canvasWidth', '__canvasHeight'].includes(tab))
     state['project-settings-error'] = '';
   if (tab.startsWith('__')) return;
@@ -290,7 +290,10 @@ const code = new CodeInput($('text-input'), sources, (tab) => {
       if (state['auto-evaluate'] !== false) evaluate();
     }, 500);
   else report('Edits pending / Ctrl+Enter to run');
-});
+}
+const code = new CodeInput($('text-input'), sources, bufferEdited);
+// Tool fields have their own native input; they never switch the source buffer.
+const fields = new CodeInput($('field-input'), sources, bufferEdited, { indentOnTab: false });
 
 const assetPreview = new AssetPreview(
   () => gpu,
@@ -303,13 +306,9 @@ function previewAsset(path) {
     resource &&
     (/^text\//.test(resource.mime) || /^application\/(json|xml)(;|$)/.test(resource.mime))
   ) {
-    const encoded = resource.data.slice(resource.data.indexOf(',') + 1);
-    sources.__textResource = new TextDecoder().decode(
-      Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0)),
-    );
+    loadTextPreview(resource);
     state['preview-path'] = path;
-    state.window = 'text-asset';
-    code.forgetBuffer('__textResource');
+    showPreviewPane('text-asset');
     return;
   }
   if (kind !== 'image' && kind !== 'audio') {
@@ -319,8 +318,23 @@ function previewAsset(path) {
   state['preview-path'] = path;
   state['preview-zoom'] = 1;
   state['preview-pan-x'] = state['preview-pan-y'] = 0;
-  state.window = kind + '-asset';
+  showPreviewPane(kind + '-asset');
   return assetPreview.open(path, resource, kind);
+}
+function loadTextPreview(resource) {
+  sources.__textResource = decodeTextPreview(resource);
+  code.forgetBuffer('__textResource');
+}
+function decodeTextPreview(resource) {
+  const encoded = resource.data.slice(resource.data.indexOf(',') + 1);
+  return new TextDecoder().decode(Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0)));
+}
+function showPreviewPane(kind) {
+  Object.assign(
+    state,
+    policy('editor-preview-show', [state, kind, innerWidth, innerHeight], activeEditor()),
+  );
+  dirty = true;
 }
 
 /**
@@ -384,18 +398,22 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         (result.applicationState ?? applicationState)[key] = value;
       },
       'open-project-settings': actions(() => {
-        const plan = policy('editor-settings-open', [projectSettings(state)], activeEditor());
+        const plan = policy(
+          'editor-settings-open',
+          [projectSettings(state), state, innerWidth, innerHeight],
+          activeEditor(),
+        );
         for (const [tab, value] of Object.entries(plan.buffers)) {
           sources[tab] = value;
-          code.forgetBuffer(tab);
+          fields.forgetBuffer(tab);
         }
         Object.assign(state, plan.state);
       }),
       'project-canvas-preset': actions((width, height) => {
         sources.__canvasWidth = String(width);
         sources.__canvasHeight = String(height);
-        code.forgetBuffer('__canvasWidth');
-        code.forgetBuffer('__canvasHeight');
+        fields.forgetBuffer('__canvasWidth');
+        fields.forgetBuffer('__canvasHeight');
         state['project-settings-error'] = '';
       }),
       'apply-project-settings': actions(async () => {
@@ -406,7 +424,8 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           const previous = projectSettings(state);
           Object.assign(state, settings);
           if (await evaluate()) {
-            state.window = '';
+            state['show-project-settings'] = false;
+            state['input-tab'] = '';
             state['project-settings-error'] = '';
             save();
           } else {
@@ -417,24 +436,26 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           state['project-settings-error'] = error.message;
         }
       }),
-      'input-value': (tab) => sources[tab] ?? '',
+      'input-value': (tab) => visibleSources()[tab] ?? '',
       'field-focus': (tab) => {
         if (!live()) return;
         state['input-tab'] = tab;
-        code.switch(tab, sources[tab] ?? '');
-        code.focus = 'code';
-        code.input.focus({ preventScroll: true });
-        code.input.select();
-        code.session().start = 0;
-        code.session().end = code.input.value.length;
+        fields.switch(tab, sources[tab] ?? '');
+        code.focus = 'ui';
+        fields.focus = 'code';
+        fields.input.focus({ preventScroll: true });
+        fields.input.select();
+        fields.session().start = 0;
+        fields.session().end = fields.input.value.length;
       },
       'buffer-field': (origin, size, tab, label) => {
         if (!live()) return;
-        buffer = code.layout(origin, size, tab, sources[tab] ?? '', false, performance.now(), {
+        fields.focus = document.activeElement === fields.input ? 'code' : 'ui';
+        buffer = fields.layout(origin, size, tab, sources[tab] ?? '', false, performance.now(), {
           gutter: 0,
         });
-        code.input.setAttribute('aria-label', label);
-        items.push({ id: 'source', label, origin, size });
+        fields.input.setAttribute('aria-label', label);
+        items.push({ id: 'field-source', label, origin, size });
       },
       'screen-width': () => innerWidth,
       'screen-height': () => innerHeight,
@@ -633,6 +654,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         policy('editor-project-files', [rowsForTarget(), target['file-offset'] ?? 0], result),
       'project-file-count': () => rowsForTarget().length,
       'open-code-tab': actions((key) => {
+        state['input-tab'] = '';
         openTab(state, sources, key, activeEditor());
         dirty = true;
       }),
@@ -686,8 +708,9 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         inspectHook(hookPreview.path, hookPreview.name, JSON.parse(sources.__hookArgs)),
       ),
       'back-to-hooks': actions(() => {
-        assetPreview.close();
-        state.window = '';
+        state['input-tab'] = '';
+        state['show-code'] = true;
+        if (hookPreview) openTab(state, sources, sourceKey(hookPreview.path), activeEditor());
       }),
 
       'open-file': actions(async (path) => {
@@ -954,7 +977,8 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       'seek-asset': actions((seconds) => assetPreview.seek(seconds)),
       'close-asset-preview': actions(() => {
         assetPreview.close();
-        state.window = '';
+        state['show-preview'] = false;
+        if (['__hookArgs', '__textResource'].includes(state['input-tab'])) state['input-tab'] = '';
       }),
       'asset-image': (origin, size) => draw.surface(origin, size, 6),
       'asset-waveform': (origin, size) => {
@@ -1113,7 +1137,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
               : tab === 'diagnostic'
                 ? message
                 : tab.startsWith('__')
-                  ? sources[tab]
+                  ? visibleSources()[tab]
                   : visibleSources()[tab];
         if (typeof text !== 'string') throw new Error(`Unknown source buffer ${tab}`);
         if (live()) {
@@ -1407,6 +1431,19 @@ async function evaluate({
     const imageGenerator = outputGenerator(nextGenerators, target, 'image', candidate);
     const audioGenerator = outputGenerator(nextGenerators, target, 'audio', candidate);
     if (imageGenerator && gpu) await gpu.preparePixels(imageGenerator.runtime.drawFrame());
+    if (target['show-project-settings'] && (!runtime || imported)) {
+      const plan = policy(
+        'editor-settings-open',
+        [projectSettings(target), target, innerWidth, innerHeight],
+        candidate,
+      );
+      Object.assign(candidateSources, plan.buffers);
+    }
+    if (target['show-preview'] && target['preview-kind'] === 'text-asset') {
+      const resource = (imported?.resources ?? resources)[target['preview-path']];
+      if (resource) candidateSources.__textResource = decodeTextPreview(resource);
+      else target['show-preview'] = false;
+    }
     const stagedDraw = candidate.drawEditor().draw;
     if (gpu) await gpu.preparePixels(stagedDraw);
     gameCandidate.collectSound();
@@ -1449,6 +1486,9 @@ async function evaluate({
     if (imported) {
       resources = imported.resources ?? Object.create(null);
       hookPreview = null;
+      for (const key of ['__projectName', '__canvasWidth', '__canvasHeight'])
+        fields.forgetBuffer(key);
+      code.forgetBuffer('__textResource');
     }
     committedSources = { ...candidateSources };
     generatedSound = nextGeneratedSound;
@@ -1611,7 +1651,7 @@ async function exportGeneratedSound(path, shouldDownload) {
 let accessibilitySignature = '';
 function accessibility() {
   const current = regions.filter(
-      (r) => !r.decorative && !r.scrollKey && !['source', 'world'].includes(r.id),
+      (r) => !r.decorative && !r.scrollKey && !['source', 'field-source', 'world'].includes(r.id),
     ),
     signature = JSON.stringify(current);
   if (signature === accessibilitySignature) {
@@ -1913,7 +1953,10 @@ canvas.addEventListener('pointerdown', (e) => {
     pointer.pressed = false;
   }
   if (pointer.target?.id === 'source') code.pointer(pointer.x, pointer.y);
-  else {
+  else if (pointer.target?.id === 'field-source') {
+    fields.pointer(pointer.x, pointer.y);
+    code.focus = 'ui';
+  } else {
     const nextFocus = pointer.target?.id === 'world' ? 'world' : 'ui';
     // Clicking an already-focused Game must preserve physically held keys.
     if (nextFocus !== 'world' || code.focus !== 'world') keys.clear();
@@ -1938,6 +1981,7 @@ canvas.addEventListener('pointermove', (e) => {
     updateFileDrag();
   }
   if (pointer.down && code.drag) code.pointer(pointer.x, pointer.y, true);
+  if (pointer.down && fields.drag) fields.pointer(pointer.x, pointer.y, true);
 });
 const release = () => {
   dockInteraction.end();
@@ -1945,6 +1989,7 @@ const release = () => {
   pointer.capture = null;
   pointer.target = null;
   code.drag = false;
+  fields.drag = false;
   fileDrag = null;
   canvas.style.cursor = '';
 };
@@ -2307,16 +2352,22 @@ function frame(now) {
         focusPalette = visibleWindow === 'palette';
         focusPath = visibleWindow === 'file-path';
       }
-      if (['hook-draw', 'hook-sound', 'hooks'].includes(state.window) && !hookPreview)
-        state.window = '';
-      if (state.window === 'hook-sound' && hookPreview?.resource) {
+      if (['hook-draw', 'hook-sound', 'hooks'].includes(state.window))
+        showPreviewPane(state.window);
+      if (['image-asset', 'audio-asset', 'text-asset'].includes(state.window))
+        previewAsset(state['preview-path']);
+      if (state.window === 'project-settings') state.window = '';
+      const previewKind = state['show-preview'] ? state['preview-kind'] : '';
+      if (['hook-draw', 'hook-sound', 'hooks'].includes(previewKind) && !hookPreview)
+        state['show-preview'] = false;
+      if (previewKind === 'hook-sound' && hookPreview?.resource) {
         assetPreview.open(state['preview-path'], hookPreview.resource, 'audio');
-      } else if (state.window === 'image-asset' || state.window === 'audio-asset') {
+      } else if (previewKind === 'image-asset' || previewKind === 'audio-asset') {
         const resource = resources[state['preview-path']];
         assetPreview.open(
           state['preview-path'],
           resource,
-          state.window === 'image-asset' ? 'image' : 'audio',
+          previewKind === 'image-asset' ? 'image' : 'audio',
         );
       } else if (assetPreview.path) assetPreview.close();
       callHook(ui, 'update', dt);

@@ -96,7 +96,7 @@ try {
   await frame();
   assert.equal(await page.evaluate(() => window.aioli.running), true);
   await click('canvas-height');
-  assert.equal(await page.locator('#text-input').inputValue(), '64');
+  assert.equal(await page.locator('#field-input').inputValue(), '64');
   assert.deepEqual(errors, []);
   console.log(
     'Project name/canvas form, atomic validation, cancel, reload, offline HTML title and narrow fields passed',

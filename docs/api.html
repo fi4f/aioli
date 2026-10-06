@@ -537,13 +537,15 @@
       <p>
         Open the source and click <strong>Preview draw</strong> or
         <strong>Preview sound</strong> directly above its declaration to inspect it. The button row
-        is editor UI; copying, saving, line numbers and Lisp evaluation use the original source.
-        Click <strong>Code</strong> to return to the same source buffer. The editor executes only
-        that hook against copied state with application actions and input disabled. Drawing previews
-        start with fresh drawing state and a blank canvas. Edit the JSON argument array and click
-        Preview to rerun it. Sound previews provide a waveform, play/pause, stop, a one-second
-        forward button and click/drag seeking. Preview state never changes the game. These
-        declarations work in exported apps; only inspection UI belongs to the editor.
+        is editor UI; copying, saving, line numbers and Lisp evaluation use the original source. The
+        Preview pane can dock beside Code, float, resize or minimize. Source remains editable while
+        the preview is open, including while editing the separate JSON argument input. Click
+        <strong>Code</strong> to select the hook's source tab while retaining the preview. The
+        editor executes only that hook against copied state with application actions and input
+        disabled. Drawing previews start with fresh drawing state and a blank canvas. Edit the JSON
+        argument array and click Preview to rerun it. Sound previews provide a waveform, play/pause,
+        stop, a one-second forward button and click/drag seeking. Preview state never changes the
+        game. These declarations work in exported apps; only inspection UI belongs to the editor.
       </p>
       <h2 id="audio">Procedural audio</h2>
       <pre><code>(defn sound []
@@ -705,7 +707,7 @@
         resource previews. <code>(asset-ready?)</code> and <code>(asset-status)</code> report decode
         readiness/errors; <code>(asset-width)</code> / <code>(asset-height)</code> give decoded
         image dimensions. <code>(asset-image origin size)</code> samples the decoded image in the
-        pixel drawing stream. The stock window uses <code>:preview-path</code>,
+        pixel drawing stream. The stock pane uses <code>:preview-path</code>,
         <code>:preview-zoom</code> and <code>:preview-pan-x</code> / <code>:preview-pan-y</code>.
         Zoom multiplies the fitted size; pan is measured in screen pixels.
       </p>

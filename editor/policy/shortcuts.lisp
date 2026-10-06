@@ -31,7 +31,8 @@
       (and command (= key "Enter"))
         (editor-key-result (if (= (lookup workspace :window "") "palette") "instruction" "evaluate") (map))
       (= key "Escape")
-        (editor-key-result "clear-keys" (map :file-path-editing false :window "" :menu false :show-tools false))
+        (editor-key-result "clear-keys" (map :file-path-editing false :window "" :menu false :show-tools false
+          :show-preview false :show-project-settings false :input-tab ""))
       (and (= focus "world") (not command) (not alt) (or (= (count key) 1) (starts-with? key "Arrow")))
         (merge (editor-key-result "world-key" (map)) (map :key (if (= (count key) 1) lower key)))
       true nil)))

@@ -86,7 +86,8 @@ try {
   await click('file-levels/generated.csv');
   await page.waitForFunction(
     () =>
-      window.aioli.state.window === 'text-asset' && document.querySelector('#text-input').readOnly,
+      window.aioli.state['preview-kind'] === 'text-asset' &&
+      document.querySelector('#text-input').readOnly,
   );
   assert.equal(await page.locator('#text-input').inputValue(), expected);
   await page.screenshot({ path: 'artifacts/generated-text-resource.png' });

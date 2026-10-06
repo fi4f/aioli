@@ -7,6 +7,36 @@ import { tabLayout } from '../code-tabs.js';
 import { planFileMove } from '../file-moves.js';
 import { DockInteraction } from '../ui-docking.js';
 
+test('preview and settings tools retain independent dock placement when reopened', () => {
+  const workspace = {
+    'ui-docks': {
+      _tree: { axis: 'x', ratio: 0.5, first: 'preview', second: 'game' },
+      preview: { dock: 'split', target: 'game', z: 1 },
+      settings: { dock: 'floating', x: 20, y: 80, width: 400, height: 420, z: 2 },
+    },
+    'show-preview': true,
+  };
+  const preview = policy('editor-preview-show', [workspace, 'hook-sound', 1200, 900]);
+  assert.equal(preview['preview-kind'], 'hook-sound');
+  assert.equal(preview['ui-docks'].preview.dock, 'split');
+  assert.deepEqual(preview['ui-docks']._tree, workspace['ui-docks']._tree);
+  const settings = policy('editor-settings-open', [
+    { 'project-name': 'Moon Dash', 'canvas-width': 320, 'canvas-height': 240 },
+    workspace,
+    1200,
+    900,
+  ]);
+  assert.equal(settings.state['show-project-settings'], true);
+  assert.equal(settings.state['ui-docks'].settings.x, 20);
+  assert.equal(settings.buffers.__canvasWidth, '320');
+  assert.equal(
+    settings.state['show-preview'],
+    undefined,
+    'opening settings does not hide previews',
+  );
+  assert.deepEqual(workspace['ui-docks'].preview, { dock: 'split', target: 'game', z: 1 });
+});
+
 test('file workflows choose views and retain source tabs across narrow layouts', () => {
   const sources = { main: '', game: '', 'tool.generator.lisp': '', 'level.scene.lisp': '' };
   const state = { tab: 'game', 'open-tabs': ['main', 'game'], 'show-files': true };

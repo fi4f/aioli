@@ -1,72 +1,74 @@
-; Resource previews are pixel UI windows. The host only decodes image/audio data.
-(defn image-asset-view [x y w h]
-  (let [vw (- w 32) vh (- h 108) ox (+ x 16) oy (+ y 44)
-        fit (min 1 (/ vw (max 1 (asset-width))) (/ vh (max 1 (asset-height))))]
-    (scope
-      (clip [ox oy] [vw vh])
-      ; Checkerboard makes transparent pixels visible without changing the asset.
-      (repeat 12 i (repeat 8 j
-        (fill (if (= (mod (+ i j) 2) 0) (get :ui-checker-dark) (get :ui-checker-light)))
-        (rect [(+ ox (* i (/ vw 12))) (+ oy (* j (/ vh 8)))] [(/ vw 12) (/ vh 8)])))
-      (region :asset-image-area "Image / drag to pan, wheel to zoom" [ox oy] [vw vh])
-      (when (and (pointer-pressed?) (hit? [ox oy] [vw vh]))
-        (capture! :asset-image-area)
-        (set! :preview-drag-x (pointer-x)) (set! :preview-drag-y (pointer-y))
-        (set! :preview-drag-pan-x (get :preview-pan-x)) (set! :preview-drag-pan-y (get :preview-pan-y)))
-      (when (and (pointer-down?) (captured? :asset-image-area))
-        (set! :preview-pan-x (+ (get :preview-drag-pan-x) (- (pointer-x) (get :preview-drag-x))))
-        (set! :preview-pan-y (+ (get :preview-drag-pan-y) (- (pointer-y) (get :preview-drag-y)))))
-      (let [iw (* (asset-width) fit (get :preview-zoom)) ih (* (asset-height) fit (get :preview-zoom))]
-        (asset-image [(+ ox (/ (- vw iw) 2) (get :preview-pan-x))
-                      (+ oy (/ (- vh ih) 2) (get :preview-pan-y))] [iw ih])))
-    (let [by (+ y h -48)]
-      (when (ui-button :asset-zoom-out "-" [(+ x 16) by] [32 32] false)
-        (set! :preview-zoom (max 0.1 (/ (get :preview-zoom) 1.25))))
-      (when (ui-button :asset-zoom-in "+" [(+ x 52) by] [32 32] false)
-        (set! :preview-zoom (min (/ 32 fit) (* (get :preview-zoom) 1.25))))
-      (when (ui-button :asset-fit "Fit" [(+ x 88) by] [56 32] false)
-        (set! :preview-zoom 1) (set! :preview-pan-x 0) (set! :preview-pan-y 0))
-      (when (ui-button :asset-actual-size "1:1" [(+ x 148) by] [56 32] false)
-        (set! :preview-zoom (/ 1 fit)) (set! :preview-pan-x 0) (set! :preview-pan-y 0))
-      (fill (get :ui-muted))
-      (text [(+ x 216) (+ by 8)] (str (round (* 100 fit (get :preview-zoom))) "%")))))
+; Preview bodies receive their bounds from the dock host. The browser decodes assets.
+(defn image-asset-canvas [origin size]
+  (let [x (nth origin 0) y (nth origin 1) w (max 1 (nth size 0)) h (max 1 (nth size 1))
+        fit (min 1 (/ w (max 1 (asset-width))) (/ h (max 1 (asset-height))))]
+    (set! :preview-fit fit)
+    (repeat 12 i (repeat 8 j
+      (fill (if (= (mod (+ i j) 2) 0) (get :ui-checker-dark) (get :ui-checker-light)))
+      (rect [(+ x (* i (/ w 12))) (+ y (* j (/ h 8)))] [(/ w 12) (/ h 8)])))
+    (region :asset-image-area "Image / drag to pan, wheel to zoom" origin size)
+    (when (and (pointer-pressed?) (hit? origin size))
+      (capture! :asset-image-area)
+      (set! :preview-drag-x (pointer-x)) (set! :preview-drag-y (pointer-y))
+      (set! :preview-drag-pan-x (get :preview-pan-x)) (set! :preview-drag-pan-y (get :preview-pan-y)))
+    (when (and (pointer-down?) (captured? :asset-image-area))
+      (set! :preview-pan-x (+ (get :preview-drag-pan-x) (- (pointer-x) (get :preview-drag-x))))
+      (set! :preview-pan-y (+ (get :preview-drag-pan-y) (- (pointer-y) (get :preview-drag-y)))))
+    (let [iw (* (asset-width) fit (get :preview-zoom)) ih (* (asset-height) fit (get :preview-zoom))]
+      (asset-image [(+ x (/ (- w iw) 2) (get :preview-pan-x))
+                    (+ y (/ (- h ih) 2) (get :preview-pan-y))] [iw ih]))))
 
-(defn audio-asset-view [x y w h]
-  (let [ox (+ x 16) oy (+ y 58) width (- w 32) height (max 40 (- h 164))
+(defn image-size-reset [actual]
+  (let [fit (get :preview-fit)]
+    (set! :preview-zoom (if actual (/ 1 (max 0.0001 fit)) 1))
+    (set! :preview-pan-x 0) (set! :preview-pan-y 0)))
+(defn image-asset-content [origin size]
+  (ui/render origin size
+    (ui/column (map :padding 12 :gap 8)
+      [(ui/custom (map :grow 1) image-asset-canvas)
+       (ui/row (map :gap 6)
+         [(ui/button :asset-zoom-out "-" (fn [] (set! :preview-zoom (max 0.1 (/ (get :preview-zoom) 1.25)))))
+          (ui/button :asset-zoom-in "+" (fn [] (set! :preview-zoom (min (/ 32 (max 0.0001 (get :preview-fit))) (* (get :preview-zoom) 1.25)))))])
+       (ui/row (map :gap 6)
+         [(ui/button :asset-fit "Fit" (fn [] (image-size-reset false)))
+          (ui/button :asset-actual-size "1:1" (fn [] (image-size-reset true)))])])))
+
+(defn audio-asset-wave [origin size]
+  (let [x (nth origin 0) y (nth origin 1) w (max 1 (nth size 0)) h (max 1 (nth size 1))
         duration (max 0.001 (asset-duration))]
-    (fill (get :ui-bg)) (rect [ox oy] [width height])
-    (fill (get :ui-selection)) (rect [ox (+ oy (/ height 2))] [width 1])
-    (fill (get :ui-accent)) (asset-waveform [ox oy] [width height])
-    (fill (get :ui-playhead))
-    (rect [(+ ox (* width (/ (asset-time) duration))) oy] [1 height])
-    (region :asset-seek "Audio / click or drag to seek" [ox oy] [width height])
-    (when (and (pointer-pressed?) (hit? [ox oy] [width height])) (capture! :asset-seek))
+    (fill (get :ui-bg)) (rect origin size)
+    (fill (get :ui-selection)) (rect [x (+ y (/ h 2))] [w 1])
+    (fill (get :ui-accent)) (asset-waveform origin size)
+    (fill (get :ui-playhead)) (rect [(+ x (* w (/ (asset-time) duration))) y] [1 h])
+    (region :asset-seek "Audio / click or drag to seek" origin size)
+    (when (and (pointer-pressed?) (hit? origin size)) (capture! :asset-seek))
     (when (and (or (pointer-down?) (pointer-pressed?)) (captured? :asset-seek))
-      (seek-asset (* duration (clamp (/ (- (pointer-x) ox) width) 0 1))))
-    (fill (get :ui-muted))
-    (text [ox (+ oy height 12)] (str (/ (round (* (asset-time) 100)) 100) " / "
-                                     (/ (round (* duration 100)) 100) " seconds"))
-    (let [by (+ y h -48)]
-      (when (ui-button :asset-play (if (asset-playing?) "Pause" "Play") [ox by] [88 32] false)
-        (if (asset-playing?) (pause-asset) (play-asset)))
-      (when (ui-button :asset-stop "Stop" [(+ ox 96) by] [72 32] false) (stop-asset)))))
+      (seek-asset (* duration (clamp (/ (- (pointer-x) x) w) 0 1))))))
+(defn audio-asset-content [origin size forward]
+  (ui/render origin size
+    (ui/column (map :padding 12 :gap 8)
+      [(ui/custom (map :grow 1) audio-asset-wave)
+       (ui/muted (str (/ (round (* (asset-time) 100)) 100) " / "
+                      (/ (round (* (asset-duration) 100)) 100) " seconds"))
+       (ui/row (map :gap 8)
+         [(ui/button :asset-play (if (asset-playing?) "Pause" "Play")
+            (fn [] (if (asset-playing?) (pause-asset) (play-asset))))
+          (ui/button :asset-stop "Stop" (fn [] (stop-asset)))])
+       (if forward (ui/button :hook-forward "+1 sec"
+         (fn [] (seek-asset (min (asset-duration) (+ (asset-time) 1))))) nil)])))
 
-(defn asset-preview-window []
-  (let [image (= (get :window) "image-asset")
-        textual (= (get :window) "text-asset")
-        w (min (if (or image textual) 900 760) (- (screen-width) 32))
-        h (min (if (or image textual) 650 340) (- (screen-height) 100))
-        x (/ (- (screen-width) w) 2) y 64]
-    (fill (get :ui-border)) (rect [(- x 1) (- y 1)] [(+ w 2) (+ h 2)])
-    (fill (get :ui-panel)) (rect [x y] [w h])
-    (region :asset-window "Asset preview" [x y] [w h])
-    (scope (clip [(+ x 16) (+ y 12)] [(- w 110) 24])
-      (fill (get :ui-text)) (text [(+ x 16) (+ y 12)] (get :preview-path)))
-    (when (ui-close-button :close-window "Close preview" [(+ x w -40) (+ y 4)] [32 32])
-      (close-asset-preview))
-    (if textual
-      (code-editor [(+ x 16) (+ y 48)] [(- w 32) (- h 64)] :__textResource)
-    (if (asset-ready?)
-      (if image (image-asset-view x y w h) (audio-asset-view x y w h))
-      (scope (clip [(+ x 16) (+ y 60)] [(- w 32) (- h 80)])
-        (fill (get :ui-muted)) (text [(+ x 16) (+ y 64)] (asset-status)))))))
+(defn preview-input-active? []
+  (or (not (= (get :window) "")) (generator-text-editing?)
+      (and (get :show-preview) (not (get :preview-collapsed))
+           (= (get :preview-kind) "text-asset"))))
+(defn preview-pane-content [origin size]
+  (let [kind (get :preview-kind)]
+    (if (contains? ["hook-draw" "hook-sound" "hooks"] kind)
+      (hook-pane-content origin size)
+      (if (= kind "text-asset")
+        (ui/render origin size (ui/column (map :padding 12)
+          [(if (or (= (get :input-tab) "") (= (get :input-tab) "__textResource"))
+             (ui/with (map :grow 1) (ui/code :__textResource)) (ui/muted "Tool input active"))]))
+        (if (asset-ready?)
+          (if (= kind "image-asset") (image-asset-content origin size) (audio-asset-content origin size false))
+          (ui/render origin size (ui/column (map :padding 12) [(ui/muted (asset-status))])))))))

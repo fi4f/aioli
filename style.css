@@ -20,7 +20,8 @@ body {
   outline: none;
   touch-action: none;
 }
-#text-input {
+#text-input,
+#field-input {
   position: fixed;
   left: 0;
   top: 0;

@@ -72,7 +72,9 @@ try {
   await page.screenshot({ path: 'artifacts/inline-hooks.png' });
   await click('inspect-hook-mark');
   await page.waitForFunction(
-    () => window.aioli.hookPreview?.name === 'mark' && window.aioli.state.window === 'hook-draw',
+    () =>
+      window.aioli.hookPreview?.name === 'mark' &&
+      window.aioli.state['preview-kind'] === 'hook-draw',
   );
   assert.equal(
     await page.evaluate(() => window.aioli.applicationState['preview-counter']),
@@ -83,8 +85,9 @@ try {
     await page.evaluate(() => window.aioli.hookPreview.commands[0].bounds),
     [25, 35, 10, 10],
   );
+  await click('hook-args');
   const edit = await page.evaluate(() =>
-    window.aioli.regions.filter((r) => r.id === 'source').at(-1),
+    window.aioli.regions.filter((r) => r.id === 'field-source').at(-1),
   );
   await page.mouse.click(edit.origin[0] + 12, edit.origin[1] + 12);
   await page.keyboard.press('Control+a');
@@ -98,9 +101,11 @@ try {
   await mkdir('artifacts', { recursive: true });
   await page.screenshot({ path: 'artifacts/drawing-hook-preview.png' });
   await click('back-to-hooks');
+  assert.equal(await page.evaluate(() => window.aioli.state['show-preview']), true);
+  await click('close-window');
   await click('inspect-hook-tone');
   await page.waitForFunction(
-    () => window.aioli.preview.ready && window.aioli.state.window === 'hook-sound',
+    () => window.aioli.preview.ready && window.aioli.state['preview-kind'] === 'hook-sound',
   );
   assert.ok(await page.evaluate(() => window.aioli.preview.duration >= 2));
   await click('hook-forward');
@@ -117,10 +122,10 @@ try {
   await page.screenshot({ path: 'artifacts/sound-hook-preview.png' });
   // Saved preview windows return to inline controls, never a stale decode or missing buffer.
   await page.waitForFunction(
-    () => JSON.parse(localStorage.getItem('aioli.project')).state.window === 'hook-sound',
+    () => JSON.parse(localStorage.getItem('aioli.project')).state['preview-kind'] === 'hook-sound',
   );
   await page.reload();
-  await page.waitForFunction(() => window.aioli?.running && window.aioli.state.window === '');
+  await page.waitForFunction(() => window.aioli?.running && !window.aioli.state['show-preview']);
   await click('inspect-hook-hit');
   await page.waitForFunction(
     () => window.aioli.preview.ready && window.aioli.preview.duration < 0.3,
