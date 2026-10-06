@@ -1,10 +1,9 @@
+import { policy } from './editor-policy.js';
 import {
   arrangeTree,
   completeTree,
   treeFromEntries,
   removeLeaf,
-  splitLeaf,
-  joinTree,
   setRatio,
 } from './ui-dock-tree.js';
 const edges = ['left', 'right', 'top', 'bottom'];
@@ -14,7 +13,7 @@ const isFloating = (pane, placements) =>
   !pane.options?.fixed && (placements[pane.id]?.dock ?? pane.options?.dock) === 'floating';
 
 /** Saved placements contain only JSON values; pane content stays in Lisp. */
-function legacyDockLayout(placements, panes, origin, size) {
+function edgeDockLayout(placements, panes, origin, size) {
   if (panes.length > 16 || ![...origin, ...size].every(Number.isFinite))
     throw new Error('Invalid dock workspace');
   const remaining = [...origin, ...size],
@@ -82,7 +81,7 @@ function legacyDockLayout(placements, panes, origin, size) {
   return [...result, ...floating];
 }
 
-export function dockLayout(placements = {}, panes, origin, size) {
+export function dockLayout(placements = {}, panes, origin, size, editor) {
   const minimized = panes.filter(
     (pane) => pane && pane.visible !== false && pane.options?.collapsed,
   );
@@ -105,16 +104,16 @@ export function dockLayout(placements = {}, panes, origin, size) {
   const activePanes = panes.map((pane) =>
     minimized.includes(pane) ? { ...pane, visible: false } : pane,
   );
-  const legacy = legacyDockLayout(placements, activePanes, origin, activeSize);
-  const floating = legacy
+  const initial = edgeDockLayout(placements, activePanes, origin, activeSize);
+  const floating = initial
     .filter(([pane]) => isFloating(pane, placements))
     .sort((a, b) => number(placements[a[0].id]?.z, 0) - number(placements[b[0].id]?.z, 0));
-  let docked = legacy.filter(([pane]) => !isFloating(pane, placements)),
+  let docked = initial.filter(([pane]) => !isFloating(pane, placements)),
     dividers = [];
   const tree = placements._tree
-    ? completeTree(placements._tree, panes, placements, size)
+    ? completeTree(placements._tree, panes, placements, size, editor)
     : treeFromEntries(
-        legacyDockLayout(
+        edgeDockLayout(
           placements,
           panes.map((pane) =>
             pane ? { ...pane, options: { ...pane.options, collapsed: false } } : pane,
@@ -125,6 +124,7 @@ export function dockLayout(placements = {}, panes, origin, size) {
         placements,
         origin,
         size,
+        editor,
       );
   if (placements._tree || minimized.length) {
     const arranged = arrangeTree(tree, activePanes, placements, origin, activeSize);
@@ -163,29 +163,26 @@ export function dockLayout(placements = {}, panes, origin, size) {
 }
 
 export class DockInteraction {
-  constructor({ now = () => performance.now(), dwellMs = 700, tolerance = 8 } = {}) {
+  constructor({
+    now = () => performance.now(),
+    dwellMs = 700,
+    tolerance = 8,
+    editor = () => null,
+  } = {}) {
+    this.editor = editor;
     this.workspaces = new Map();
     this.now = now;
     this.dwellMs = dwellMs;
     this.tolerance = tolerance;
   }
   updatePreview(candidate, x, y, now) {
-    if (!candidate) {
-      this.hover = null;
-      this.preview = null;
-      return;
-    }
-    const key = `${candidate.target ?? 'workspace'}:${candidate.edge}`;
-    const hover = this.hover;
-    if (
-      !hover ||
-      hover.key !== key ||
-      candidate.rect.some((n, i) => Math.abs(n - hover.rect[i]) > 0.5) ||
-      Math.hypot(x - hover.x, y - hover.y) > this.tolerance
-    )
-      this.hover = { key, x, y, rect: [...candidate.rect], since: now };
-    const progress = this.dwellMs > 0 ? clamp((now - this.hover.since) / this.dwellMs, 0, 1) : 1;
-    this.preview = { ...candidate, progress, ready: progress === 1 };
+    const next = policy(
+      'dock-hover',
+      [this.hover ?? null, candidate ?? null, [x, y], now, this.dwellMs, this.tolerance],
+      this.editor(),
+    );
+    this.hover = next.hover;
+    this.preview = next.preview;
   }
   tick(now = this.now()) {
     if (this.drag?.started && this.drag.region.dockKind === 'move')
@@ -220,7 +217,7 @@ export class DockInteraction {
     const highest = Math.max(0, ...floats.map(([, entry]) => number(entry.z, 0)));
     const top = this.workspaces.get(key)?.entries.at(-1)?.[0].id;
     if (top === id && placements[id].z === highest) return false;
-    state[key] = { ...placements, [id]: { ...placements[id], z: highest + 1 } };
+    state[key] = policy('dock-promote', [placements, id], this.editor());
     return true;
   }
   resizeRegions(key) {
@@ -319,160 +316,62 @@ export class DockInteraction {
     return true;
   }
   target(x, y) {
-    if (!this.drag) return null;
-    const [left, top, width, height] = this.drag.region.dockWorkspace;
-    if (x < left || y < top || x > left + width || y > top + height) return null;
-    const distances = [x - left, left + width - x, y - top, top + height - y];
-    const nearest = Math.min(...distances);
-    return nearest <= 64 ? edges[distances.indexOf(nearest)] : null;
+    return this.drag
+      ? (policy('dock-workspace-preview', [[x, y], this.drag.region.dockWorkspace], this.editor())
+          ?.edge ?? null)
+      : null;
   }
   move(x, y, now = this.now()) {
     const drag = this.drag;
-    if (!drag) return false;
-    if (!drag.started && Math.hypot(x - drag.x, y - drag.y) < 6) return false;
+    if (!drag || (!drag.started && Math.hypot(x - drag.x, y - drag.y) < 6)) return false;
     drag.started = true;
     drag.lastX = x;
     drag.lastY = y;
-    const r = drag.region,
-      [px, py, width, height] = r.dockRect;
-    const before = drag.saved[r.dockPane] ?? { dock: r.dockDefault };
-    const [wx, wy, ww, wh] = r.dockWorkspace;
-    let value;
-    if (r.dockKind === 'divider') {
-      const { axis, container, path, minA, minB } = r.divider,
+    const region = drag.region,
+      point = [x, y],
+      start = [drag.x, drag.y];
+    const before = drag.saved[region.dockPane] ?? { dock: region.dockDefault };
+    if (region.dockKind === 'divider') {
+      const { axis, container, path, minA, minB } = region.divider,
         index = axis === 'x' ? 0 : 1;
       const total = container[index + 2];
       const ratio = clamp(
-        ((index === 0 ? x : y) - container[index]) / total,
+        (point[index] - container[index]) / total,
         minA / total,
         1 - minB / total,
       );
-      drag.state[r.dockKey] = { ...drag.state[r.dockKey], _tree: setRatio(drag.tree, path, ratio) };
+      drag.state[region.dockKey] = {
+        ...drag.state[region.dockKey],
+        _tree: setRatio(drag.tree, path, ratio, this.editor()),
+      };
       this.preview = null;
       return true;
     }
-    if (r.dockKind.startsWith('resize')) {
-      const dock = before.dock ?? r.dockDefault;
-      const sign = dock === 'right' || dock === 'bottom' ? -1 : 1;
-      const delta = dock === 'top' || dock === 'bottom' ? y - drag.y : x - drag.x;
-      if (dock === 'floating') {
-        const edge = r.dockKind.slice(7),
-          dx = x - drag.x,
-          dy = y - drag.y;
-        let left = px,
-          top = py,
-          right = px + width,
-          bottom = py + height;
-        const minHeight = height <= 34 ? height : 80;
-        if (edge === 'left') left = clamp(px + dx, wx, right - Math.min(120, width));
-        if (edge === 'top') top = clamp(py + dy, wy, bottom - Math.min(minHeight, height));
-        if (edge === 'right' || r.dockKind === 'resize')
-          right = clamp(right + dx, left + Math.min(120, width), wx + ww);
-        if (edge === 'bottom' || r.dockKind === 'resize')
-          bottom = clamp(bottom + dy, top + Math.min(minHeight, height), wy + wh);
-        value = {
-          ...before,
-          x: left,
-          y: top,
-          width: right - left,
-          height: height <= 34 ? number(before.height, height) : bottom - top,
-        };
-      } else
-        value = {
-          ...before,
-          dock,
-          extent: Math.max(
-            120,
-            (dock === 'top' || dock === 'bottom' ? height : width) + sign * delta,
-          ),
-        };
-      this.preview = null;
-    } else {
-      const detaching = before.dock !== 'floating';
-      const floatingWidth = detaching
-          ? Math.min(Math.max(120, width * 0.9), Math.max(0, ww - 32))
-          : Math.min(width, ww),
-        floatingHeight = detaching
-          ? Math.min(Math.max(80, height * 0.9), Math.max(0, wh - 32))
-          : Math.min(height, wh);
-      const insetX = detaching ? Math.min(16, (ww - floatingWidth) / 2) : 0,
-        insetY = detaching ? Math.min(16, (wh - floatingHeight) / 2) : 0;
-      value = {
-        ...before,
-        dock: 'floating',
-        z:
-          before.dock === 'floating'
-            ? number(before.z, 0)
-            : Math.max(
-                0,
-                ...Object.values(drag.state[r.dockKey] ?? {}).map((entry) => number(entry?.z, 0)),
-              ) + 1,
-        x: clamp(
-          detaching ? x - ((drag.x - px) * floatingWidth) / width : px + x - drag.x,
-          wx + insetX,
-          wx + ww - floatingWidth - insetX,
-        ),
-        y: clamp(py + y - drag.y, wy + insetY, wy + wh - floatingHeight - insetY),
-        width: floatingWidth,
-        height: floatingHeight,
-      };
-      const target = this.target(x, y);
-      this.preview = target
-        ? {
-            edge: target,
-            rect:
-              target === 'left'
-                ? [wx, wy, ww * 0.3, wh]
-                : target === 'right'
-                  ? [wx + ww * 0.7, wy, ww * 0.3, wh]
-                  : target === 'top'
-                    ? [wx, wy, ww, wh * 0.3]
-                    : [wx, wy + wh * 0.7, ww, wh * 0.3],
-          }
-        : null;
-      const model = this.workspaces.get(r.dockKey);
-      if (model) {
-        // Workspace-edge docking remains distinct from splitting a pane.
-        const distance = Math.min(x - wx, wx + ww - x, y - wy, wy + wh - y);
-        if (distance > 20 && x >= wx && y >= wy && x < wx + ww && y < wy + wh) {
-          const candidate = model.entries.findLast(
-            ([pane, p, s]) =>
-              pane.id !== r.dockPane &&
-              !pane.options?.collapsed &&
-              model.placements[pane.id]?.dock !== 'floating' &&
-              x >= p[0] &&
-              y >= p[1] &&
-              x < p[0] + s[0] &&
-              y < p[1] + s[1],
-          );
-          this.preview = null;
-          if (candidate) {
-            const [pane, p, s] = candidate;
-            const distances = [
-              (x - p[0]) / s[0],
-              (p[0] + s[0] - x) / s[0],
-              (y - p[1]) / s[1],
-              (p[1] + s[1] - y) / s[1],
-            ];
-            const edge = edges[distances.indexOf(Math.min(...distances))];
-            const rect = [...p, ...s],
-              axis = edge === 'left' || edge === 'right' ? 0 : 1;
-            if (Math.min(...distances) <= 0.4 && s[axis] >= (axis === 0 ? 240 : 160)) {
-              rect[axis + 2] /= 2;
-              if (edge === 'right' || edge === 'bottom') rect[axis] += rect[axis + 2];
-              this.preview = { edge, target: pane.id, rect };
-            }
-          }
-        }
-      }
+    const placements = drag.state[region.dockKey] ?? {};
+    const resize = region.dockKind.startsWith('resize');
+    const value = policy(
+      resize ? 'dock-resize' : 'dock-floating',
+      resize ? [before, region, start, point] : [before, region, start, point, placements],
+      this.editor(),
+    );
+    if (resize) this.preview = null;
+    else {
+      const model = this.workspaces.get(region.dockKey);
+      const preview = model
+        ? policy(
+            'dock-pane-preview',
+            [region.dockPane, point, region.dockWorkspace, model.entries, model.placements],
+            this.editor(),
+          )
+        : policy('dock-workspace-preview', [point, region.dockWorkspace], this.editor());
       if (drag.saved._tree)
-        drag.state[r.dockKey] = {
-          ...drag.state[r.dockKey],
-          _tree: removeLeaf(drag.saved._tree, r.dockPane),
+        drag.state[region.dockKey] = {
+          ...placements,
+          _tree: removeLeaf(drag.saved._tree, region.dockPane, this.editor()),
         };
-      this.updatePreview(this.preview, x, y, now);
+      this.updatePreview(preview, x, y, now);
     }
-    drag.state[r.dockKey] = { ...drag.state[r.dockKey], [r.dockPane]: value };
+    drag.state[region.dockKey] = { ...drag.state[region.dockKey], [region.dockPane]: value };
     return true;
   }
   end(cancel = false) {
@@ -482,20 +381,16 @@ export class DockInteraction {
     if (cancel) state[region.dockKey] = saved;
     else if (started && this.preview?.ready) {
       const model = this.workspaces.get(region.dockKey);
-      const tree = removeLeaf(model?.tree ?? this.drag.tree, region.dockPane);
-      state[region.dockKey] = {
-        ...state[region.dockKey],
-        [region.dockPane]: this.preview.target
-          ? { dock: 'split', target: this.preview.target }
-          : { dock: this.preview.edge, extent: 0.3 },
-        ...(this.preview.target || saved._tree
-          ? {
-              _tree: this.preview.target
-                ? splitLeaf(tree, this.preview.target, region.dockPane, this.preview.edge)
-                : joinTree(tree, region.dockPane, this.preview.edge),
-            }
-          : {}),
-      };
+      state[region.dockKey] = policy(
+        'dock-drop',
+        [
+          state[region.dockKey],
+          model?.tree ?? this.drag.tree ?? null,
+          region.dockPane,
+          this.preview,
+        ],
+        this.editor(),
+      );
     }
     this.drag = null;
     this.preview = null;

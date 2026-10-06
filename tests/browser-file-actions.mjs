@@ -69,7 +69,9 @@ try {
     );
     await page.mouse.move(a.origin[0] + Math.min(a.size[0] - 5, 120), a.origin[1] + 12);
     await page.mouse.down();
-    await page.mouse.move(b.origin[0] + 70, b.origin[1] + 12, { steps: 12 });
+    await page.mouse.move(b.origin[0] + Math.min(70, b.size[0] / 2), b.origin[1] + 12, {
+      steps: 12,
+    });
     await page.mouse.up();
   }
   await drag('file-move-me.lisp', 'folder-examples');

@@ -1,5 +1,11 @@
 import { createRuntime, parse } from './lisp.js';
-export const policyPaths = ['editor/policy/files.lisp', 'editor/policy/inspector.lisp'];
+export const policyPaths = [
+  'editor/policy/files.lisp',
+  'editor/policy/inspector.lisp',
+  'editor/policy/workflows.lisp',
+  'editor/policy/shortcuts.lisp',
+  'editor/policy/docking.lisp',
+];
 export const templatePaths = [
   'script',
   'scene',
@@ -26,7 +32,7 @@ for (const path of [...policyPaths, ...templatePaths]) {
 }
 /** Pure policy fallback for Node tools; live editors use their editable Lisp definitions. */
 export function policy(name, args, editor) {
-  return editor?.global[name] ? editor.invoke(name, ...args) : runtime.call(name, ...args);
+  return editor?.global?.[name] ? editor.invoke(name, ...args) : runtime.call(name, ...args);
 }
 
 export const policySource = (path) => loaded.get(path);

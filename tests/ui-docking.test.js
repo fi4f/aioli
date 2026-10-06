@@ -228,8 +228,8 @@ test('nested splits survive hiding and reload, and removing leaves does not leav
   const without = dockLayout(state, hidden, [0, 51], [1200, 819]);
   assert.equal(without.find(([p]) => p.id === 'code')[2][1], 819);
   assert.deepEqual(
-    dockLayout(JSON.parse(JSON.stringify(state)), panes, [0, 51], [1200, 819]),
-    entries,
+    structuredClone(dockLayout(JSON.parse(JSON.stringify(state)), panes, [0, 51], [1200, 819])),
+    structuredClone(entries),
   );
   assert.deepEqual(leaves(removeLeaf(tree, 'game')), ['files', 'code']);
 });

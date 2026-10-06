@@ -10,7 +10,7 @@ export function projectTree(files, value, folders = [], editor) {
     cache = new Map();
     caches.set(editor, cache);
   }
-  const signature = JSON.stringify([files, value, folders]);
+  const signature = JSON.stringify([editor?.definitionVersion, files, value, folders]);
   if (cache.has(signature)) return cache.get(signature);
   const expanded = new Set(Array.isArray(value) ? value : []),
     root = { folders: new Map(), files: [] };

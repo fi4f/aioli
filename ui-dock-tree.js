@@ -1,46 +1,18 @@
+import { policy } from './editor-policy.js';
 const edges = ['left', 'right', 'top', 'bottom'];
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 
-export function leaves(tree) {
-  return !tree
-    ? []
-    : typeof tree === 'string'
-      ? [tree]
-      : [...leaves(tree.first), ...leaves(tree.second)];
-}
-export function removeLeaf(tree, id) {
-  if (!tree || typeof tree === 'string') return tree === id ? null : tree;
-  const first = removeLeaf(tree.first, id),
-    second = removeLeaf(tree.second, id);
-  return !first ? second : !second ? first : { ...tree, first, second };
-}
-export function splitLeaf(tree, target, id, edge) {
-  if (typeof tree === 'string') return tree === target ? joinTree(tree, id, edge, 0.5) : tree;
-  if (!tree) return id;
-  return {
-    ...tree,
-    first: splitLeaf(tree.first, target, id, edge),
-    second: splitLeaf(tree.second, target, id, edge),
-  };
-}
-export function joinTree(tree, id, edge, fraction = 0.3) {
-  if (!tree) return id;
-  const before = edge === 'left' || edge === 'top';
-  return {
-    axis: edge === 'left' || edge === 'right' ? 'x' : 'y',
-    ratio: before ? fraction : 1 - fraction,
-    first: before ? id : tree,
-    second: before ? tree : id,
-  };
-}
-export function setRatio(tree, path, ratio) {
-  if (!path.length) return { ...tree, ratio };
-  const side = path[0] === 0 ? 'first' : 'second';
-  return { ...tree, [side]: setRatio(tree[side], path.slice(1), ratio) };
-}
+export const leaves = (tree, editor) => policy('dock-leaves', [tree ?? null], editor);
+export const removeLeaf = (tree, id, editor) => policy('dock-remove', [tree ?? null, id], editor);
+export const splitLeaf = (tree, target, id, edge, editor) =>
+  policy('dock-split', [tree ?? null, target, id, edge], editor);
+export const joinTree = (tree, id, edge, fraction = 0.3, editor) =>
+  policy('dock-join', [tree ?? null, id, edge, fraction], editor);
+export const setRatio = (tree, path, ratio, editor) =>
+  policy('dock-ratio', [tree, path, ratio], editor);
 
 /** Capture the existing edge layout as a bounded, serializable split tree. */
-export function treeFromEntries(entries, placements, origin, size) {
+export function treeFromEntries(entries, placements, origin, size, editor) {
   const docked = entries.filter(
     ([pane]) =>
       pane.options?.fixed || (placements[pane.id]?.dock ?? pane.options?.dock) !== 'floating',
@@ -53,18 +25,18 @@ export function treeFromEntries(entries, placements, origin, size) {
     if (opts.fixed) edge = 'center';
     if (!edges.includes(edge)) {
       const tail = build(index + 1, remaining);
-      return tail ? joinTree(tail, pane.id, 'left', 0.5) : pane.id;
+      return tail ? joinTree(tail, pane.id, 'left', 0.5, editor) : pane.id;
     }
     const axis = edge === 'left' || edge === 'right' ? 0 : 1;
     const fraction = remaining[axis] > 0 ? bounds[axis] / remaining[axis] : 0.5;
     const next = [...remaining];
     next[axis] -= bounds[axis];
-    return joinTree(build(index + 1, next), pane.id, edge, fraction);
+    return joinTree(build(index + 1, next), pane.id, edge, fraction, editor);
   }
   return build(0, size);
 }
 
-export function completeTree(tree, panes, placements, size) {
+export function completeTree(tree, panes, placements, size, editor) {
   let count = 0;
   const seen = new Set();
   function check(node, depth = 0) {
@@ -81,27 +53,7 @@ export function completeTree(tree, panes, placements, size) {
     check(node.second, depth + 1);
   }
   check(tree);
-  for (const pane of panes.filter(Boolean)) {
-    if (
-      pane.visible === false ||
-      (!pane.options?.fixed && (placements[pane.id]?.dock ?? pane.options?.dock) === 'floating') ||
-      seen.has(pane.id)
-    )
-      continue;
-    const opts = pane.options ?? {},
-      edge = placements[pane.id]?.dock ?? opts.dock ?? 'right';
-    const axis = edge === 'top' || edge === 'bottom' ? 1 : 0;
-    const extent = opts.extent ?? 0.3;
-    const fraction = extent <= 1 ? extent : extent / Math.max(1, size[axis]);
-    tree = joinTree(
-      tree,
-      pane.id,
-      edges.includes(edge) ? edge : 'right',
-      clamp(fraction, 0.1, 0.8),
-    );
-    seen.add(pane.id);
-  }
-  return tree;
+  return policy('dock-complete', [tree ?? null, panes, placements, size], editor);
 }
 
 /** Hidden/floating leaves disappear for layout without destroying saved splits. */

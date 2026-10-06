@@ -14,6 +14,11 @@ Prefer Lisp changes in `editor/` for complete panes/widgets and `editor/ui/` for
 Keep editor policy in `editor/policy/` and templates/examples in Lisp files.
 Keep the interpreter independent of editor roles, annotation interpretation and project formats.
 Keep browser input, codecs, native drawing/audio, cached indexing and source rewriting native.
+Keep file/inspector/settings workflows, shortcut decisions and docking rules in Lisp policy.
+Policy functions return data/patches; native adapters perform browser effects and atomic commits.
+Component measurement remains native; use tests/benchmark-editor-policy.mjs before expanding
+interpreted frame work. Persistent collections and runtime definition versions keep caches valid.
+Keep F2 and bundled recovery dispatch native so broken policy can always be repaired.
 Editor and exported applications must use the same application lifecycle implementation.
 Prefer deleting unused prototype compatibility paths over adding migrations. Project format
 version 1 accepts structured JSON state; workspace tabs/folders are vectors. Use the tests

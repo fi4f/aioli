@@ -101,9 +101,19 @@ About opens help and documentation.
 - Editor UI components use automatic rows, columns, flexible space and scroll containers. Files, Code, Game, Scene inspector and Generator inspector panes can dock, float, resize and collapse; layouts persist with projects. Toggle Game through View → Game view. Generators open as floating inspectors, with source editing in Code. See [the component API](docs/ui.html).
 - Dock onto another pane's side to create nested splits. Resize floating panes by their edges and docked panes by shared dividers; interacting with floating content brings it to the top.
 
-The editable editor policy lives in `editor/policy/files.lisp` and
-`editor/policy/inspector.lisp`: file roles, tabs, dialogs, command filtering,
-generator selection, inspector inference, value normalization and hook previews.
+Editable behavior lives in `editor/policy/`:
+
+- `files.lisp`: roles, tabs, tab fitting, dialogs and command filtering.
+- `inspector.lisp`: annotations, controls, value normalization and hook metadata.
+- `workflows.lisp`: file views, generators, inspector editing, settings, folder plans and editor backups.
+- `shortcuts.lisp`: keyboard mappings, menu navigation and focus decisions.
+- `docking.lisp`: split trees, floating/resizing, drop targets and hover timing.
+
+These functions return data and state patches. The host applies patches and performs
+browser effects; failed runtime/file candidates still roll back atomically. F2 is a
+native emergency shortcut and recovery uses bundled policy, so broken keyboard code
+cannot lock you out. Other shortcuts can be changed in Lisp.
+
 New-file starters are ordinary files in `editor/templates/`; example scenes,
 commands and generators are ordinary files in `examples/`. They are not JS strings.
 `editor/theme.lisp` controls UI colors and dimensions.
@@ -128,11 +138,16 @@ The `generator` declaration is an editor binding, not an interpreter special for
 | `code-input.js`, `source-text.js`, `source-tokens.js`       | Native text input, IME, selection, undo and text layout                  |
 | `asset-preview.js`, `resource-icons.js`, `linked-assets.js` | Browser decoding, playback, masks and resource refresh                   |
 | `editor-policy.js`                                          | Thin adapter to editable Lisp policy; a Node fallback serves tests/tools |
-| `file-tree.js`, `file-moves.js`, `folder-operations.js`     | Cached path indexing and atomic source/file transformations              |
+| `file-tree.js`, `file-moves.js`, `folder-operations.js`     | Cached indexing and source rewrite/application; plans and rules are Lisp |
+| `ui-layout.js`, `ui-docking.js`, `ui-dock-tree.js`          | Native measurement, pointer tracking and adapters to Lisp docking rules  |
+| `code-tabs.js`                                              | Cached adapter to Lisp tab fitting                                       |
 | `app.js`, `standalone.js`                                   | Browser host integration for editor and exported application             |
 | `project.js`, `html-export.js`                              | Current project validation and offline packaging                         |
 
-The native file index is cached across repeated pane queries. Drawing bindings
+The native file index and Lisp tab-layout results are cached across repeated pane queries.
+Caches invalidate when inputs or Lisp definitions change. Component measurement stays
+native: the included label-column benchmark shows a substantial interpreter cost even
+for that restricted subset. Editor and game hosts share drawing and sound services. Drawing bindings
 are cached per command list. The interpreter has no knowledge of file panes,
 slider annotations or generator discovery. The GPU backend has no legacy scene
 or image texture passes. There are no historical project migrations or filename aliases.
@@ -158,6 +173,8 @@ node tests/browser-pixels.mjs
 node tests/browser-pixel-generator.mjs
 node tests/browser-scene-inspector.mjs
 node tests/browser-folders.mjs
+node tests/browser-editor-policy.mjs
+node tests/benchmark-editor-policy.mjs
 ```
 
 Browser checks use Playwright and Chrome; dependencies are discovered from the

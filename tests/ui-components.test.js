@@ -181,7 +181,7 @@ test('dock dragging floats, snaps only at workspace edges and restores canceled 
   assert.equal(control.preview.edge, 'right');
   now += 700;
   control.end();
-  assert.deepEqual(state.docks.code, { dock: 'right', extent: 0.3 });
+  assert.deepEqual({ ...state.docks.code }, { dock: 'right', extent: 0.3 });
   const saved = structuredClone(state.docks);
   control.begin(state, region, 20, 60);
   control.move(400, 200);

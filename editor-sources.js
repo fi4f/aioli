@@ -1,11 +1,10 @@
-import { templatePaths } from './editor-policy.js';
+import { templatePaths, policyPaths } from './editor-policy.js';
 /** Bundled Lisp modules. Paths are project data, so imports stay local and live. */
 export const editorSourcePaths = [
   ...templatePaths,
   'editor/guide.txt',
   'editor/theme.lisp',
-  'editor/policy/files.lisp',
-  'editor/policy/inspector.lisp',
+  ...policyPaths,
   'editor/ui/components.lisp',
   'editor/ui/layout.lisp',
   'editor/ui/docking.lisp',
@@ -22,7 +21,7 @@ export const editorSourcePaths = [
   'editor/generator-window.lisp',
   'editor/menu-bar.lisp',
   'editor/about.lisp',
-  'editor/canvas-settings.lisp',
+  'editor/project-settings.lisp',
   'editor/ui/tabs.lisp',
   'editor/state.lisp',
   'editor/code-pane.lisp',

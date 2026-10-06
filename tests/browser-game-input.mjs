@@ -22,13 +22,11 @@ try {
   project.files['game.lisp'] =
     '(defn update [dt] (set! :held-w (key? "w")) (set! :held-right (key? "ArrowRight")) (set! :held-space (key? " "))) (defdraw render [] (background "#272822"))';
   project.applicationState = {};
-  await page
-    .locator('#file-input')
-    .setInputFiles({
-      name: 'game-input.json',
-      mimeType: 'application/json',
-      buffer: Buffer.from(JSON.stringify(project)),
-    });
+  await page.locator('#file-input').setInputFiles({
+    name: 'game-input.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
   await page.waitForFunction(
     () => !window.aioli.pending && window.aioli.applicationState['held-w'] === false,
   );

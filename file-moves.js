@@ -1,3 +1,4 @@
+import { policy } from './editor-policy.js';
 import { resolvePath } from './module-loader.js';
 import { sourceKey, sourcePath } from './project-paths.js';
 const relative = (from, to) => {
@@ -10,19 +11,12 @@ const relative = (from, to) => {
   const path = [...base.map(() => '..'), ...target].join('/');
   return path.startsWith('..') ? path : './' + path;
 };
-export function planFileMove(sources, resources, oldPath, newPath) {
+export function planFileMove(sources, resources, oldPath, newPath, editor) {
   oldPath = resolvePath(oldPath);
   newPath = resolvePath(newPath);
-  if (['main.lisp', 'game.lisp'].includes(oldPath))
-    throw new Error('Keep the application entry filenames');
-  if (newPath.startsWith('__')) throw new Error('Names beginning with __ are reserved');
+  policy('editor-file-move-check', [sources, resources, oldPath, newPath], editor);
   const oldKey = sourceKey(oldPath),
     newKey = sourceKey(newPath);
-  if (!(oldKey in sources) && !(oldPath in resources)) throw new Error('Missing file');
-  if (oldPath !== newPath && (newKey in sources || newPath in resources))
-    throw new Error('Destination already exists');
-  if (oldKey in sources && !newPath.endsWith('.lisp') && !newPath.endsWith('.scene'))
-    throw new Error('Source files must end in .lisp');
   const nextSources = { ...sources },
     nextResources = { ...resources };
   if (oldKey in sources) {

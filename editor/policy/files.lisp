@@ -89,3 +89,33 @@
   (let [query (lower-case (trim query))]
     (slice (sort (filter (fn [path] (and (= (editor-source-role path) "command")
       (or (= query "") (includes? (lower-case path) query)))) paths)) 0 8)))
+
+; Fit whole tabs. The returned patch makes layout queries explicit and testable.
+(defn editor-tab-label [key]
+  (if (contains? ["main" "game"] key) key
+    (let [parts (split key "/")] (nth parts (- (count parts) 1)))))
+(defn editor-tab-width [key] (min 192 (max 64 (+ (* (count (editor-tab-label key)) 8) 48))))
+(defn editor-tab-start [widths start active available]
+  (let [total (reduce + 0 (slice widths start (+ active 1)))
+        result (reduce (fn [result i]
+          (if (> (nth result 1) available) [(+ i 1) (- (nth result 1) (nth widths i))] result))
+          [start total] (slice (range active) start))]
+    (nth result 0)))
+(defn editor-tab-rows [tabs widths sources committed start available x limit]
+  (if (or (>= start (count tabs)) (= available 0) (= limit 0)) []
+    (let [width (min (nth widths start) available) key (nth tabs start)]
+      (if (> (+ x width) available) []
+        (concat [[key (editor-tab-label key) x width
+          (and (contains? sources key) (not (= (lookup sources key) (lookup committed key))))]]
+          (editor-tab-rows tabs widths sources committed (+ start 1) available (+ x width) (- limit 1)))))))
+(defn editor-tab-layout [workspace sources committed width]
+  (let [tabs (editor-open-tabs workspace sources) widths (mapv editor-tab-width tabs)
+        available (max 64 (- width 48)) offset (lookup workspace :tab-offset 0)
+        start (max 0 (min (- (count tabs) 1) (if (number? offset) (floor offset) 0)))
+        active (index-of tabs (lookup workspace :tab))
+        next (if (and (>= active 0) (or (not (= (lookup workspace :tab-last) (lookup workspace :tab)))
+                                      (not (= (lookup workspace :tab-width) width))))
+          (editor-tab-start widths (min start active) active available) start)
+        rows (slice (editor-tab-rows tabs widths sources committed next available 0 64) 0 64)]
+    (map :rows rows :before (> next 0) :after (< (+ next (count rows)) (count tabs))
+      :state (map :open-tabs tabs :tab-last (lookup workspace :tab "") :tab-width width :tab-offset next))))

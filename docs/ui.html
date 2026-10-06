@@ -20,7 +20,9 @@
       <p class="lead">
         Build a component tree each frame, then render it into one rectangle. Rows, columns and
         panels measure their children and choose their positions. Lisp owns painting and behavior;
-        native services measure layout and track pane dragging.
+        native services measure layout and track browser pointers. Lisp policy in
+        editor/policy/docking.lisp decides floating/resizing, split edits, drop targets and hover
+        timing.
       </p>
       <p>
         The editor imports <code>editor/ui/components.lisp</code>. New editor modules can use these

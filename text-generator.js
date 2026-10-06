@@ -1,3 +1,4 @@
+import { policy } from './editor-policy.js';
 /** Generate once per declared parameter change, retaining errors for the preview. */
 export function textOutput(program, force = false) {
   if (!program || program.output !== 'text') throw new Error('Select a text generator');
@@ -19,15 +20,4 @@ export function textOutput(program, force = false) {
   const width = lines.reduce((max, line) => Math.max(max, line.length * 8 + 8), 0);
   return (program.textBuffer = { text, error, lines, width, signature: signature() });
 }
-export function textMime(path) {
-  const type =
-    {
-      json: 'application/json',
-      csv: 'text/csv',
-      html: 'text/html',
-      xml: 'application/xml',
-      js: 'text/javascript',
-      css: 'text/css',
-    }[path.split('.').at(-1).toLowerCase()] ?? 'text/plain';
-  return type + ';charset=utf-8';
-}
+export const textMime = (path, editor) => policy('editor-text-mime', [path], editor);

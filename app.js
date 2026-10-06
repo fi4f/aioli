@@ -1,7 +1,6 @@
 import { AudioOutput } from './audio-output.js';
 import { policy, policySource } from './editor-policy.js';
 import { validateValue, validKey } from './state-values.js';
-import { pixelBlock } from './pixel-block.js';
 import { canvasSize } from './canvas-size.js';
 import { projectSettings } from './project-settings.js';
 import { textOutput, textMime } from './text-generator.js';
@@ -33,7 +32,7 @@ import { applicationFiles } from './application-files.js';
 import { exportHTML } from './html-export.js';
 import { parse, createRuntime } from './lisp.js';
 import { exampleScenePaths, exampleToolPaths } from './example-sources.js';
-import { validateVoice, synthesize, wav } from './audio.js';
+import { synthesize, wav } from './audio.js';
 import { DrawList } from './drawing.js';
 import { GPUHost } from './gpu.js';
 import { loadBundledResources } from './bundled-assets.js';
@@ -43,7 +42,6 @@ import { refreshLinkedAssets } from './linked-assets.js';
 import { CodeInput } from './code-input.js';
 import { layoutUI } from './ui-layout.js';
 import { dockLayout, DockInteraction } from './ui-docking.js';
-import { removeLeaf } from './ui-dock-tree.js';
 import { editorSourcePaths } from './editor-sources.js';
 import { openTab, closeTab, renameTab, tabLayout } from './code-tabs.js';
 import { AssetPreview } from './asset-preview.js';
@@ -67,7 +65,7 @@ const resourceIcons = new ResourceIcons((images) => gpu?.setIcons(images));
 
 /** Browser services for the Lisp editor; appearance and layout stay in Lisp. */
 const audioOutput = new AudioOutput();
-const dockInteraction = new DockInteraction();
+const dockInteraction = new DockInteraction({ editor: () => activeEditor() });
 const $ = (id) => document.getElementById(id),
   canvas = $('app'),
   storageKey = 'aioli.project';
@@ -106,7 +104,6 @@ const transientBuffers = {
   __palette: '',
   __path: 'lib/new.lisp',
   __hookArgs: '[]',
-  __canvasSize: '320 240',
   __projectName: 'Untitled project',
   __canvasWidth: '320',
   __canvasHeight: '240',
@@ -142,6 +139,7 @@ let message = 'Starting…',
   recovery = false,
   gameFailed = false,
   editorFailed = false;
+const activeEditor = () => (recovery || editorFailed ? rescueRuntime : runtime);
 let gpuFailure = '';
 let visibleWindow = '',
   focusPalette = false,
@@ -333,7 +331,6 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
   const dockScopes = [];
   let draw,
     items = [],
-    patch = [],
     buffer = { rows: [], hooks: [], selections: [], caret: null },
     tabs = { rows: [], before: false, after: false };
   const live = () =>
@@ -342,26 +339,19 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
   const visibleSources = () => (live() ? sources : candidateSources);
   const visibleResources = () => (live() ? resources : candidateResources);
   const rowsForTarget = () => resourceRows(visibleSources(), visibleResources());
-  let frameSize = null;
   const actions =
     (fn) =>
     (...args) => {
       if (live()) defer(() => fn(...args));
       else if (result.captureActions) result.pendingActions.push(() => fn(...args));
     };
+  const services = engineServices({
+    key: (key) => code.focus === 'world' && keys.has(key),
+    size: () => canvasSize(target),
+    draw: () => draw,
+  });
   const result = createRuntime(target, {
-    budget: 100000,
-    key: (k) => code.focus === 'world' && keys.has(k),
-    pixels: (args, env, evaluate) => {
-      if (!draw) throw new Error('pixels requires a draw hook');
-      draw.pixels(pixelBlock(args, env, evaluate));
-    },
-    beginScope: () => draw?.scope(),
-    endScope: () => draw?.restore(),
-    voice: (...args) => {
-      if (patch.length >= 16) throw new Error('Maximum 16 voices');
-      patch.push(validateVoice(...args));
-    },
+    ...services,
     playSound: (name = 'sound', ...args) => {
       if (live()) {
         try {
@@ -380,27 +370,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
     },
     primitives: {
       generator: () => null,
-      ...Object.fromEntries(
-        [
-          'background',
-          'fill',
-          'rect',
-          'circle',
-          'line',
-          'text',
-          'clip',
-          'translate',
-          'scale',
-          'opacity',
-          'blend',
-        ].map((name) => [
-          name,
-          (...args) => {
-            if (!draw) throw new Error(`${name} must be called from editor`);
-            return draw.primitives()[name](...args);
-          },
-        ]),
-      ),
+      ...services.primitives,
       'game-definitions': () =>
         Object.keys((result.gameRuntime ?? gameRuntime)?.global ?? {}).sort(),
       'game-call': (name, ...args) =>
@@ -413,22 +383,13 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         validateValue(value);
         (result.applicationState ?? applicationState)[key] = value;
       },
-      'canvas-width': () => (frameSize ?? canvasSize(target))[0],
-      'canvas-height': () => (frameSize ?? canvasSize(target))[1],
       'open-project-settings': actions(() => {
-        const settings = projectSettings(state);
-        for (const [tab, key] of [
-          ['__projectName', 'project-name'],
-          ['__canvasWidth', 'canvas-width'],
-          ['__canvasHeight', 'canvas-height'],
-        ]) {
-          sources[tab] = String(settings[key]);
+        const plan = policy('editor-settings-open', [projectSettings(state)], activeEditor());
+        for (const [tab, value] of Object.entries(plan.buffers)) {
+          sources[tab] = value;
           code.forgetBuffer(tab);
         }
-        state['input-tab'] = '';
-        state['project-settings-error'] = '';
-        state.window = 'project-settings';
-        state.menu = false;
+        Object.assign(state, plan.state);
       }),
       'project-canvas-preset': actions((width, height) => {
         sources.__canvasWidth = String(width);
@@ -439,11 +400,9 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       }),
       'apply-project-settings': actions(async () => {
         try {
-          const settings = projectSettings({
-            'project-name': sources.__projectName,
-            'canvas-width': Number(sources.__canvasWidth.trim()),
-            'canvas-height': Number(sources.__canvasHeight.trim()),
-          });
+          const settings = projectSettings(
+            policy('editor-settings-request', [sources], activeEditor()),
+          );
           const previous = projectSettings(state);
           Object.assign(state, settings);
           if (await evaluate()) {
@@ -477,40 +436,6 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         code.input.setAttribute('aria-label', label);
         items.push({ id: 'source', label, origin, size });
       },
-      'open-canvas-settings': actions(() => {
-        const [w, h] = canvasSize(state);
-        sources.__canvasSize = `${w} ${h}`;
-        code.forgetBuffer('__canvasSize');
-        state.window = 'canvas-settings';
-        state.menu = false;
-      }),
-      'canvas-preset': actions((w, h) => {
-        sources.__canvasSize = `${w} ${h}`;
-        code.forgetBuffer('__canvasSize');
-      }),
-      'apply-canvas-settings': actions(async () => {
-        const dimensions = sources.__canvasSize
-          .trim()
-          .split(/[x,\s]+/i)
-          .map(Number);
-        if (dimensions.length !== 2)
-          throw new Error('Enter canvas width and height, for example 640 360');
-        const settings = {
-          ...state,
-          'canvas-width': dimensions[0],
-          'canvas-height': dimensions[1],
-        };
-        canvasSize(settings);
-        const previous = [state['canvas-width'], state['canvas-height']];
-        state['canvas-width'] = settings['canvas-width'];
-        state['canvas-height'] = settings['canvas-height'];
-        if (await evaluate()) {
-          state.window = '';
-          save();
-        } else {
-          [state['canvas-width'], state['canvas-height']] = previous;
-        }
-      }),
       'screen-width': () => innerWidth,
       'screen-height': () => innerHeight,
       'edit-buffer': actions((action) => code.edit(action)),
@@ -528,7 +453,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           runProject();
       }),
       'prepare-folder-path': actions((operation = 'create') => {
-        const dialog = policy('editor-folder-dialog', [state, operation], runtime);
+        const dialog = policy('editor-folder-dialog', [state, operation], activeEditor());
         sources.__path = dialog.input;
         Object.assign(state, dialog.state);
       }),
@@ -542,7 +467,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           .length,
       'delete-folder': actions((path) => deleteProjectFolder(path)),
       'prepare-file-path': actions((rename = false) => {
-        const dialog = policy('editor-file-dialog', [state, rename], runtime);
+        const dialog = policy('editor-file-dialog', [state, rename], activeEditor());
         sources.__path = dialog.input;
         Object.assign(state, dialog.state);
       }),
@@ -554,17 +479,12 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         else result.initialScene = path;
       },
       'active-scene': () => (result.applicationState ?? applicationState)['active-scene'] ?? '',
-      'playable-file?': (path) =>
-        (['main.lisp', 'game.lisp'].includes(path) || isScenePath(path)) &&
-        sourceKey(path) in visibleSources(),
+      'playable-file?': (path) => policy('editor-playable-file?', [path, visibleSources()], result),
       'play-file': actions(async (path) => {
-        path = resolvePath(path);
-        if (path === 'main.lisp') return runProject();
-        if (path !== 'game.lisp' && !isScenePath(path))
-          throw new Error('Expected game.lisp or a scene file');
-        if (await evaluate(path === 'game.lisp' ? { restart: true } : { scene: path })) {
-          state.paused = false;
-          state['file-context'] = false;
+        const plan = policy('editor-play-request', [resolvePath(path)], activeEditor());
+        if (plan.action === 'evaluate') return runProject();
+        if (await evaluate(plan.options)) {
+          Object.assign(state, { paused: false, 'file-context': false });
           dirty = true;
         }
       }),
@@ -618,29 +538,21 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           result.sceneStateKeys ?? sceneStateKeys,
           result,
         ).find((field) => field.key === target['scene-edit-key'])?.kind ?? '',
-      'edit-scene-field': actions((key) => {
-        const field = liveFields(sceneFields, applicationState, sceneStateKeys, runtime).find(
-          (field) => field.key === key,
-        );
-        if (!field) throw new Error('Unknown scene field');
-        state['scene-edit-key'] = key;
-        sources.__sceneValue =
-          typeof applicationState[key] === 'object'
-            ? JSON.stringify(applicationState[key])
-            : String(applicationState[key]);
-        code.forgetBuffer('__sceneValue');
-        if (field.kind === 'color') {
-          sceneColorKey = key;
-          const input = $('generator-color');
-          input.value = applicationState[key];
-          input.click();
-        }
-      }),
+      'edit-scene-field': actions((key) =>
+        editInspectorField(
+          liveFields(sceneFields, applicationState, sceneStateKeys, runtime),
+          applicationState,
+          key,
+          'scene',
+          '__sceneValue',
+        ),
+      ),
       'apply-scene-field': actions(() => {
         const field = liveFields(sceneFields, applicationState, sceneStateKeys, runtime).find(
           (field) => field.key === state['scene-edit-key'],
         );
-        if (field) applicationState[field.key] = fieldValue(field, sources.__sceneValue, runtime);
+        if (field)
+          applicationState[field.key] = fieldValue(field, sources.__sceneValue, activeEditor());
         state['scene-edit-key'] = '';
         dirty = true;
       }),
@@ -650,13 +562,17 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         sourceKey(target['selected-file'] ?? '') in sources ||
         (target['selected-file'] ?? '') in resources,
       'selected-file-renamable?': () =>
-        !['main.lisp', 'game.lisp'].includes(target['selected-file']) &&
-        (sourceKey(target['selected-file'] ?? '') in sources ||
-          target['selected-file'] in resources),
+        policy(
+          'editor-file-editable?',
+          [target['selected-file'] ?? '', visibleSources(), visibleResources()],
+          result,
+        ),
       'selected-file-removable?': () =>
-        !['main.lisp', 'game.lisp'].includes(target['selected-file']) &&
-        (sourceKey(target['selected-file'] ?? '') in sources ||
-          (target['selected-file'] ?? '') in resources),
+        policy(
+          'editor-file-editable?',
+          [target['selected-file'] ?? '', visibleSources(), visibleResources()],
+          result,
+        ),
       'open-recovery': actions(() => enterRecovery()),
       'menu-region': (id, label, origin, size, enabled, checked) =>
         items.push({ id, label, origin, size, disabled: !enabled, menuItem: true, checked }),
@@ -714,26 +630,14 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         dirty = true;
       }),
       'project-files': () =>
-        [
-          ...Object.keys(sources)
-            .filter((key) => !key.startsWith('__'))
-            .map((key) => [sourcePath(key), 'lisp', key]),
-          ...Object.keys(resources).map((path) => [path, 'asset', path]),
-        ]
-          .sort((a, b) => a[0].localeCompare(b[0]))
-          .slice(
-            Math.max(0, target['file-offset'] ?? 0),
-            Math.max(0, target['file-offset'] ?? 0) + 12,
-          ),
-      'project-file-count': () =>
-        Object.keys(sources).filter((key) => !key.startsWith('__')).length +
-        Object.keys(resources).length,
+        policy('editor-project-files', [rowsForTarget(), target['file-offset'] ?? 0], result),
+      'project-file-count': () => rowsForTarget().length,
       'open-code-tab': actions((key) => {
-        openTab(state, sources, key, runtime);
+        openTab(state, sources, key, activeEditor());
         dirty = true;
       }),
       'close-code-tab': actions((key) => {
-        closeTab(state, sources, key, runtime);
+        closeTab(state, sources, key, activeEditor());
         dirty = true;
       }),
       'scroll-code-tabs': actions((delta) => {
@@ -761,11 +665,6 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           return [];
         }
       },
-      'open-hooks': actions(() => {
-        state['hook-path'] = sourcePath(state.tab);
-        state['hook-offset'] = 0;
-        state.window = 'hooks';
-      }),
       'inspect-hook': actions((name) => inspectHook(state['hook-path'], name)),
       'hook-title': () => hookPreview?.title ?? 'Source hooks',
       'hook-parameters': () => hookPreview?.params.join(', ') ?? '',
@@ -791,29 +690,21 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         state.window = '';
       }),
 
-      'open-file': actions((path) => {
+      'open-file': actions(async (path) => {
         path = resolvePath(path);
-        const key = sourceKey(path);
-        if (key in sources) {
-          if (sourceRole(path, result) === 'generator')
-            return evaluateGeneratorSelection(path).then((ok) => {
-              if (ok) {
-                showGeneratorPane(path);
-                state['selected-file'] = path;
-                state['inspector-offset'] = 0;
-                state['text-preview-offset'] = state['text-preview-x'] = 0;
-              }
-            });
-          openTab(state, sources, key, runtime);
-          state['show-code'] = true;
-          if (innerWidth < (state['ui-narrow-width'] ?? 850)) state['show-files'] = false;
-          state['file-path-editing'] = false;
-          state['selected-file'] = path;
-          state.window = '';
-        } else if (resources[path]) {
-          state['selected-file'] = path;
-          return previewAsset(path);
-        } else throw new Error(`Missing file ${path}`);
+        const plan = policy(
+          'editor-file-open',
+          [state, sources, resources, path, innerWidth],
+          activeEditor(),
+        );
+        Object.assign(state, plan.state);
+        if (plan.action === 'asset') return previewAsset(path);
+        if (plan.action === 'generator' && (await evaluateGeneratorSelection(path))) {
+          showGeneratorPane(path);
+          Object.assign(state, policy('editor-generator-reset', [], activeEditor()), {
+            'selected-file': path,
+          });
+        }
       }),
       'new-file-path': (path, type) => newFilePath(path, type, result),
       'new-file-code': (type, output) => newFileCode(type, output, result),
@@ -821,37 +712,27 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       'create-file': actions((path, text = '; New project module\n') => {
         path = resolvePath(path);
         assertFileDestination(path);
-        if (path.startsWith('__'))
-          throw new Error('Names beginning with __ are reserved for input buffers');
+        policy('editor-file-create-check', [sources, resources, path, text], activeEditor());
         const key = sourceKey(path);
-        if (key in sources || path in resources) throw new Error(`File already exists: ${path}`);
-        if (Object.keys(sources).length >= 258) throw new Error('Maximum 256 source files');
-        if (typeof text !== 'string' || text.length > 100000)
-          throw new Error('Invalid source text');
         sources[key] = normalizeSource(text);
-        openTab(state, sources, key, runtime);
-        state['show-code'] = true;
-        if (innerWidth < (state['ui-narrow-width'] ?? 850)) state['show-files'] = false;
-        state['file-path-editing'] = false;
-        state['selected-file'] = path;
-        state.window = '';
+        Object.assign(
+          state,
+          policy('editor-code-open', [state, sources, path, innerWidth], activeEditor()),
+        );
         evaluate();
       }),
       'rename-file': actions((oldPath, newPath) => {
         oldPath = resolvePath(oldPath);
         newPath = resolvePath(newPath);
         assertFileDestination(newPath);
-        if (newPath.startsWith('__'))
-          throw new Error('Names beginning with __ are reserved for input buffers');
-        if (['main.lisp', 'game.lisp'].includes(oldPath))
-          throw new Error('Keep the application entry filenames');
+        policy('editor-file-move-check', [sources, resources, oldPath, newPath], activeEditor());
+        if (oldPath === newPath) {
+          state.window = '';
+          return;
+        }
         const oldKey = sourceKey(oldPath),
           newKey = sourceKey(newPath);
-        if (newKey in sources || newPath in resources)
-          throw new Error('Destination already exists');
         if (oldKey in sources) {
-          if (!newPath.endsWith('.lisp') && !isScenePath(newPath))
-            throw new Error('Source files must end in .lisp');
           sources[newKey] = sources[oldKey];
           delete sources[oldKey];
           renameTab(state, sources, oldKey, newKey);
@@ -871,7 +752,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         if (['main.lisp', 'game.lisp'].includes(path))
           throw new Error('main.lisp and game.lisp cannot be deleted');
         const key = sourceKey(path);
-        closeTab(state, sources, key, runtime);
+        closeTab(state, sources, key, activeEditor());
         code.forgetBuffer(key);
         delete sources[key];
         delete resources[path];
@@ -925,11 +806,6 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           a.click();
         } else throw new Error('Missing resource');
       }),
-      'generator-files': () =>
-        Object.keys(visibleSources())
-          .map(sourcePath)
-          .filter((path) => sourceRole(path, result) === 'generator')
-          .sort(),
       'generator-path': () =>
         selectedGenerator(result.generators ?? generatorPrograms, target, result)?.path ?? '',
       'generator-title': () =>
@@ -952,7 +828,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         selectedGenerator(result.generators ?? generatorPrograms, target, result)?.filename ??
         'generated.txt',
       'generate-text-preview': actions(() => {
-        textOutput(selectedGenerator(generatorPrograms, state, runtime), true);
+        textOutput(selectedGenerator(generatorPrograms, state, activeEditor()), true);
         dirty = true;
       }),
       'text-preview': (origin, size) => {
@@ -1011,8 +887,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
           throw new Error('Expected a .generator.lisp file');
         if (await evaluateGeneratorSelection(path)) {
           showGeneratorPane(path);
-          state['inspector-offset'] = 0;
-          state['text-preview-offset'] = state['text-preview-x'] = 0;
+          Object.assign(state, policy('editor-generator-reset', [], activeEditor()));
         }
       }),
       'show-generator-pane': actions(() => showGeneratorPane(state['active-generator'])),
@@ -1022,51 +897,37 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         dirty = true;
       }),
       'open-generator-code': actions(() => {
-        const path = state['active-generator'];
-        if (path) {
-          openTab(state, sources, sourceKey(path), runtime);
-          state['show-code'] = true;
-          state['inspector-edit-key'] = '';
-          if (innerWidth < (state['ui-narrow-width'] ?? 850)) state['show-generator'] = false;
-        }
+        Object.assign(
+          state,
+          policy('editor-generator-code', [state, sources, innerWidth], activeEditor()),
+        );
       }),
       'select-next-generator': actions(async () => {
-        const files = Object.keys(sources)
-          .map(sourcePath)
-          .filter((path) => sourceRole(path, runtime) === 'generator')
-          .sort();
-        if (files.length) {
-          const next = files[(files.indexOf(state['active-generator']) + 1) % files.length];
-          if (await evaluateGeneratorSelection(next)) {
-            if (state['show-code']) openTab(state, sources, sourceKey(next), runtime);
-            state['inspector-offset'] = 0;
-            state['inspector-edit-key'] = '';
-            state['text-preview-offset'] = state['text-preview-x'] = 0;
-            dirty = true;
-          }
-        }
-      }),
-      'edit-generator-field': actions((key) => {
-        const field = selectedGenerator(generatorPrograms, state, runtime)?.fields.find(
-          (field) => field.key === key,
+        const next = policy(
+          'editor-next-generator',
+          [Object.keys(sources).map(sourcePath), state],
+          activeEditor(),
         );
-        if (!field) throw new Error('Unknown generator field');
-        sceneColorKey = null;
-        state['inspector-edit-key'] = key;
-        sources.__generatorValue =
-          typeof state[key] === 'object' ? JSON.stringify(state[key]) : String(state[key]);
-        code.forgetBuffer('__generatorValue');
-        if (field.kind === 'color') {
-          const input = $('generator-color');
-          input.value = state[key];
-          input.click();
+        if (next && (await evaluateGeneratorSelection(next))) {
+          if (state['show-code']) openTab(state, sources, sourceKey(next), activeEditor());
+          Object.assign(state, policy('editor-generator-reset', [], activeEditor()));
+          dirty = true;
         }
       }),
+      'edit-generator-field': actions((key) =>
+        editInspectorField(
+          selectedGenerator(generatorPrograms, state, activeEditor())?.fields ?? [],
+          state,
+          key,
+          'generator',
+          '__generatorValue',
+        ),
+      ),
       'apply-generator-field': actions(() => {
-        const field = selectedGenerator(generatorPrograms, state, runtime)?.fields.find(
+        const field = selectedGenerator(generatorPrograms, state, activeEditor())?.fields.find(
           (field) => field.key === state['inspector-edit-key'],
         );
-        if (field) state[field.key] = fieldValue(field, sources.__generatorValue, runtime);
+        if (field) state[field.key] = fieldValue(field, sources.__generatorValue, activeEditor());
         state['inspector-edit-key'] = '';
         dirty = true;
       }),
@@ -1131,7 +992,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       'pointer-x': () => pointer.x,
       'ui-layout': (component, origin, size) => layoutUI(component, origin, size, target),
       'ui-dock-layout': (placements, panes, origin, size, key) => {
-        const entries = dockLayout(placements, panes, origin, size);
+        const entries = dockLayout(placements, panes, origin, size, result);
         if (live()) dockInteraction.observe(key, placements, panes, origin, size, entries);
         return entries;
       },
@@ -1316,35 +1177,19 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
         report('Using the project editor. F2 reopens recovery.');
       }),
       'upgrade-editor': actions(async () => {
-        // Keep custom shell/library sources as ordinary root-level files so any
-        // relative imports still resolve if a contributor opens the backups.
-        const editorKeys = ['main', ...editorSourcePaths];
-        const backups = editorKeys.filter(
-          (key) =>
-            key in sources &&
-            sources[key] !== (key === editorKeys[0] ? defaults.main : defaults[key]),
+        const plan = policy(
+          'editor-upgrade-plan',
+          [
+            sources,
+            resources,
+            defaults,
+            ['main', ...editorSourcePaths],
+            state['editor-file-paths'] ?? [],
+          ],
+          activeEditor(),
         );
-        if (
-          Object.keys(sources).filter((key) => !key.startsWith('__')).length + backups.length >
-          256
-        )
-          throw new Error('Make room for editor backups before upgrading');
-        for (const key of backups) {
-          const stem = key.replace(/\.lisp$/, '');
-          let index = 1;
-          while (
-            `${stem}-backup-${index}.lisp` in sources ||
-            `${stem}-backup-${index}.lisp` in resources
-          )
-            index++;
-          const backup = `${stem}-backup-${index}.lisp`;
-          sources[backup] = sources[key];
-          state['editor-file-paths'] = [
-            ...new Set([...(state['editor-file-paths'] ?? []), sourcePath(backup)]),
-          ];
-        }
-        for (const key of editorKeys)
-          sources[key] = key === editorKeys[0] ? defaults.main : defaults[key];
+        replaceStore(sources, plan.sources);
+        state['editor-file-paths'] = plan.owned;
         if (await evaluate({ exitRecovery: true }))
           report('Latest editor installed. Previous custom sources are kept in backup files.');
       }),
@@ -1396,19 +1241,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
     },
   });
   result.pendingActions = [];
-  result.drawFrame = (width = 320, height = 240, name = 'render', args = []) => {
-    const outer = draw,
-      previousSize = frameSize;
-    frameSize = [width, height];
-    draw = new DrawList(width, height);
-    try {
-      result.call(name, ...args);
-      return draw;
-    } finally {
-      draw = outer;
-      frameSize = previousSize;
-    }
-  };
+  services.attach(result);
   result.drawEditor = () => {
     draw = new DrawList(innerWidth, innerHeight);
     items = [];
@@ -1419,18 +1252,7 @@ function makeRuntime(target, candidateSources = sources, candidateResources = re
       draw = null;
     }
   };
-  result.collectSound = (name = 'sound', ...args) => {
-    patch = [];
-    if (name !== 'sound' && result.global[name]?.hook?.kind !== 'sound')
-      throw new Error(`Missing sound hook ${name}`);
-    if (typeof result.global[name] === 'function') result.call(name, ...args);
-    return patch;
-  };
-  result.collectGeneratedSound = () => {
-    patch = [];
-    if (typeof result.global['generate-sound'] === 'function') result.call('generate-sound');
-    return patch;
-  };
+  result.collectGeneratedSound = () => services.collectSound(result, 'generate-sound');
   return result;
 }
 /** Whole-project execution shared by Ctrl+Enter and the main.lisp run button. */
@@ -1660,37 +1482,37 @@ async function evaluateGeneratorSelection(path) {
   return evaluate({ generator: path });
 }
 function showGeneratorPane(path = '') {
-  state.window = '';
-  state['show-generator'] = true;
-  state['generator-collapsed'] = false;
-  state['preview-focused'] = false;
-  state['inspector-edit-key'] = '';
-  const width = Math.min(560, Math.max(120, innerWidth - 32));
-  const height = Math.min(680, Math.max(80, innerHeight - 100));
-  const placements = state['ui-docks'] ?? {};
-  state['ui-docks'] = {
-    ...placements,
-    ...(placements._tree ? { _tree: removeLeaf(placements._tree, 'generator') } : {}),
-    generator: {
-      dock: 'floating',
-      x: (innerWidth - width) / 2,
-      y: Math.max(51, 51 + (innerHeight - 81 - height) / 2),
-      width,
-      height,
-      z: Math.max(0, ...Object.values(placements).map((entry) => Number(entry?.z) || 0)) + 1,
-    },
-  };
-  if (path && sourceKey(path) in sources) {
-    openTab(state, sources, sourceKey(path), runtime);
-    state['show-code'] = true;
-  }
+  Object.assign(
+    state,
+    policy(
+      'editor-generator-show',
+      [state, sources, path, innerWidth, innerHeight],
+      activeEditor(),
+    ),
+  );
   dirty = true;
+}
+function editInspectorField(fields, data, key, scope, tab) {
+  const plan = policy('editor-field-edit', [fields, data, key, scope], activeEditor());
+  Object.assign(state, plan.state);
+  sources[tab] = plan.buffer;
+  code.forgetBuffer(tab);
+  sceneColorKey = scope === 'scene' && plan.color ? key : null;
+  if (plan.color) {
+    const input = $('generator-color');
+    input.value = plan.value;
+    input.click();
+  }
 }
 function refreshAudio(force = false) {
   if (!runtime) return;
   const generatedPatch =
-    outputGenerator(generatorPrograms, state, 'audio', runtime)?.runtime.collectGeneratedSound() ??
-    [];
+    outputGenerator(
+      generatorPrograms,
+      state,
+      'audio',
+      activeEditor(),
+    )?.runtime.collectGeneratedSound() ?? [];
   const generatedSignature = JSON.stringify(generatedPatch);
   if (force || generatedSignature !== refreshAudio.generatedSignature) {
     generatedSound = generatedPatch.length ? synthesize(generatedPatch) : new Float32Array(4410);
@@ -1770,17 +1592,17 @@ async function exportGeneratedImage(path, shouldDownload) {
   if (!gpu || !lastDraw) throw new Error('WebGPU is unavailable');
   // Submit current GUI parameters before reading back, even between frames.
   gpu.draw(lastDraw, activeScene ? sceneTime : time);
-  const program = outputGenerator(generatorPrograms, state, 'image', runtime);
+  const program = outputGenerator(generatorPrograms, state, 'image', activeEditor());
   const list = program.runtime.drawFrame();
   await storeGenerated(path, await gpu.snapshot(list, 0), shouldDownload);
 }
 async function exportGeneratedText(shouldDownload) {
-  const program = selectedGenerator(generatorPrograms, state, runtime);
+  const program = selectedGenerator(generatorPrograms, state, activeEditor());
   const output = textOutput(program);
   if (output.error) throw new Error(output.error);
   await storeGenerated(
     program.filename,
-    new Blob([output.text], { type: textMime(program.filename) }),
+    new Blob([output.text], { type: textMime(program.filename, activeEditor()) }),
     shouldDownload,
   );
 }
@@ -1827,7 +1649,8 @@ function accessibility() {
           const field = liveFields(sceneFields, applicationState, sceneStateKeys, runtime).find(
             (field) => field.key === key,
           );
-          if (field) applicationState[key] = fieldValue(field, Number(control.value), runtime);
+          if (field)
+            applicationState[key] = fieldValue(field, Number(control.value), activeEditor());
         }
         dirty = true;
       };
@@ -1876,22 +1699,15 @@ function treeOffset(
   return Math.max(0, Math.min(Math.max(0, total - capacity), target['file-offset'] ?? 0));
 }
 function openFileContext(row, x, y) {
-  if (state.window !== '' || state.menu || (!row?.resourcePath && row?.id !== 'files-tree')) return;
-  state['context-path'] = row.resourcePath ?? '';
-  state['context-kind'] = row.resourceKind === 'folder' ? 'folder' : row.resourcePath ? 'file' : '';
-  if (state['context-kind'] === 'file') state['selected-file'] = row.resourcePath;
-  state['context-x'] = x;
-  state['context-y'] = y;
-  state['file-context'] = true;
+  const patch = policy('editor-context', [state, row ?? {}, x, y], activeEditor());
+  if (!patch) return;
+  Object.assign(state, patch);
   code.focus = 'ui';
   keys.clear();
   canvas.focus({ preventScroll: true });
 }
 function saveFilePath() {
-  if (['image-asset', 'audio-asset'].includes(state.window)) return state['preview-path'];
-  if (state['show-generator'] && code.tab === '__generatorValue') return state['active-generator'];
-  if (state.tab in sources && !state.tab.startsWith('__')) return sourcePath(state.tab);
-  return state['selected-file'] in resources ? state['selected-file'] : '';
+  return policy('editor-save-file-path', [state, sources, resources, code.tab], activeEditor());
 }
 function downloadFile(path) {
   path = resolvePath(path);
@@ -1905,15 +1721,20 @@ function downloadFile(path) {
   } else throw new Error('Missing file');
 }
 function assertFileDestination(path) {
-  if (folderPaths(sources, resources, savedFolders(state['project-folders'])).has(path))
-    throw new Error('A folder already uses that path');
-  if (filePaths(sources, resources).some((file) => path.startsWith(file + '/')))
-    throw new Error('A file already uses a parent path');
+  policy(
+    'editor-file-destination',
+    [
+      path,
+      filePaths(sources, resources),
+      [...folderPaths(sources, resources, savedFolders(state['project-folders']))],
+    ],
+    activeEditor(),
+  );
 }
 async function moveProjectFile(oldPath, newPath) {
   if (oldPath === newPath) return;
   assertFileDestination(newPath);
-  const plan = planFileMove(sources, resources, oldPath, newPath);
+  const plan = planFileMove(sources, resources, oldPath, newPath, activeEditor());
   const before = {
     sources: { ...sources },
     resources,
@@ -1928,15 +1749,11 @@ async function moveProjectFile(oldPath, newPath) {
   resources = plan.resources;
   if (plan.oldKey in before.sources) renameTab(state, sources, plan.oldKey, plan.newKey);
   for (const record of [state, applicationState])
-    for (const [key, value] of Object.entries(record)) {
-      if (value === oldPath) record[key] = newPath;
-      else if (Array.isArray(value))
-        record[key] = value.map((item) => (item === oldPath ? newPath : item));
-    }
-  state['selected-file'] = newPath;
-  const folder = newPath.split('/').slice(0, -1).join('/');
-  if (folder && !state['open-folders'].includes(folder))
-    state['open-folders'] = toggleFolder(state['open-folders'], folder);
+    Object.assign(
+      record,
+      policy('editor-remap-state', [record, oldPath, newPath, false], activeEditor()),
+    );
+  Object.assign(state, policy('editor-file-moved', [state, newPath], activeEditor()));
   if (await evaluate()) {
     code.renameBuffer(plan.oldKey, plan.newKey);
     report(`Moved ${oldPath} to ${newPath}`);
@@ -1949,18 +1766,8 @@ async function moveProjectFile(oldPath, newPath) {
 }
 function createProjectFolder(path) {
   const folders = savedFolders(state['project-folders']);
-  path = validateFolderPath(sources, resources, folders, path);
-  const persisted = new Set(folders);
-  const ancestors = path.split('/');
-  for (let i = 1; i <= ancestors.length; i++) persisted.add(ancestors.slice(0, i).join('/'));
-  if (persisted.size > 256) throw new Error('Maximum 256 explicit folders');
-  state['project-folders'] = [...persisted];
-  const expanded = new Set(savedFolders(state['open-folders']));
-  const parts = path.split('/');
-  for (let i = 1; i <= parts.length; i++) expanded.add(parts.slice(0, i).join('/'));
-  state['open-folders'] = [...expanded];
-  state.window = '';
-  state['file-offset'] = 0;
+  path = validateFolderPath(sources, resources, folders, path, activeEditor());
+  Object.assign(state, policy('editor-folder-created', [state, path], activeEditor()));
   dirty = true;
   report(`Created folder ${path}`);
 }
@@ -1979,6 +1786,7 @@ async function moveProjectFolder(oldPath, newPath) {
     savedFolders(state['project-folders']),
     oldPath,
     newPath,
+    activeEditor(),
   );
   const before = {
     sources: { ...sources },
@@ -1991,30 +1799,14 @@ async function moveProjectFolder(oldPath, newPath) {
   for (const [from, to] of plan.moves)
     if (sourceKey(from) in before.sources)
       renameTab(state, sources, sourceKey(from), sourceKey(to));
-  const pathFields = [
-    'selected-file',
-    'preview-path',
-    'active-generator',
-    'image-generator-path',
-    'audio-generator-path',
-    'text-generator-path',
-    'context-path',
-    'hook-path',
-  ];
-  for (const key of pathFields)
-    if (typeof state[key] === 'string') state[key] = plan.remap(state[key]);
-  for (const key of ['open-folders', 'editor-file-paths'])
-    if (state[key]) state[key] = savedFolders(state[key]).map(plan.remap);
-  for (const [key, value] of Object.entries(applicationState))
-    if (typeof value === 'string') applicationState[key] = plan.remap(value);
-  state['project-folders'] = plan.folders;
-  const expanded = new Set(savedFolders(state['open-folders']));
-  const parts = newPath.split('/');
-  for (let i = 1; i <= parts.length; i++) expanded.add(parts.slice(0, i).join('/'));
-  state['open-folders'] = [...expanded];
-  state.window = '';
-  state['file-context'] = false;
-  state['file-offset'] = 0;
+  Object.assign(
+    state,
+    policy('editor-folder-moved', [state, oldPath, newPath, plan.folders], activeEditor()),
+  );
+  Object.assign(
+    applicationState,
+    policy('editor-remap-state', [applicationState, oldPath, newPath, true], activeEditor()),
+  );
   if (await evaluate()) {
     for (const [from, to] of plan.moves)
       if (sourceKey(from) in before.sources) code.renameBuffer(sourceKey(from), sourceKey(to));
@@ -2041,15 +1833,12 @@ async function deleteProjectFolder(path) {
   for (const file of removed) {
     const key = sourceKey(file);
     if (key in sources) {
-      closeTab(state, sources, key, runtime);
+      closeTab(state, sources, key, activeEditor());
       delete sources[key];
     }
     delete resources[file];
   }
-  for (const key of ['project-folders', 'open-folders'])
-    state[key] = savedFolders(state[key]).filter((folder) => !insideFolder(folder, path));
-  state['file-context'] = false;
-  state.window = '';
+  Object.assign(state, policy('editor-folder-deleted', [state, path], activeEditor()));
   if (await evaluate()) {
     for (const file of removed) code.forgetBuffer(sourceKey(file));
     report(`Deleted folder ${path} / ${removed.length} files`);
@@ -2067,15 +1856,11 @@ function updateFileDrag() {
   if (!fileDrag?.active) return;
   const row = fileRegionAt(pointer.x, pointer.y);
   const header = regions.find((r) => r.id === 'collapse-files');
-  fileDrag.folder =
-    row?.resourceKind === 'folder'
-      ? row.resourcePath
-      : row?.resourcePath
-        ? row.resourcePath.split('/').slice(0, -1).join('/')
-        : row?.id === 'files-tree' ||
-            (header && inBox(pointer.x, pointer.y, header.origin, header.size))
-          ? ''
-          : null;
+  fileDrag.folder = policy(
+    'editor-file-drop-folder',
+    [row ?? {}, !!(header && inBox(pointer.x, pointer.y, header.origin, header.size))],
+    activeEditor(),
+  );
   canvas.style.cursor = fileDrag.folder === null ? 'no-drop' : 'grabbing';
   const tree = regions.find((r) => r.id === 'files-tree');
   if (
@@ -2292,144 +2077,108 @@ canvas.addEventListener(
 function enterRecovery() {
   recovery = true;
   editorFailed = false;
-  state.tab = 'main';
-  state['show-code'] = true;
-  state['preview-focused'] = false;
-  state['show-tools'] = false;
-  state['file-path-editing'] = false;
-  state.menu = false;
-  state.window = '';
+  Object.assign(state, policy('editor-recovery-state', [], activeEditor()));
   dirty = true;
   report('Recovery shell. Adopt the latest editor or edit its sources and run.');
 }
 let previewReturnFocus = 'code';
 function togglePreviewFocus() {
   if (!state['preview-focused']) previewReturnFocus = code.focus;
-  state['preview-focused'] = !state['preview-focused'];
+  Object.assign(state, policy('editor-preview-focus', [state], activeEditor()));
   code.focus = state['preview-focused'] ? 'world' : previewReturnFocus;
   state.menu = false;
   keys.clear();
   canvas.focus();
   dirty = true;
 }
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && dockInteraction.drag) {
+document.addEventListener('keydown', (event) => {
+  // Recover even when the project's shortcut policy is broken.
+  if (event.key === 'F2') {
+    event.preventDefault();
     dockInteraction.end(true);
     release();
-    e.preventDefault();
-    return;
-  }
-  if (e.key === 'Escape' && fileDrag) {
-    e.preventDefault();
-    release();
-    return;
-  }
-
-  if (e.key === 'F4' || (e.key === 'Escape' && state['preview-focused'] && !state.menu)) {
-    e.preventDefault();
-    togglePreviewFocus();
-    return;
-  }
-  if ((e.ctrlKey || e.metaKey) && ['s', 'o'].includes(e.key.toLowerCase())) {
-    e.preventDefault();
-    state.menu = false;
-    if (e.key.toLowerCase() === 'o') $('file-input').click();
-    else
-      download(
-        JSON.stringify(
-          projectSnapshot(sources, state, resources, recovery, applicationState),
-          null,
-          2,
-        ),
-        'application/json',
-        'midnight-garden.aioli.json',
-      );
-    return;
-  }
-  const menus = ['file', 'project', 'view', 'edit', 'about'];
-  if (e.altKey && ['f', 'p', 'v', 'e', 'a'].includes(e.key.toLowerCase())) {
-    e.preventDefault();
-    state['file-context'] = false;
-    state['context-kind'] = '';
-    state.menu = menus[['f', 'p', 'v', 'e', 'a'].indexOf(e.key.toLowerCase())];
-    keys.clear();
-    canvas.focus();
-    return;
-  }
-  if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
-    const row =
-      regions.find((r) => r.resourcePath === state['selected-file']) ||
-      regions.find((r) => r.id === 'files-tree');
-    if (row) {
-      e.preventDefault();
-      openFileContext(row, row.origin[0] + 40, row.origin[1] + 20);
-    }
-    return;
-  }
-  if (typeof state.menu === 'string' || state['file-context']) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      state.menu = false;
-      state['file-context'] = false;
-      canvas.focus();
-      return;
-    }
-    if (!state['file-context'] && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-      e.preventDefault();
-      state.menu = menus[(menus.indexOf(state.menu) + (e.key === 'ArrowRight' ? 1 : 4)) % 5];
-      return;
-    }
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      const controls = [
-        ...$('accessibility').querySelectorAll('[role^="menuitem"]:not(:disabled)'),
-      ];
-      const index = controls.indexOf(document.activeElement);
-      const next =
-        index < 0
-          ? e.key === 'ArrowDown'
-            ? 0
-            : controls.length - 1
-          : (index + (e.key === 'ArrowDown' ? 1 : controls.length - 1)) % controls.length;
-      controls[next]?.focus();
-      return;
-    }
-  }
-  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'p') {
-    e.preventDefault();
-    state.window = state.window === 'palette' ? '' : 'palette';
-    if (state.window === 'palette') state['preview-focused'] = false;
-    sources.__palette = '';
-    keys.clear();
-    return;
-  }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-    e.preventDefault();
-    clearTimeout(timer);
-    if (state.window === 'palette') defer(() => runInstruction(sources.__palette));
-    else runProject();
-    return;
-  }
-  if (e.key === 'F2') {
-    e.preventDefault();
     enterRecovery();
     return;
   }
-  if (e.key === 'Escape') {
-    state['file-path-editing'] = false;
-    state.window = '';
-    state.menu = false;
-    state['show-tools'] = false;
-    keys.clear();
-    return;
-  }
-  if (code.focus === 'world') {
-    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-    if (!e.ctrlKey && !e.metaKey && !e.altKey && (key.length === 1 || key.startsWith('Arrow'))) {
-      e.preventDefault();
-      keys.add(key);
-      activateAudio().catch(() => {});
-    }
+  try {
+    const decision = policy(
+      'editor-shortcut',
+      [
+        state,
+        {
+          key: event.key,
+          command: event.ctrlKey || event.metaKey,
+          shift: event.shiftKey,
+          alt: event.altKey,
+        },
+        code.focus,
+        !!(dockInteraction.drag || fileDrag),
+      ],
+      activeEditor(),
+    );
+    if (!decision) return;
+    event.preventDefault();
+    Object.assign(state, decision.state);
+    const focus = () => {
+      keys.clear();
+      canvas.focus();
+    };
+    const menuFocus = (direction) => {
+      const controls = [
+        ...$('accessibility').querySelectorAll('[role^="menuitem"]:not(:disabled)'),
+      ];
+      const index = policy(
+        'editor-menu-focus-index',
+        [controls.indexOf(document.activeElement), controls.length, direction],
+        activeEditor(),
+      );
+      controls[index]?.focus();
+    };
+    const effects = {
+      'cancel-drag': () => {
+        dockInteraction.end(true);
+        release();
+      },
+      preview: togglePreviewFocus,
+      import: () => $('file-input').click(),
+      export: () =>
+        download(
+          JSON.stringify(
+            projectSnapshot(sources, state, resources, recovery, applicationState),
+            null,
+            2,
+          ),
+          'application/json',
+          'midnight-garden.aioli.json',
+        ),
+      focus,
+      context: () => {
+        const row =
+          regions.find((r) => r.resourcePath === state['selected-file']) ??
+          regions.find((r) => r.id === 'files-tree');
+        if (row) openFileContext(row, row.origin[0] + 40, row.origin[1] + 20);
+      },
+      'menu-next': () => menuFocus(1),
+      'menu-previous': () => menuFocus(-1),
+      palette: () => {
+        sources.__palette = '';
+        keys.clear();
+      },
+      instruction: () => {
+        clearTimeout(timer);
+        defer(() => runInstruction(sources.__palette));
+      },
+      evaluate: runProject,
+      recovery: enterRecovery,
+      'clear-keys': () => keys.clear(),
+      'world-key': () => {
+        keys.add(decision.key);
+        activateAudio().catch(() => {});
+      },
+    };
+    effects[decision.action]?.();
+  } catch (error) {
+    report(error.message, true);
   }
 });
 document.addEventListener('keyup', (e) =>
@@ -2468,7 +2217,7 @@ $('open-file-input').onchange = async (event) => {
       const text = normalizeSource(await file.text());
       if (text.length > 100000) throw new Error('Source exceeds 100KB');
       sources[key] = text;
-      openTab(state, sources, key, runtime);
+      openTab(state, sources, key, activeEditor());
       state['show-code'] = true;
       state['code-collapsed'] = false;
     } else {
@@ -2520,12 +2269,12 @@ $('generator-color').addEventListener('input', (event) => {
     const field = liveFields(sceneFields, applicationState, sceneStateKeys, runtime).find(
       (field) => field.key === sceneColorKey,
     );
-    if (field) applicationState[field.key] = fieldValue(field, event.target.value, runtime);
+    if (field) applicationState[field.key] = fieldValue(field, event.target.value, activeEditor());
   } else {
-    const field = selectedGenerator(generatorPrograms, state, runtime)?.fields.find(
+    const field = selectedGenerator(generatorPrograms, state, activeEditor())?.fields.find(
       (field) => field.key === state['inspector-edit-key'],
     );
-    if (field) state[field.key] = fieldValue(field, event.target.value, runtime);
+    if (field) state[field.key] = fieldValue(field, event.target.value, activeEditor());
   }
   dirty = true;
 });

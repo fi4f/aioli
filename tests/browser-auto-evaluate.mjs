@@ -77,16 +77,16 @@ try {
   await replaceGame(original + '\n(init! :auto-probe 1) (set! :auto-probe 5)');
   await page.evaluate(async () => {
     const { GPUHost } = await import('./gpu.js');
-    const prepare = GPUHost.prototype.prepare;
+    const prepare = GPUHost.prototype.preparePixels;
     const gate = new Promise((resolve) => {
       window.releaseCompile = resolve;
     });
-    GPUHost.prototype.prepare = async function (shader) {
+    GPUHost.prototype.preparePixels = async function (shader) {
       await gate;
       return prepare.call(this, shader);
     };
     window.restoreCompile = () => {
-      GPUHost.prototype.prepare = prepare;
+      GPUHost.prototype.preparePixels = prepare;
     };
   });
   await page.keyboard.press('Control+Enter');

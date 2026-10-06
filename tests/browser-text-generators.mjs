@@ -37,7 +37,7 @@ try {
 (init! :level-value 10 ["Value" 1 64 1])
 (defn generate-text [] (str ${JSON.stringify(prefix)} (get :level-value) "\\n"))`;
   project.state['show-files'] = true;
-  project.state['open-folders'] = '[]';
+  project.state['open-folders'] = [];
   await page.locator('#file-input').setInputFiles({
     name: 'text.json',
     mimeType: 'application/json',
@@ -49,7 +49,7 @@ try {
   await click('file-level.generator.lisp');
   await page.waitForFunction(
     () =>
-      window.aioli.state.window === 'generator' &&
+      window.aioli.state['show-generator'] &&
       window.aioli.regions.some((r) => r.id === 'generator-generate'),
   );
   assert.equal(await page.evaluate(() => window.aioli.error), false);
@@ -81,7 +81,7 @@ try {
   await mkdir('artifacts', { recursive: true });
   await downloaded.saveAs('artifacts/generated-level.csv');
   assert.equal(await readFile('artifacts/generated-level.csv', 'utf8'), expected);
-  await click('close-window');
+  await click('close-generator');
   await click('folder-levels');
   await click('file-levels/generated.csv');
   await page.waitForFunction(

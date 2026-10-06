@@ -1,3 +1,4 @@
+import { policy } from './editor-policy.js';
 import { resolvePath } from './module-loader.js';
 import { sourcePath } from './project-paths.js';
 import { planFileMove } from './file-moves.js';
@@ -23,29 +24,35 @@ export function folderPaths(sources, resources, folders = []) {
   }
   return result;
 }
-export function validateFolderPath(sources, resources, folders, path) {
+export function validateFolderPath(sources, resources, folders, path, editor) {
   path = resolvePath(path);
-  if (path.startsWith('__')) throw new Error('Names beginning with __ are reserved');
-  const files = filePaths(sources, resources);
-  if (files.some((file) => insideFolder(path, file)))
-    throw new Error('A file already uses that path');
-  if (folderPaths(sources, resources, folders).has(path)) throw new Error('Folder already exists');
-  if (folders.length >= 256) throw new Error('Maximum 256 explicit folders');
-  return path;
+  return policy(
+    'editor-folder-validate',
+    [filePaths(sources, resources), [...folderPaths(sources, resources, folders)], folders, path],
+    editor,
+  );
 }
-export function planFolderMove(sources, resources, folders, oldPath, newPath) {
+export function planFolderMove(sources, resources, folders, oldPath, newPath, editor) {
   oldPath = resolvePath(oldPath);
   newPath = resolvePath(newPath);
-  if (!folderPaths(sources, resources, folders).has(oldPath)) throw new Error('Missing folder');
-  if (insideFolder(newPath, oldPath)) throw new Error('Cannot move a folder inside itself');
-  validateFolderPath(sources, resources, folders, newPath);
+  const plan = policy(
+    'editor-folder-move-plan',
+    [
+      filePaths(sources, resources),
+      [...folderPaths(sources, resources, folders)],
+      folders,
+      oldPath,
+      newPath,
+    ],
+    editor,
+  );
   const remap = (path) =>
     insideFolder(path, oldPath) ? newPath + path.slice(oldPath.length) : path;
-  const moves = filePaths(sources, resources).filter((path) => insideFolder(path, oldPath));
+  const moves = plan.moves.map(([path]) => path);
   let nextSources = { ...sources },
     nextResources = { ...resources };
   for (const path of moves) {
-    const plan = planFileMove(nextSources, nextResources, path, remap(path));
+    const plan = planFileMove(nextSources, nextResources, path, remap(path), editor);
     nextSources = plan.sources;
     nextResources = plan.resources;
   }
@@ -62,20 +69,10 @@ export function planFolderMove(sources, resources, folders, oldPath, newPath) {
         : token;
     });
   }
-  const persisted = new Set(folders.map(remap));
-  for (const [path, keepLeaf] of [
-    [oldPath, false],
-    [newPath, true],
-  ]) {
-    const parts = path.split('/');
-    for (let i = 1; i <= parts.length - (keepLeaf ? 0 : 1); i++)
-      persisted.add(parts.slice(0, i).join('/'));
-  }
-  if (persisted.size > 256) throw new Error('Maximum 256 explicit folders');
   return {
     sources: nextSources,
     resources: nextResources,
-    folders: [...persisted],
+    folders: plan.folders,
     moves: moves.map((path) => [path, remap(path)]),
     remap,
   };

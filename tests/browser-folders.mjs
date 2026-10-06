@@ -111,7 +111,7 @@ try {
   const to = await page.evaluate(() => window.aioli.regions.find((r) => r.id === 'collapse-files'));
   await page.mouse.move(from.origin[0] + 100, from.origin[1] + 12);
   await page.mouse.down();
-  await page.mouse.move(to.origin[0] + 100, to.origin[1] + 12, { steps: 12 });
+  await page.mouse.move(to.origin[0] + to.size[0] / 2, to.origin[1] + 12, { steps: 12 });
   await page.mouse.up();
   await page.waitForFunction(
     () =>

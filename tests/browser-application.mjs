@@ -53,7 +53,9 @@ try {
   assert.equal(await page.evaluate(() => window.aioli.editorState['editor-hidden']), undefined);
   assert.ok(
     await page.evaluate(() =>
-      window.aioli.commands.some((c) => c.meta[0] === 0 && c.color[0] === 1 && c.color[1] === 0),
+      window.aioli.commands
+        .flatMap((c) => c.surface?.commands ?? [c])
+        .some((c) => c.meta[0] === 0 && c.color[0] === 1 && c.color[1] === 0),
     ),
   );
   // Host authority flows only toward the embedded application's state.

@@ -116,8 +116,8 @@ npm start</code></pre>
         <code>editor/workspace.lisp</code>. The workspace composes code, files, game and parameter
         panes plus menu, generator, palette and preview widgets. Theme and state defaults live in
         <code>editor/state.lisp</code>. Each file owns its component's drawing and interaction;
-        browser decoding lives in <code>asset-preview.js</code> and tab workspace data lives in
-        <code>code-tabs.js</code>.
+        browser decoding lives in <code>asset-preview.js</code> and tab fitting/workflows live in
+        <code>editor/policy/</code>. <code>code-tabs.js</code> caches and applies Lisp results.
       </p>
       <p>
         To add a bundled Lisp module, create its file, import it from the appropriate Lisp entry or

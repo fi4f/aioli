@@ -127,6 +127,13 @@ true false nil           ; CPU booleans and null</code></pre>
               </td>
             </tr>
             <tr>
+              <td><code>(cond condition value ...)</code></td>
+              <td>
+                Evaluate the first matching condition's expression. A final true/value pair supplies
+                a default; no match returns nil.
+              </td>
+            </tr>
+            <tr>
               <td><code>(when condition body...)</code></td>
               <td>Run the body only when the condition is truthy.</td>
             </tr>
@@ -222,13 +229,14 @@ true false nil           ; CPU booleans and null</code></pre>
 (reduce (fn [sum x] (+ sum x)) 0 [1 2 3])</code></pre>
       <p>
         <code>map</code> takes key/value pairs. <code>lookup</code> reads a vector index or map key,
-        with an optional fallback (nil by default). <code>assoc</code> and <code>conj</code> return
-        new collections. <code>keys</code>, <code>values</code>, <code>contains?</code>,
-        <code>slice</code>, <code>concat</code>, <code>distinct</code> and <code>sort</code> support
-        collection processing. Equality compares collection contents. <code>distinct</code> uses
-        identity for collection entries and value equality for primitives. <code>fn</code> creates a
-        lexical anonymous function; mapv/filter callbacks receive one item, reduce receives
-        accumulator/item, and optional sort comparators receive two items and return a number.
+        with an optional fallback (nil by default). <code>assoc</code>, <code>dissoc</code>,
+        <code>merge</code> and <code>conj</code> return new collections. <code>keys</code>,
+        <code>values</code>, <code>contains?</code>, <code>slice</code>, <code>concat</code>,
+        <code>distinct</code> and <code>sort</code> support collection processing. Equality compares
+        collection contents. <code>distinct</code> uses identity for collection entries and value
+        equality for primitives. <code>fn</code> creates a lexical anonymous function; mapv/filter
+        callbacks receive one item, reduce receives accumulator/item, and optional sort comparators
+        receive two items and return a number.
       </p>
       <p>
         <code>range</code> returns indices from zero to count minus one, with count 0–10000.
@@ -236,6 +244,13 @@ true false nil           ; CPU booleans and null</code></pre>
         another application scope. State values are bounded JSON data: at most 10,000 nodes and 32
         nested levels per value, with finite numbers and safe property keys.
         <code>json-read</code> validates JSON; <code>json-write</code> serializes valid data.
+      </p>
+      <p>
+        <code>(dissoc map key)</code> removes a key without changing the original map.
+        <code>(merge map ...)</code> combines maps; later values replace earlier keys.
+        <code>(parse-number text)</code> parses a finite number and rejects blank, NaN and infinite
+        input. Runtime definition versions invalidate native query caches after named functions are
+        redefined.
       </p>
       <h2 id="metadata">Declaration metadata</h2>
       <p>
@@ -295,8 +310,8 @@ true false nil           ; CPU booleans and null</code></pre>
       <p>
         Shader bodies support drawing commands, <code>let</code>, <code>scope</code>, and
         <code>repeat</code>. Repetition requires a literal count and expands during compilation.
-        They do not support CPU <code>defn</code> calls, <code>if</code>, <code>when</code>, state
-        mutation, text, or editor input.
+        They do not support CPU <code>defn</code> calls, <code>if</code>, <code>when</code>,
+        <code>cond</code>, state mutation, text, or editor input.
       </p>
       <p>
         Shader expressions include

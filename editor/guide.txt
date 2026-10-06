@@ -16,9 +16,10 @@ STATE AND COLLECTIONS
 (set! :player (assoc (get :player) :x 200))
 (init! :items ["key" "lamp"])
 (set! :items (conj (get :items) "coin"))
-lookup, keys, values, contains?, slice, concat, distinct,
+lookup, assoc, dissoc, merge, keys, values, contains?, slice, concat, distinct,
 mapv, filter, reduce and sort work on ordinary data.
 fn defines an anonymous function. Collections are persistent.
+cond selects the first matching condition/expression pair.
 
 ENGINE
 update receives elapsed seconds. defdraw render draws each frame.
@@ -29,13 +30,15 @@ Keep mutation, browser calls and audio outside pixel blocks.
 
 EDITOR
 Edit editor/theme.lisp for colors and sizes.
-Edit editor/policy/ for tabs, roles, inspectors and templates.
+Edit editor/policy/ for workflows, shortcuts, docking, tabs and inspectors.
+Policies return data/patches; native services perform browser effects.
 Editor icons, examples and templates are ordinary project files.
 init! annotations expose field labels, limits and choices.
 The inspector can edit structured values as JSON.
 
 SHORTCUTS
-Ctrl/Cmd+Enter evaluates. F2 opens recovery. F4 focuses preview.
+Ctrl/Cmd+Enter evaluates. F4 focuses preview; mappings live in shortcuts.lisp.
+F2 is the native emergency key and opens bundled recovery policy.
 Escape closes tools. Wheel scrolls, Shift+wheel scrolls sideways.
 
 About > Documentation has the full language and engine reference.

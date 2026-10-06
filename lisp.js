@@ -101,6 +101,7 @@ export function print(node) {
  * which keeps the language implementation independent of DOM and WebGPU APIs.
  */
 export function createRuntime(state, host = {}) {
+  let definitionVersion = 0;
   const global = Object.create(null),
     budget = host.budget ?? 10000;
   const stateKeys = new Set(),
@@ -178,6 +179,12 @@ export function createRuntime(state, host = {}) {
     lookup: (value, key, fallback = null) =>
       value != null && Object.hasOwn(value, key) ? value[key] : fallback,
     assoc: (value, key, entry) => ({ ...value, [validKey(key)]: entry }),
+    dissoc: (value, key) => {
+      const result = { ...value };
+      delete result[validKey(key)];
+      return result;
+    },
+    merge: (...values) => Object.assign(Object.create(null), ...values),
     keys: (value) => Object.keys(value),
     values: (value) => Object.values(value),
     'contains?': (value, key) =>
@@ -205,6 +212,11 @@ export function createRuntime(state, host = {}) {
     'includes?': (value, item) => value.includes(item),
     'replace-pattern': (value, pattern, replacement) =>
       value.replace(new RegExp(pattern), replacement),
+    'parse-number': (value) => {
+      if (typeof value !== 'string' || value.trim() === '' || !Number.isFinite(Number(value)))
+        throw new Error('Expected a finite number');
+      return Number(value);
+    },
     precision: (value, digits) => Number(value.toPrecision(digits)),
     'matches?': (value, pattern) => new RegExp(pattern, 'i').test(value),
     error: (message) => {
@@ -292,6 +304,7 @@ export function createRuntime(state, host = {}) {
       if (anonymous) return fn;
       env[parts[0].name] = fn;
       definitions.set(hook.name, hook);
+      definitionVersion++;
       return null;
     }
     if (name === 'pixels') {
@@ -323,6 +336,11 @@ export function createRuntime(state, host = {}) {
       if (args.length < 2 || args.length > 3)
         throw new Error('if expects condition, true branch, optional false branch');
       return ev(args[0]) ? ev(args[1]) : args[2] === undefined ? null : ev(args[2]);
+    }
+    if (name === 'cond') {
+      if (args.length % 2) throw new Error('cond expects condition/expression pairs');
+      for (let i = 0; i < args.length; i += 2) if (ev(args[i])) return ev(args[i + 1]);
+      return null;
     }
     if (name === 'when') return ev(args[0]) ? body(args.slice(1)) : null;
     if (name === 'and') {
@@ -381,6 +399,9 @@ export function createRuntime(state, host = {}) {
     stateKeys,
     global,
     metadata: { definitions, fields },
+    get definitionVersion() {
+      return definitionVersion;
+    },
     load(forms, path = '') {
       sourcePath = path;
       run(() => {

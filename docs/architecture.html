@@ -54,22 +54,41 @@
       </p>
       <h2>Editable editor policy</h2>
       <p>
-        editor/policy/files.lisp owns file roles, tabs, dialogs, command filtering and generator
-        selection. editor/policy/inspector.lisp owns field inference, bounds, choices, normalization
-        and preview annotation interpretation. The JS adapter invokes the editor's current
-        definitions; a bundled fallback serves Node tests/tools. Editing policy changes behavior
-        through ordinary evaluation. editor/templates contains normal project files used as starter
-        text, and examples contains normal scenes, generators and commands rather than JS source
-        strings.
+        editor/policy/files.lisp owns file roles, tabs, tab fitting, dialogs and command filtering.
+        inspector.lisp interprets field and hook annotations. workflows.lisp chooses file views,
+        generator placement, inspector edits, settings, move/delete state updates and backup plans.
+        shortcuts.lisp owns key mappings and menu/focus decisions. docking.lisp owns split-tree
+        edits, floating/resizing rules, drop previews and dwell timing. These pure functions return
+        data and state patches. Native bindings apply patches and perform browser effects after
+        successful staging. They invoke the active editor's definitions, including edits made
+        through the command palette; Node tools use the bundled policy fallback. Templates and
+        examples are ordinary Lisp project files.
       </p>
       <h2>Native editor services</h2>
       <p>
         Keep native text input/IME/clipboard/selection, glyph layout, image/audio decoding, HTTP
         resource refresh, accessibility mirrors, file downloads and GPU operations in JavaScript.
-        File-tree indexing is cached; source/file rewrite planning remains native to preserve
-        readable source and atomic operations efficiently. Lisp owns presentation and policy. app.js
-        coordinates browser services; it is not the interpreter and is excluded from exported
-        applications.
+        File-tree indexing and tab layout queries are cached and invalidate on input/definition
+        changes. File/folder plans and naming rules are Lisp; token scanning, source rewriting and
+        atomic application remain native to preserve source text. Component measurement and
+        split-tree arrangement remain native hot paths. The editor and game share engine
+        drawing/audio services. Lisp owns presentation and policy. app.js coordinates browser
+        services; it is not the interpreter and is excluded from exported applications.
+      </p>
+      <h2>Performance and recovery boundaries</h2>
+      <p>
+        Run node tests/benchmark-editor-policy.mjs to compare native layout with an equivalent
+        label-column Lisp prototype and exercise 256-tab fitting. The prototype covers only that
+        subset; production measurement also handles nesting, flexible space, padding and scrolling.
+        Its interpreter overhead is why measurement stays native. Dock drag policy runs only during
+        interaction, while tab results are reused on unchanged frames. Collections are persistent;
+        callers replace values rather than mutating nested cached inputs.
+      </p>
+      <p>
+        F2 is reserved by the host as an emergency recovery key. Recovery draws the bundled editor
+        and dispatches its bundled shortcut policy even if project policy throws. The original
+        project files remain available for repair. Runtime isolation, bounded input validation,
+        rollback and GPU/browser resources stay native; game code receives no editor capabilities.
       </p>
       <h2>Current project contract</h2>
       <p>
