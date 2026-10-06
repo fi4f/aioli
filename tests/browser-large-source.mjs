@@ -20,8 +20,8 @@ try {
   await page.waitForFunction(() => window.aioli?.running);
   const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
   Object.assign(project.state, {
-    tab: 'examples/doom.scene.lisp',
-    'code-tabs': ['examples/doom.scene.lisp'],
+    tab: 'examples/kaboom.scene.lisp',
+    'code-tabs': ['examples/kaboom.scene.lisp'],
     'show-code': true,
     'show-files': false,
     'show-game': false,
@@ -32,7 +32,7 @@ try {
     buffer: Buffer.from(JSON.stringify(project)),
   });
   await page.waitForFunction(
-    () => !window.aioli.pending && window.aioli.state.tab === 'examples/doom.scene.lisp',
+    () => !window.aioli.pending && window.aioli.state.tab === 'examples/kaboom.scene.lisp',
   );
   const frame = () =>
     page.evaluate(
@@ -103,7 +103,7 @@ try {
   }
   assert.deepEqual(errors, []);
   console.log(
-    'Doom source stays responsive while scrolling in both directions across wide and tall viewports',
+    'Kaboom source stays responsive while scrolling in both directions across wide and tall viewports',
   );
 } finally {
   await browser.close();

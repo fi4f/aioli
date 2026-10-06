@@ -46,7 +46,7 @@ try {
   await click('settings-cancel');
   assert.equal(await page.evaluate(() => window.aioli.state['project-name']), 'Untitled project');
   await open();
-  await fill('project-name', 'Tiny Crypt & "Friends"');
+  await fill('project-name', 'Kaboom & "Friends"');
   await fill('canvas-width', '0');
   await fill('canvas-height', '64');
   await click('canvas-apply');
@@ -60,18 +60,12 @@ try {
   await page.screenshot({ path: 'artifacts/project-settings.png' });
   await click('canvas-apply');
   await page.waitForFunction(() => !window.aioli.pending && window.aioli.state.window === '');
-  assert.equal(
-    await page.evaluate(() => window.aioli.state['project-name']),
-    'Tiny Crypt & "Friends"',
-  );
+  assert.equal(await page.evaluate(() => window.aioli.state['project-name']), 'Kaboom & "Friends"');
   assert.equal(await page.evaluate(() => window.aioli.state['canvas-width']), 64);
   assert.equal(await page.evaluate(() => window.aioli.state['canvas-height']), 64);
   await page.reload();
   await page.waitForFunction(() => window.aioli?.running);
-  assert.equal(
-    await page.evaluate(() => window.aioli.state['project-name']),
-    'Tiny Crypt & "Friends"',
-  );
+  assert.equal(await page.evaluate(() => window.aioli.state['project-name']), 'Kaboom & "Friends"');
   await open();
   await fill('project-name', '');
   await click('canvas-apply');
@@ -89,7 +83,7 @@ try {
   const offline = await browser.newPage();
   await offline.goto(pathToFileURL(htmlPath).href);
   await offline.waitForFunction(() => window.aioliApplication);
-  assert.equal(await offline.title(), 'Tiny Crypt & "Friends"');
+  assert.equal(await offline.title(), 'Kaboom & "Friends"');
   assert.equal(await offline.locator('#error').textContent(), '');
   await open();
   await page.setViewportSize({ width: 390, height: 844 });

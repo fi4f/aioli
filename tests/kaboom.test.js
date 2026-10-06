@@ -7,7 +7,7 @@ import { engineServices } from '../engine-services.js';
 import { stageScene } from '../scenes.js';
 import { projectSnapshot, readProject } from '../project.js';
 
-const path = 'examples/doom.scene.lisp';
+const path = 'examples/kaboom.scene.lisp';
 const source = readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 function game() {
   const state = {},
@@ -23,68 +23,68 @@ function game() {
   return { state, keys, sounds, runtime };
 }
 
-test('Tiny Crypt collision, controls, damage and restart work with ordinary engine services', () => {
+test('Kaboom collision, controls, damage and restart work with ordinary engine services', () => {
   const { state, keys, runtime } = game();
-  for (let i = 0; i < 3; i++) state[`doom-enemy-${i}-hp`] = 0;
+  for (let i = 0; i < 3; i++) state[`kaboom-enemy-${i}-hp`] = 0;
   keys.add('w');
   for (let i = 0; i < 200; i++) runtime.call('update', 0.05);
-  assert.ok(state['doom-x'] > 8.5 && state['doom-x'] < 8.83, 'stops against outer wall');
+  assert.ok(state['kaboom-x'] > 8.5 && state['kaboom-x'] < 8.83, 'stops against outer wall');
   keys.clear();
   keys.add('ArrowRight');
   runtime.call('update', 0.05);
-  assert.ok(state['doom-angle'] > 0);
+  assert.ok(state['kaboom-angle'] > 0);
   keys.clear();
   keys.add('r');
   runtime.call('update', 0.05);
-  assert.equal(state['doom-x'], 1.5);
-  assert.equal(state['doom-health'], 100);
+  assert.equal(state['kaboom-x'], 1.5);
+  assert.equal(state['kaboom-health'], 100);
   keys.clear();
-  state['doom-enemy-0-x'] = 1.8;
+  state['kaboom-enemy-0-x'] = 1.8;
   runtime.call('update', 0.05);
-  assert.equal(state['doom-health'], 88);
+  assert.equal(state['kaboom-health'], 88);
   runtime.call('update', 0.05);
-  assert.equal(state['doom-health'], 88, 'contact damage has a cooldown');
-  state['doom-health'] = 0;
+  assert.equal(state['kaboom-health'], 88, 'contact damage has a cooldown');
+  state['kaboom-health'] = 0;
   keys.add('w');
   runtime.call('update', 0.05);
-  assert.equal(state['doom-x'], 1.5, 'dead players cannot move');
+  assert.equal(state['kaboom-x'], 1.5, 'dead players cannot move');
 });
 
-test('Tiny Crypt shots hit the nearest visible monster, obey walls, and unlock the exit', () => {
+test('Kaboom shots hit the nearest visible monster, obey walls, and unlock the exit', () => {
   const { state, runtime, sounds, keys } = game();
   for (let i = 0; i < 3; i++) {
-    state[`doom-enemy-${i}-x`] = 4.5 + i;
-    state[`doom-enemy-${i}-y`] = 1.5;
+    state[`kaboom-enemy-${i}-x`] = 4.5 + i;
+    state[`kaboom-enemy-${i}-y`] = 1.5;
   }
-  runtime.call('doom-fire');
-  assert.equal(state['doom-enemy-0-hp'], 1);
-  assert.equal(state['doom-enemy-1-hp'], 2);
-  for (let i = 0; i < 5; i++) runtime.call('doom-fire');
-  assert.equal(state['doom-kills'], 3);
-  assert.equal(state['doom-won'], false);
-  state['doom-x'] = 8.5;
-  state['doom-y'] = 8.5;
+  runtime.call('kaboom-fire');
+  assert.equal(state['kaboom-enemy-0-hp'], 1);
+  assert.equal(state['kaboom-enemy-1-hp'], 2);
+  for (let i = 0; i < 5; i++) runtime.call('kaboom-fire');
+  assert.equal(state['kaboom-kills'], 3);
+  assert.equal(state['kaboom-won'], false);
+  state['kaboom-x'] = 8.5;
+  state['kaboom-y'] = 8.5;
   runtime.call('update', 0.016);
-  assert.equal(state['doom-won'], true);
-  assert.ok(sounds.includes('doom-victory'));
+  assert.equal(state['kaboom-won'], true);
+  assert.ok(sounds.includes('kaboom-victory'));
   keys.add('r');
   runtime.call('update', 0.016);
   keys.clear();
-  state['doom-y'] = 2.5;
-  state['doom-enemy-0-y'] = 2.5;
-  runtime.call('doom-fire');
-  assert.equal(state['doom-enemy-0-hp'], 2, 'stone wall blocks shots');
+  state['kaboom-y'] = 2.5;
+  state['kaboom-enemy-0-y'] = 2.5;
+  runtime.call('kaboom-fire');
+  assert.equal(state['kaboom-enemy-0-hp'], 2, 'stone wall blocks shots');
   keys.add(' ');
   runtime.call('update', 0.016);
   assert.equal(
-    sounds.filter((s) => s === 'doom-pistol').length,
+    sounds.filter((s) => s === 'kaboom-pistol').length,
     7,
     'held trigger respects cooldown',
   );
-  assert.equal(runtime.collectSound('doom-pistol').length, 2);
+  assert.equal(runtime.collectSound('kaboom-pistol').length, 2);
 });
 
-test('Tiny Crypt render stays within the standard budget across the walkable maze', () => {
+test('Kaboom render stays within the standard budget across the walkable maze', () => {
   const { runtime, state } = game();
   const application = engineServices().create(state);
   const scene = stageScene({ [path]: source }, path, application, () =>
@@ -94,11 +94,11 @@ test('Tiny Crypt render stays within the standard budget across the walkable maz
   const before = { ...state };
   for (let y = 1; y < 9; y++)
     for (let x = 1; x < 9; x++) {
-      if (runtime.call('doom-wall?', x, y)) continue;
-      state['doom-x'] = x + 0.5;
-      state['doom-y'] = y + 0.5;
+      if (runtime.call('kaboom-wall?', x, y)) continue;
+      state['kaboom-x'] = x + 0.5;
+      state['kaboom-y'] = y + 0.5;
       for (const angle of [0, 0.7854, 1.5708, 3.14159, -1.5708]) {
-        state['doom-angle'] = angle;
+        state['kaboom-angle'] = angle;
         const commands = runtime.drawFrame().commands;
         assert.ok(commands.length > 100 && commands.length < 300);
       }
@@ -108,13 +108,13 @@ test('Tiny Crypt render stays within the standard budget across the walkable maz
   assert.deepEqual(state, before, 'drawing does not mutate inspector state');
 });
 
-test('Tiny Crypt traces the world and sprite depth on the GPU without CPU column rays', () => {
+test('Kaboom traces the world and sprite depth on the GPU without CPU column rays', () => {
   const { runtime, state } = game();
-  state['doom-enemy-0-x'] = 4;
-  state['doom-enemy-0-y'] = 1.5;
-  state['doom-enemy-1-hp'] = 0;
-  state['doom-enemy-2-hp'] = 0;
-  runtime.global['doom-ray'] = () => {
+  state['kaboom-enemy-0-x'] = 4;
+  state['kaboom-enemy-0-y'] = 1.5;
+  state['kaboom-enemy-1-hp'] = 0;
+  state['kaboom-enemy-2-hp'] = 0;
+  runtime.global['kaboom-ray'] = () => {
     throw new Error('CPU visibility ray during drawing');
   };
   const commands = runtime.drawFrame().commands;
@@ -135,7 +135,7 @@ test('Tiny Crypt traces the world and sprite depth on the GPU without CPU column
   );
 });
 
-test('Tiny Crypt HUD and end screens use full-size glyphs on whole pixel boundaries', () => {
+test('Kaboom HUD and end screens use full-size glyphs on whole pixel boundaries', () => {
   for (const [width, height] of [
     [320, 240],
     [640, 360],
@@ -147,7 +147,7 @@ test('Tiny Crypt HUD and end screens use full-size glyphs on whole pixel boundar
     runtime.load(parse(source));
     runtime.call('enter');
     for (const dead of [false, true]) {
-      state['doom-health'] = dead ? 0 : 100;
+      state['kaboom-health'] = dead ? 0 : 100;
       const glyphs = runtime
         .drawFrame(width, height)
         .commands.filter((command) => command.meta[0] === 3);

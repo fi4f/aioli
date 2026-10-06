@@ -174,10 +174,10 @@
         automatically. Customized components and existing theme files are preserved. The static
         documentation mirrors the default palette; editing a project theme affects that project.
       </p>
-      <h2 id="tiny-crypt">Play Tiny Crypt</h2>
+      <h2 id="kaboom">Play Kaboom</h2>
       <p>
         Expand <code>examples/</code> in Files and click the play button beside
-        <code>doom.scene.lisp</code>. Click the preview to direct keyboard input to the game;
+        <code>kaboom.scene.lisp</code>. Click the preview to direct keyboard input to the game;
         <kbd>F4</kbd> enlarges it and restores your previous editor layout when toggled again. W/S
         or Up/Down walk, A/D strafe, Left/Right or Q/E turn, Space fires, and R restarts. Defeat
         three monsters with two hits each, then reach the green gate at the southeast corner of the
@@ -192,9 +192,9 @@
         bob and recoil, without imported art. Edit its annotated movement settings in the scene
         inspector, inspect the pistol and minimap <code>defdraw</code> hooks, or listen to its
         procedural <code>defsound</code> hooks. To launch it as your application, put
-        <code>(start-scene "examples/doom.scene.lisp")</code> in <code>game.lisp</code>; HTML export
-        then bundles it with the runtime. Existing saves receive the example once, preserving custom
-        copies and later deletions.
+        <code>(start-scene "examples/kaboom.scene.lisp")</code> in <code>game.lisp</code>; HTML
+        export then bundles it with the runtime. Existing saves receive the example once, preserving
+        custom copies and later deletions.
       </p>
       <h2 id="neon-orbits">Play Neon Orbits</h2>
       <p>
@@ -206,6 +206,18 @@
         strength. Existing projects can add the source through File → Open file. Set
         <code>(start-scene "examples/raytrace.scene.lisp")</code> in <code>game.lisp</code>
         to use it as the application entry; HTML export runs it offline.
+      </p>
+      <h2 id="pocket-peaks">Play Pocket Peaks</h2>
+      <p>
+        Play <code>examples/platformer.scene.lisp</code> from Files in a new project. This original
+        side-scrolling platformer has an orange courier, coins, gold coin blocks, patrolling slimes,
+        pits, a checkpoint and a finish flag. A/D or arrows move, Space/W/Up jump, X runs, and R
+        restarts. Release jump early for a shorter hop. Stomp slimes from above; side contact costs
+        a life. The checkpoint preserves collected coins and defeated enemies after a fall. Collect
+        all 15 coins, or simply reach the finish. Inspector exposes speed, jump strength and
+        gravity. Existing projects can add the source through File → Open file. Use
+        <code>(start-scene "examples/platformer.scene.lisp")</code> in <code>game.lisp</code>
+        as the application entry for offline HTML export.
       </p>
       <h2 id="menus">The menu bar</h2>
       <p>
