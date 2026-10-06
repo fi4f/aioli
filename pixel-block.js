@@ -30,6 +30,7 @@ export function pixelBlock(args, env, evaluate) {
       if (node.name in env && typeof env[node.name] !== 'function') return capture(env[node.name]);
       // Vector components of captured drawable arguments, e.g. center.x.
       const match = /^(.*)\.([xyzw])$/.exec(node.name);
+      if (match && locals.has(match[1])) return node;
       if (match && Array.isArray(env[match[1]]))
         return capture(env[match[1]]['xyzw'.indexOf(match[2])]);
       return node;
@@ -43,6 +44,29 @@ export function pixelBlock(args, env, evaluate) {
       if (node.length !== 2 || !node[1]?.name?.startsWith(':'))
         throw new Error('pixels: use (get :state-key)');
       return capture(evaluate(node));
+    }
+    if (name === 'grid-ray') {
+      if (node.length !== 4) throw new Error('grid-ray expects origin, direction and grid rows');
+      const grid = node[3];
+      const literal = grid?.type === 'vector' && grid.items.every((row) => row?.type === 'string');
+      const stateRead =
+        Array.isArray(grid) &&
+        grid.length === 2 &&
+        grid[0]?.name === 'get' &&
+        grid[1]?.name?.startsWith(':');
+      if (!literal && !isSym(grid) && !stateRead)
+        throw new Error(
+          'grid-ray: bind grid data outside pixels, or use literal rows or (get :key)',
+        );
+      const rows = evaluate(node[3]);
+      if (!Array.isArray(rows) || rows.some((row) => typeof row !== 'string'))
+        throw new Error('grid-ray expects a vector of string rows');
+      return [
+        node[0],
+        walk(node[1], locals),
+        walk(node[2], locals),
+        vector(rows.map((value) => ({ type: 'string', value }))),
+      ];
     }
     if (name === 'let' && node[1]?.type === 'vector') {
       const local = new Set(locals),

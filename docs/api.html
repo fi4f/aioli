@@ -233,8 +233,33 @@
               <td>Vector magnitude.</td>
             </tr>
             <tr>
+              <td><code>dot cross normalize reflect sqrt</code></td>
+              <td>
+                Shader vector math for lighting and rays. <code>dot</code> and
+                <code>reflect</code> take two matching vectors; <code>cross</code> takes two 3D
+                vectors. <code>normalize</code> takes a vector, and <code>sqrt</code> is
+                component-wise.
+              </td>
+            </tr>
+            <tr>
+              <td><code>local.x</code>, <code>local.yz</code>, <code>local.xyz</code></td>
+              <td>Read components of shader-local vectors.</td>
+            </tr>
+            <tr>
               <td><code>(noise vec2)</code></td>
               <td>A deterministic 2D hash in [0, 1), not smooth noise.</td>
+            </tr>
+            <tr>
+              <td><code>(grid-ray origin direction rows)</code></td>
+              <td>
+                GPU DDA traversal of a rectangular grid, at most 64×64. Both vectors are 2D; zero
+                cells are empty, digits 1–9 are solid materials. Returns
+                <code>[distance side material texture-u]</code>, with side 0 for an X crossing and 1
+                for a Y crossing. Distance multiplies the supplied direction (do not normalize
+                camera-plane rays when using it as perpendicular depth). Bind string rows outside
+                <code>pixels</code>, provide literal rows, or read a state vector with
+                <code>(get :key)</code>. Grids are embedded in the shader.
+              </td>
             </tr>
             <tr>
               <td><code>(min a b)</code>, <code>(max a b)</code>, <code>(pow a b)</code></td>

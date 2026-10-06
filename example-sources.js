@@ -4,6 +4,7 @@ export const exampleScenePaths = [
   'examples/bloom.scene.lisp',
   'examples/plasma.scene.lisp',
   'examples/doom.scene.lisp',
+  'examples/raytrace.scene.lisp',
 ];
 
 export const exampleToolPaths = [

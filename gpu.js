@@ -355,9 +355,12 @@ export class GPUHost {
     this.pixelSources ??= new Map();
     if (this.pixelSources.has(signature)) return this.pixelSources.get(signature);
     const shader = programs[0];
-    const helpers = shader.code
+    let helpers = shader.code
       .slice(shader.code.indexOf('struct Draw'), shader.code.indexOf('@vertex'))
       .replace(pixelCoverageWGSL, '');
+    for (const helper of shader.extraHelpers ?? []) helpers = helpers.replace(helper, '');
+    helpers +=
+      '\n' + [...new Set(programs.flatMap((program) => program.extraHelpers ?? []))].join('\n');
     const functions = programs
       .map(
         (program, i) => `

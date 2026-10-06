@@ -1,4 +1,5 @@
 import { isSym, print } from './lisp.js';
+import { gridRayShader } from './grid-ray.js';
 // Both GPU passes use these helpers so editor shapes match scene primitives.
 export const pixelCoverageWGSL = `
 fn cover_circle(p: vec2f, center: vec2f, radius: f32) -> f32 {
@@ -31,6 +32,7 @@ export function rgba(value) {
 export function compilePixelShader(nodes, state = {}) {
   const params = [],
     paramMap = new Map();
+  const extraHelpers = new Map();
   let serial = 0,
     primitives = 0,
     statements = 0;
@@ -70,6 +72,17 @@ export function compilePixelShader(nodes, state = {}) {
     }
     if (isSym(n)) {
       if (n.name in locals) return locals[n.name];
+      const component = /^(.*)\.([xyzw]{1,4})$/.exec(n.name);
+      if (component && component[1] in locals) {
+        const value = locals[component[1]],
+          size = Number(/^vec([234])f$/.exec(value.type)?.[1]);
+        if (!size || [...component[2]].some((axis) => 'xyzw'.indexOf(axis) >= size))
+          throw new Error(`Invalid shader components ${n.name}`);
+        return {
+          code: `${value.code}.${component[2]}`,
+          type: component[2].length === 1 ? 'f32' : `vec${component[2].length}f`,
+        };
+      }
       const vars = {
         p: { code: 'd.p', type: 'vec2f' },
         'p.x': { code: 'd.p.x', type: 'f32' },
@@ -88,6 +101,20 @@ export function compilePixelShader(nodes, state = {}) {
       if (args.length !== 1 || !isSym(args[0]) || !args[0].name.startsWith(':'))
         throw new Error('Use (param :state-key)');
       return uniform(args[0].name.slice(1));
+    }
+    if (name === 'grid-ray') {
+      if (
+        args.length !== 3 ||
+        args[2]?.type !== 'vector' ||
+        args[2].items.some((row) => row?.type !== 'string')
+      )
+        throw new Error('Use (grid-ray origin direction ["grid rows" ...])');
+      const helper = gridRayShader(args[2].items.map((row) => row.value));
+      extraHelpers.set(helper.name, helper.code);
+      return {
+        code: `${helper.name}(${typed(args[0], 'vec2f', locals)}, ${typed(args[1], 'vec2f', locals)})`,
+        type: 'vec4f',
+      };
     }
     if (
       ['canvas-width', 'screen-width', 'canvas-height', 'screen-height'].includes(name) &&
@@ -123,6 +150,11 @@ export function compilePixelShader(nodes, state = {}) {
       floor: 1,
       fract: 1,
       length: 1,
+      dot: 2,
+      cross: 2,
+      normalize: 1,
+      reflect: 2,
+      sqrt: 1,
       noise: 1,
       min: 2,
       max: 2,
@@ -138,6 +170,15 @@ export function compilePixelShader(nodes, state = {}) {
         throw new Error(`${name}: expected ${arities[name]} arguments`);
       if (name === 'noise' && values[0].type !== 'vec2f')
         throw new Error('noise expects a 2D vector');
+      if (
+        ['dot', 'reflect'].includes(name) &&
+        (!/^vec[234]f$/.test(values[0].type) || values[0].type !== values[1].type)
+      )
+        throw new Error(`${name} expects two vectors of the same size`);
+      if (name === 'cross' && values.some((value) => value.type !== 'vec3f'))
+        throw new Error('cross expects two 3D vectors');
+      if (name === 'normalize' && !/^vec[234]f$/.test(values[0].type))
+        throw new Error('normalize expects a vector');
       if (name === 'mod')
         return {
           code: `(${values[0].code} - ${values[1].code} * floor(${values[0].code} / ${values[1].code}))`,
@@ -145,7 +186,7 @@ export function compilePixelShader(nodes, state = {}) {
         };
       return {
         code: `${name === 'noise' ? 'hash' : name}(${values.map((x) => x.code).join(', ')})`,
-        type: ['length', 'noise'].includes(name) ? 'f32' : values[0].type,
+        type: ['length', 'noise', 'dot'].includes(name) ? 'f32' : values[0].type,
       };
     }
     if (['vec2', 'vec3', 'rgb', 'rgba'].includes(name)) {
@@ -259,6 +300,7 @@ struct Draw { p: vec2f, color: vec4f, paint: vec4f, opacity: f32, mode: u32 }
 fn hash(p: vec2f) -> f32 { return fract(sin(dot(p, vec2f(127.1,311.7))) * 43758.5453); }
 fn rotatePoint(p: vec2f, a: f32) -> vec2f { return vec2f(cos(a)*p.x-sin(a)*p.y, sin(a)*p.x+cos(a)*p.y); }
 ${pixelCoverageWGSL}
+${[...extraHelpers.values()].join('\n')}
 fn composite(d: ptr<function, Draw>, coverage: f32) {
   let a=clamp((*d).paint.a*(*d).opacity*coverage,0.0,1.0);
   let destination=(*d).color;
@@ -278,5 +320,5 @@ fn composite(d: ptr<function, Draw>, coverage: f32) {
   ${drawing}
   return d.color;
 }`;
-  return { code, params, primitives, pixelBody: drawing };
+  return { code, params, primitives, pixelBody: drawing, extraHelpers: [...extraHelpers.values()] };
 }

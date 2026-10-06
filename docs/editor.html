@@ -184,13 +184,28 @@
         minimap. Contact with monsters costs health; walls block movement and shots.
       </p>
       <p>
-        The entire example is ordinary Lisp: a grid raycaster draws stone corridors, depth-tested
-        monster strips and a pistol without imported art. Edit its annotated movement settings in
-        the scene inspector, inspect the pistol and minimap <code>defdraw</code> hooks, or listen to
-        its procedural <code>defsound</code> hooks. To launch it as your application, put
+        The entire example is ordinary Lisp: GPU grid raycasting traces every canvas column, shades
+        brickwork, casts perspective floor and ceiling textures, and depth-tests monster pixels. The
+        default 320-wide canvas gives 320 single-pixel columns; larger canvases add detail, and
+        wider aspect ratios increase the field of view. Walls and grounded monster sprites share the
+        same projection. Movement, collisions and shooting stay on the CPU. The pistol has walking
+        bob and recoil, without imported art. Edit its annotated movement settings in the scene
+        inspector, inspect the pistol and minimap <code>defdraw</code> hooks, or listen to its
+        procedural <code>defsound</code> hooks. To launch it as your application, put
         <code>(start-scene "examples/doom.scene.lisp")</code> in <code>game.lisp</code>; HTML export
         then bundles it with the runtime. Existing saves receive the example once, preserving custom
         copies and later deletions.
+      </p>
+      <h2 id="neon-orbits">Play Neon Orbits</h2>
+      <p>
+        In a new project, expand <code>examples/</code> in Files and play
+        <code>raytrace.scene.lisp</code>. This asset-free pixel shader traces three animated
+        spheres, a checkerboard floor, reflected rays and soft shadows. Click Game, then use A/D or
+        Left/Right to orbit, W/S or Up/Down to zoom, Space to freeze/resume, and R to reset the
+        camera. F4 enlarges Game. Inspector controls the camera height, lighting and reflection
+        strength. Existing projects can add the source through File → Open file. Set
+        <code>(start-scene "examples/raytrace.scene.lisp")</code> in <code>game.lisp</code>
+        to use it as the application entry; HTML export runs it offline.
       </p>
       <h2 id="menus">The menu bar</h2>
       <p>

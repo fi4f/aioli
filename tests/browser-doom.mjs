@@ -68,6 +68,8 @@ try {
   // Use the actual project export with this scene as the application entry.
   const project = await page.evaluate(() => JSON.parse(localStorage.getItem('aioli.project')));
   project.files['game.lisp'] = '(start-scene "examples/doom.scene.lisp")';
+  project.state['canvas-width'] = 640;
+  project.state['canvas-height'] = 360;
   await page.locator('#file-input').setInputFiles({
     name: 'crypt.json',
     mimeType: 'application/json',
@@ -91,6 +93,13 @@ try {
     await offline.evaluate(() => window.aioliApplication.runtime.state['active-scene']),
     'examples/doom.scene.lisp',
   );
+  const size = await page.evaluate(() => {
+    const draw = window.aioli.commands.find((command) => command.surface).surface;
+    return [draw.width, draw.height, draw.commands.filter((command) => command.pixel).length];
+  });
+  assert.equal(size[0], 640);
+  assert.equal(size[1], 360);
+  assert.ok(size[2] <= 4, 'one world pass and at most three enemy quads');
   await offline.keyboard.down('w');
   await offline.waitForFunction(() => window.aioliApplication.runtime.state['doom-x'] > 1.9);
   await offline.keyboard.up('w');
