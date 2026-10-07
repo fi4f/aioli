@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cap, list, dict, insert, remove, put } from '../engine/data.js';
-import { bindings } from '../engine/bindings.js';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
+import { cap, list, dict, insert, remove, put } from '../engine/language/data.js';
+import { bindings } from '../engine/language/bindings.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
 
 test('cap reports many allocation and lengths of arrays, lists, and dicts', () => {
   const items = list(1, 2);

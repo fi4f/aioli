@@ -5,13 +5,171 @@ const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 const { PNG } = require('pngjs');
 
+test('the editor displays import syntax failures and standalone imports expose callable names', { timeout: 30000 }, async () => {
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    const page = await browser.newPage();
+    const unhandled = [];
+    page.on('pageerror', error => unhandled.push(error.message));
+    await page.route('**/import-ui/*.lisp', route => {
+      const bad = route.request().url().endsWith('/bad.lisp');
+      return route.fulfill({ status: 200, contentType: 'text/plain',
+        body: bad ? '(let test (fn ()' : '(let test (fn () (return 1)))' });
+    });
+    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.waitForFunction(() => !document.getElementById('run').disabled);
+    await page.locator('#source').fill('(await (import "./import-ui/bad.lisp"))\n(test)');
+    await page.locator('#run').click();
+    await page.waitForFunction(() => document.getElementById('error').textContent.includes('/import-ui/bad.lisp:'));
+    const error = await page.locator('#error').textContent();
+    assert.match(error, /SyntaxError/);
+    assert.match(error, /Called from source:1:/);
+    assert.match(error, /\(await \(import/);
+    await page.evaluate(() => { const canvas = document.getElementById('canvas'); canvas.width = 4; canvas.height = 4; });
+    await page.locator('#source').fill('(await (import "./import-ui/good.lisp"))\n(on render (context) (clear (test)))');
+    await page.locator('#run').click();
+    await page.waitForTimeout(150);
+    assert.equal(await page.locator('#error').textContent(), '');
+    const image = PNG.sync.read(await page.locator('#canvas').screenshot());
+    assert.deepEqual([...image.data.subarray(0,4)], [255,255,255,255]);
+    assert.deepEqual(unhandled, []);
+  } finally { await browser.close(); }
+});
+
+test('dynamic imports share writable namespaces and loaded scenes use imported GPU resources', { timeout: 30000 }, async () => {
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    const page = await browser.newPage();
+    const sources = {
+      '/module-test/lib/color.lisp': '(let color (vec4 1 0 0 1)) (let read (fn () (return color)))',
+      '/module-test/lib/effects.lisp': '(let colors (await (import "./color.lisp"))) (let label (text "A")) (let paint (sh (color:vec4) (return color)))',
+      '/module-test/scenes/menu.lisp': '(let effects (await (import "../lib/effects.lisp"))) (on render (fn (context) (effects.paint context (effects.colors.read))))',
+    };
+    await page.route('**/module-test/**', route => {
+      const source = sources[new URL(route.request().url()).pathname];
+      return route.fulfill({ status: source === undefined ? 404 : 200, contentType: 'text/plain', body: source ?? 'missing' });
+    });
+    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    const state = await page.evaluate(async () => {
+      const { Aioli } = await import('/engine/runtime/aioli.js');
+      const canvas = document.createElement('canvas'); canvas.id = 'module-canvas'; canvas.width = 4; canvas.height = 4;
+      document.body.append(canvas);
+      const errors = [];
+      const runtime = new Aioli({ baseURL: new URL('/module-test/main.lisp', location.href).href, onError: error => errors.push(error.message) });
+      await runtime.attach(canvas);
+      const effects = await runtime.run('(let path "./lib/effects.lisp") (await (import path))');
+      const same = await runtime.run('(await (import "./lib/effects.lisp"))');
+      const other = new Aioli({ baseURL: new URL('/module-test/main.lisp', location.href).href });
+      const otherCanvas = document.createElement('canvas'); otherCanvas.width = 4; otherCanvas.height = 4;
+      await other.attach(otherCanvas);
+      await runtime.run('(let colors (await (import "./lib/color.lisp"))) (set colors.color (vec4 0 1 0 1))');
+      const independent = await other.run('(await (import "./lib/color.lisp"))');
+      await runtime.run('(await (set-scene "./scenes/menu.lisp"))');
+      runtime.stage.stop(); runtime.stage.frame(0);
+      globalThis.moduleTest = { runtime, other, errors };
+      return { shared: same === effects, independent: Array.from(independent.values.color.values),
+        textWidth: await runtime.run('(let effects (await (import "./lib/effects.lisp"))) effects.label.w') };
+    });
+    assert.equal(state.shared, true);
+    assert.deepEqual(state.independent, [1,0,0,1]);
+    assert.ok(state.textWidth > 0);
+    await page.waitForTimeout(100);
+    const image = PNG.sync.read(await page.locator('#module-canvas').screenshot());
+    assert.deepEqual([...image.data.subarray(0,4)], [0,255,0,255]);
+    assert.deepEqual(await page.evaluate(() => moduleTest.errors), []);
+    await page.evaluate(() => { moduleTest.runtime.destroy(); moduleTest.other.destroy(); });
+  } finally { await browser.close(); }
+});
+
+test('inner canvas centers nearest-neighbor pixels, maps outer input and emits resize before rendering', { timeout: 30000 }, async () => {
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.evaluate(async () => {
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
+      const canvas = document.createElement('canvas'); canvas.id = 'inner-test'; canvas.width = 12; canvas.height = 8;
+      document.body.append(canvas);
+      const errors = [], events = [];
+      const runtime = new Aioli({ innerCanvas: { width: 2, height: 2, scaleStep: 1 }, bindings: { record: (name,w,h) => events.push([name,w,h]) }, onError: e => errors.push(formatTrace(e)) });
+      await runtime.attach(canvas);
+      runtime.setScene(`(on resize (event) (record "resize" event.w event.h))
+        (on render (context) (record "render" context.w context.h)
+          ((sh () (if (< x 1) (return (vec4 1 0 0 1)) else (return (vec4 0 1 0 1)))) context))`);
+      runtime.stage.stop(); runtime.stage.frame(0);
+      globalThis.innerTest = { runtime, canvas, errors, events };
+    });
+    await page.waitForTimeout(100);
+    assert.deepEqual(await page.evaluate(() => innerTest.errors), []);
+    const image = PNG.sync.read(await page.locator('#inner-test').screenshot());
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 12; x++) {
+      const expected = x < 2 || x >= 10 ? [0,0,0,255] : x < 6 ? [255,0,0,255] : [0,255,0,255];
+      assert.deepEqual([...image.data.subarray((y*12+x)*4,(y*12+x+1)*4)], expected);
+    }
+    const state = await page.evaluate(() => {
+      const { runtime, canvas, events } = innerTest;
+      canvas.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, pointerType: 'mouse', isPrimary: true, clientX: canvas.getBoundingClientRect().left, clientY: canvas.getBoundingClientRect().top }));
+      const pointer = runtime.run('(pointer)');
+      runtime.run('(configure (dict "w" 3 "h" 1))');
+      const pendingWidth = runtime.display.innerCanvas.width;
+      runtime.stage.frame(16);
+      canvas.width = 20; runtime.stage.frame(32);
+      runtime.run('(configure (dict "w" nil "h" nil))'); runtime.stage.frame(48);
+      canvas.width = 24; runtime.stage.frame(64);
+      return { pendingWidth, inside: pointer.values.inside, xy: pointer.values.xy.values, events,
+        innerWidth: runtime.display.innerCanvas.width, uses2d: !!canvas.getContext('2d') };
+    });
+    assert.equal(state.pendingWidth, 2); assert.equal(state.inside, false); assert.deepEqual(state.xy, [-0.5,0]);
+    assert.deepEqual(state.events, [['render',2,2],['resize',3,1],['render',3,1],['render',3,1],['resize',20,8],['render',20,8],['resize',24,8],['render',24,8]]);
+    assert.equal(state.innerWidth, 24); assert.equal(state.uses2d, true);
+    await page.waitForTimeout(100);
+    assert.deepEqual(await page.evaluate(() => innerTest.errors), []);
+    await page.evaluate(() => innerTest.runtime.destroy());
+  } finally { await browser.close(); }
+});
+
+test('shader while, until and for execute ranges and collections with loop control', { timeout: 30000 }, async () => {
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.evaluate(async () => {
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
+      const canvas = document.createElement('canvas'); canvas.id = 'loops-test'; canvas.width = canvas.height = 4;
+      document.body.append(canvas);
+      const errors = [], runtime = new Aioli({ onError: error => errors.push(formatTrace(error)) });
+      await runtime.attach(canvas);
+      const items = runtime.run('(array (f32) 1 2)');
+      const draw = runtime.run(`(sh (items:array<f32>)
+        (let sum 0)
+        (while (- 2 sum) (set sum (+ sum 1)))
+        (for i 1..4 (set sum (+ sum i)))
+        (for i 4..1 (set sum (+ sum i)))
+        (for item items (set sum (+ sum item)))
+        (until (not (bool (- sum 21))) (set sum (+ sum 1)))
+        (for i 0..5
+          (if (not (bool (- i 2))) (continue))
+          (if (not (bool (- i 4))) (break))
+          (set sum (+ sum i)))
+        (return (vec4 (/ sum 100) 0 0 1)))`);
+      runtime.graphics.render(context => draw(context, items));
+      globalThis.loopsTest = { runtime, errors };
+    });
+    await page.waitForTimeout(100);
+    assert.deepEqual(await page.evaluate(() => loopsTest.errors), []);
+    const image = PNG.sync.read(await page.locator('#loops-test').screenshot());
+    for (let i = 0; i < image.data.length; i += 4) assert.ok(Math.abs(image.data[i] - 64) <= 1);
+    await page.evaluate(() => loopsTest.runtime.destroy());
+  } finally { await browser.close(); }
+});
+
 test('blend handles colors and textures in either position with before as the default', { timeout: 30000 }, async () => {
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.id = 'blend-test'; canvas.width = 80; canvas.height = 40;
       document.body.append(canvas);
       const errors = [], runtime = new Aioli({ onError: error => errors.push(formatTrace(error)) });
@@ -93,8 +251,8 @@ test('context before advances through shader and clear calls with rollback and r
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
-      const { get } = await import(new URL('/engine/data.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
+      const { get } = await import(new URL('/engine/language/data.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.id = 'before-test'; canvas.width = 4; canvas.height = 3;
       document.body.append(canvas);
       const errors = [], runtime = new Aioli({ onError: error => errors.push(formatTrace(error)) });
@@ -168,7 +326,7 @@ test('automatic pixel, UV, and dimension inputs work in helpers and selectors af
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.id = 'coordinates-test'; canvas.width = 4; canvas.height = 2;
       document.body.append(canvas);
       const errors = [], runtime = new Aioli({ onError: error => errors.push(formatTrace(error)) });
@@ -206,7 +364,7 @@ test('shader text hoists named and inline resources alongside explicit texture, 
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     const metadata = await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.id = 'shader-text'; canvas.width = 80; canvas.height = 48;
       document.body.append(canvas);
       const errors = [], builds = [];
@@ -253,8 +411,8 @@ test('immediate text renders multicolor lines through persistent cached textures
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     const metrics = await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
-      const { get, put } = await import(new URL('/engine/data.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
+      const { get, put } = await import(new URL('/engine/language/data.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.id = 'text-test'; canvas.width = 100; canvas.height = 100;
       document.body.append(canvas);
       const errors = [], runtime = new Aioli({ onError: error => errors.push(formatTrace(error)) });
@@ -293,8 +451,8 @@ test('immediate text renders multicolor lines through persistent cached textures
     }
     assert.ok(red > 10 && green > 10 && white > 10, `red=${red}, green=${green}, white=${white}`);
     const ownership = await page.evaluate(async () => {
-      const { Aioli } = await import(new URL('/aioli.js', location.href).href);
-      const { get } = await import(new URL('/engine/data.js', location.href).href);
+      const { Aioli } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
+      const { get } = await import(new URL('/engine/language/data.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.width = canvas.height = 10;
       const other = new Aioli(); await other.attach(canvas);
       const shader = other.run('(sh (image:texture2d) (return (sample image (vec2 0.5))))');
@@ -319,7 +477,7 @@ test('2d and 3d transforms agree across CPU matrices, shader helpers, and skew a
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.id = 'transform-test'; canvas.width = 16; canvas.height = 16;
       document.body.append(canvas);
       const errors = [], runtime = new Aioli({ onError: error => errors.push(formatTrace(error)) });
@@ -328,10 +486,10 @@ test('2d and 3d transforms agree across CPU matrices, shader helpers, and skew a
     });
     const cases = [
       ['2d', '', '', '(vec3 0.2 0.3 1)'],
-      ['2d', 'position (vec2 0.1 0.2) scale 0.5 rotation 0.3 skew (vec2 0.1 -0.2)', '', '(vec3 0.2 0.3 1)'],
-      ['2d', 'scale (vec2 0.2 -0.3) position (vec2 0.4 0.5) rotation 1.2', '', '(vec3 0.1 0.2 0)'],
+      ['2d', 'translate (vec2 0.1 0.2) scale 0.5 rotate 0.3 skew (vec2 0.1 -0.2)', '', '(vec3 0.2 0.3 1)'],
+      ['2d', 'scale (vec2 0.2 -0.3) translate (vec2 0.4 0.5) rotate 1.2', '', '(vec3 0.1 0.2 0)'],
       ['3d', '', '', '(vec4 0.2 0.3 0.4 1)'],
-      ['3d', 'rotation (vec3 0.1 0.2 0.3) scale (vec3 0.3 0.4 0.5) position (vec3 0.1 0.2 0.3) skew skews', '0.1 0.2 0.3 -0.1 -0.2 -0.3', '(vec4 0.2 0.3 0.4 1)'],
+      ['3d', 'rotate (vec3 0.1 0.2 0.3) scale (vec3 0.3 0.4 0.5) translate (vec3 0.1 0.2 0.3) skew skews', '0.1 0.2 0.3 -0.1 -0.2 -0.3', '(vec4 0.2 0.3 0.4 1)'],
       ['3d', 'scale 0.5 skew (array (f32 6) 0.2)', '', '(vec4 0.2 0.3 0.4 0)'],
       ...Array.from({ length: 6 }, (_, i) => ['3d', 'skew skews', Array.from({ length: 6 }, (_, j) => i === j ? 0.3 : 0).join(' '), '(vec4 0.2 0.3 0.4 1)']),
     ];
@@ -365,7 +523,7 @@ test('WGSL zero, splat, mixed vector, and column/scalar matrix constructors rend
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.id = 'constructor-test'; canvas.width = 16; canvas.height = 16;
       document.body.append(canvas);
       const errors = [], runtime = new Aioli({ onError: error => errors.push(formatTrace(error)) });
@@ -400,7 +558,7 @@ test('every f32, i32, and u32 vector dimension crosses uniforms with family-pres
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.id = 'all-vector-types'; canvas.width = 16; canvas.height = 16;
       document.body.append(canvas);
       const errors = [], runtime = new Aioli({ onError: error => errors.push(formatTrace(error)) });
@@ -432,7 +590,7 @@ test('full-width signed and unsigned scalars, vectors, and mixed structs render 
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.id = 'numeric-type-test'; canvas.width = 16; canvas.height = 16;
       document.body.append(canvas);
       const state = { errors: [] };
@@ -475,8 +633,8 @@ test('bool fields, nested bool collections, uniforms, and mutation cross WebGPU 
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
-      const { get, put } = await import(new URL('/engine/data.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
+      const { get, put } = await import(new URL('/engine/language/data.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.id = 'bool-struct-test'; canvas.width = 16; canvas.height = 16;
       document.body.append(canvas);
       const state = { errors: [], get, put };
@@ -524,8 +682,8 @@ test('many growth, removal, lengths, and bounded local shader edits render on We
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
-      const { insert, remove, get } = await import(new URL('/engine/data.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
+      const { insert, remove, get } = await import(new URL('/engine/language/data.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.id = 'many-test'; canvas.width = 16; canvas.height = 16;
       document.body.append(canvas);
       const state = { errors: [], insert, remove, get };
@@ -570,8 +728,8 @@ test('bounded arrays nested in structs render padding, lengths, local writes, an
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
-      const { get, put } = await import(new URL('/engine/data.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
+      const { get, put } = await import(new URL('/engine/language/data.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.id = 'array-test'; canvas.width = 16; canvas.height = 16;
       document.body.append(canvas);
       const state = { errors: [], get, put };
@@ -617,7 +775,7 @@ test('shader if elif else renders scoped branches, early returns, and optional f
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.id = 'conditional-test'; canvas.width = 16; canvas.height = 16;
       document.body.append(canvas);
       const state = { mode: 0, errors: [] };
@@ -657,7 +815,7 @@ test('numeric vector and matrix dot reads and writes render on real WebGPU', { t
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.id = 'matrix-index-test'; canvas.width = 16; canvas.height = 16;
       document.body.append(canvas);
       const errors = [];
@@ -694,7 +852,7 @@ test('lifecycle context dictionaries expose timing and resized canvas dimensions
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const canvas = document.createElement('canvas'); canvas.width = 32; canvas.height = 24;
       document.body.append(canvas);
       const updates = [], renders = [], errors = [];
@@ -725,7 +883,7 @@ test('struct arrays render quoted fields, dot assignments, and per-call snapshot
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const canvas = document.createElement('canvas');
       canvas.id = 'layout-test'; canvas.width = 16; canvas.height = 16;
       document.body.append(canvas);
@@ -777,7 +935,7 @@ test('numeric shader selectors render lazy results with captured locals and help
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const canvas = document.createElement('canvas');
       canvas.id = 'selector-test'; canvas.width = 16; canvas.height = 16;
       document.body.append(canvas);
@@ -812,7 +970,7 @@ test('boolean logic and scalar remainder validate and render on real WebGPU', { 
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const canvas = document.createElement('canvas');
       canvas.id = 'logical-test'; canvas.width = 16; canvas.height = 16;
       document.body.append(canvas);
@@ -845,7 +1003,7 @@ test('all vector swizzles validate in real WebGPU and dot access renders reorder
     const page = await browser.newPage();
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const canvas = document.createElement('canvas');
       canvas.id = 'swizzle-test'; canvas.width = 16; canvas.height = 16;
       document.body.append(canvas);
@@ -881,9 +1039,9 @@ test('mutable square matrices cross into real WebGPU with column padding and cac
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     for (const dimension of [2, 3, 4]) {
       await page.evaluate(async dimension => {
-        const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
-        const { matrixBindings } = await import(new URL('/engine/types.js', location.href).href);
-        const { put } = await import(new URL('/engine/data.js', location.href).href);
+        const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
+        const { matrixBindings } = await import(new URL('/engine/language/types.js', location.href).href);
+        const { put } = await import(new URL('/engine/language/data.js', location.href).href);
         const canvas = document.createElement('canvas');
         canvas.id = 'matrix-test'; canvas.width = 16; canvas.height = 16;
         document.body.append(canvas);
@@ -933,7 +1091,7 @@ test('real WebGPU gradients, cached shaders, uniforms, and automatic presentatio
     await page.waitForTimeout(150);
     assert.equal(await page.locator('#error').textContent(), '');
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const make = id => {
         const canvas = document.createElement('canvas');
         canvas.id = id; canvas.width = 64; canvas.height = 48;
@@ -997,7 +1155,7 @@ test('typed texture/vector parameters compose GPU passes and reject stale or for
     await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
     await page.waitForFunction(() => !document.getElementById('run').disabled || document.getElementById('error').textContent);
     await page.evaluate(async () => {
-      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const { Aioli, formatTrace } = await import(new URL('/engine/runtime/aioli.js', location.href).href);
       const make = id => { const c = document.createElement('canvas'); c.id = id; c.width = 32; c.height = 24; document.body.append(c); return c; };
       const state = { errors: [], saved: null };
       const options = { onError: error => state.errors.push(formatTrace(error)) };
@@ -1027,7 +1185,7 @@ test('typed texture/vector parameters compose GPU passes and reject stale or for
     assert.equal(await page.evaluate(() => resourceTest.a.graphics.stats.shaderCompilations), 2);
     assert.deepEqual(await page.evaluate(() => resourceTest.errors), []);
     await page.evaluate(() => {
-      resourceTest.a.player.stop();
+      resourceTest.a.stage.stop();
       const old = resourceTest.saved;
       resourceTest.a.bindings.previous = () => old;
       resourceTest.b.bindings.previous = () => old;

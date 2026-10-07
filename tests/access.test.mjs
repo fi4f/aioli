@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile, read } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
-import { dict, list } from '../engine/data.js';
+import { compile, read } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
+import { dict, list } from '../engine/language/data.js';
 
 test('dot access chains through nested lists, dicts, vectors, and expression results', () => {
   for (const trace of [true, false]) {
@@ -77,7 +77,8 @@ test('reader preserves keys and nested spans and rejects incomplete quoted dot a
   assert.equal(node.target.quoted, false);
   assert.equal(node.target.target.key, 'players');
   assert.equal(source.slice(node.start, node.end), source);
-  for (const source of ['root.', 'root..name', 'root."unterminated', 'root."bad\\q"', 'root. name']) {
+  assert.equal(read('root..name')[0].kind, 'range');
+  for (const source of ['root.', 'root."unterminated', 'root."bad\\q"', 'root. name']) {
     assert.throws(() => read(source), error => error instanceof SyntaxError && Boolean(error.lisp), source);
   }
 });

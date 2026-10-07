@@ -75,7 +75,8 @@ export function transform3d(...entries) {
   ]);
 }
 export const isTransformConstructor = value => value === transform2d || value === transform3d;
-function transformPoint(name, operands, project) {
+export function transformPoint(...operands) {
+  const name = 'transform';
   if (operands.length !== 2) throw new TypeError(`${name} expects exactly two operands: a matrix and a float vector`);
   const [transform, value] = operands;
   const kind = dataKind(transform);
@@ -87,12 +88,66 @@ function transformPoint(name, operands, project) {
     for (let column = 0; column < size; column++) sum += transform.values[column * n + row] * value.values[column];
     return sum + transform.values[size * n + row];
   };
-  const divisor = project ? Math.fround(component(size)) : 1;
+  const divisor = Math.fround(component(size));
   return makeVector(size, Array.from({ length: size }, (_, row) => Math.fround(component(row)) / divisor));
 }
-export const affineTransform = (...operands) => transformPoint('affine', operands, false);
-export const projectTransform = (...operands) => transformPoint('project', operands, true);
-export const transformBindings = { '2d': transform2d, '3d': transform3d, affine: affineTransform, project: projectTransform };
+export function inverse(...operands) {
+  if (operands.length !== 1) throw new TypeError('inverse expects exactly one square float matrix');
+  const [transform] = operands;
+  const n = /^mat([234])x\1f$/.exec(dataKind(transform) || '')?.[1] * 1;
+  if (!n) throw new TypeError('inverse expects a mat2x2f, mat3x3f or mat4x4f');
+  if (transform.values.some(value => !Number.isFinite(value))) throw new TypeError('inverse requires finite matrix components');
+  const rows = Array.from({ length: n }, (_, row) => [
+    ...Array.from({ length: n }, (_, column) => transform.values[column * n + row]),
+    ...Array.from({ length: n }, (_, column) => +(row === column)),
+  ]);
+  for (let column = 0; column < n; column++) {
+    let pivot = column;
+    for (let row = column + 1; row < n; row++) if (Math.abs(rows[row][column]) > Math.abs(rows[pivot][column])) pivot = row;
+    if (rows[pivot][column] === 0) throw new RangeError('inverse requires an invertible matrix');
+    [rows[column], rows[pivot]] = [rows[pivot], rows[column]];
+    const divisor = rows[column][column];
+    for (let k = 0; k < 2 * n; k++) rows[column][k] /= divisor;
+    for (let row = 0; row < n; row++) if (row !== column) {
+      const factor = rows[row][column];
+      for (let k = 0; k < 2 * n; k++) rows[row][k] -= factor * rows[column][k];
+    }
+  }
+  const values = Array.from({ length: n * n }, (_, i) => rows[i % n][n + Math.floor(i / n)]);
+  if (values.some(value => !Number.isFinite(Math.fround(value)))) throw new RangeError('inverse exceeds finite f32 matrix range');
+  return matrix(n, values);
+}
+export function inverseWGSL(helper, n) {
+  const identity = Array.from({ length: n * n }, (_, i) => i % (n + 1) === 0 ? '1f' : '0f').join(', ');
+  return `fn ${helper}(transform: mat${n}x${n}f) -> mat${n}x${n}f {
+var a = transform;
+var result = mat${n}x${n}f(${identity});
+for (var column = 0u; column < ${n}u; column++) {
+  var pivot = column;
+  for (var row = column + 1u; row < ${n}u; row++) {
+    if (abs(a[column][row]) > abs(a[column][pivot])) { pivot = row; }
+  }
+  for (var k = 0u; k < ${n}u; k++) {
+    let swap = a[k][column]; a[k][column] = a[k][pivot]; a[k][pivot] = swap;
+    let swapResult = result[k][column]; result[k][column] = result[k][pivot]; result[k][pivot] = swapResult;
+  }
+  let divisor = a[column][column];
+  if (divisor == 0f) { return mat${n}x${n}f(); }
+  for (var k = 0u; k < ${n}u; k++) { a[k][column] /= divisor; result[k][column] /= divisor; }
+  for (var row = 0u; row < ${n}u; row++) {
+    if (row != column) {
+      let factor = a[column][row];
+      for (var k = 0u; k < ${n}u; k++) {
+        a[k][row] -= factor * a[k][column];
+        result[k][row] -= factor * result[k][column];
+      }
+    }
+  }
+}
+return result;
+}`;
+}
+export const transformBindings = { '2d': transform2d, '3d': transform3d, transform: transformPoint, inverse };
 
 export const transformWGSL = {
   '2d': `fn transform2d(translate: vec2f, scale: vec2f, rotate: f32, skew: vec2f) -> mat3x3f {

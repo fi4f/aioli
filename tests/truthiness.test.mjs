@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile, read } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
-import { compileShader } from '../engine/shader.js';
+import { compile, read } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
+import { compileShader } from '../engine/compiler/shader.js';
 
 test('truthiness checks explicit empty and zero values while retaining nonempty data', () => {
   for (const trace of [true, false]) {

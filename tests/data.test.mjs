@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
-import { list, dict, get, put, copy, reCopy, equal, serializeData, deserializeData } from '../engine/data.js';
-import { assertType, vectorBindings, matrixBindings, registerTexture } from '../engine/types.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
+import { list, dict, get, put, copy, reCopy, equal, serializeData, deserializeData } from '../engine/language/data.js';
+import { assertType, vectorBindings, matrixBindings, registerTexture } from '../engine/language/types.js';
 
 test('where returns the first structurally equal list index or nil', () => {
   const find = bindings.where;

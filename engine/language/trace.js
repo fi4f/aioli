@@ -6,8 +6,9 @@ export function locate(error, source, start, end = start + 1) {
 
 export function formatTrace(error) {
   if (!error.lisp) return `${error.name || 'Error'}: ${error.message || String(error)}`;
-  const { source, start, end, calls } = error.lisp;
-  const excerpt = (offset, finish) => {
+  const { source, sourceURL, start, end, calls } = error.lisp;
+  const excerpt = (offset, finish, sourceText = source, url = sourceURL) => {
+    const source = sourceText;
     offset = Math.min(offset, source.length);
     const line = source.slice(0, offset).split('\n').length;
     const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
@@ -16,21 +17,35 @@ export function formatTrace(error) {
     const column = offset - lineStart + 1;
     const prefix = `${line} | `;
     const width = Math.max(1, Math.min(finish - offset, text.length - column + 1));
-    return `source:${line}:${column}\n${prefix}${text}\n${' '.repeat(prefix.length)}${' '.repeat(column - 1)}${'^'.repeat(width)}`;
+    return `${url ?? 'source'}:${line}:${column}\n${prefix}${text}\n${' '.repeat(prefix.length)}${' '.repeat(column - 1)}${'^'.repeat(width)}`;
   };
   return `${error.name}: ${error.message}\n${excerpt(start, end)}` +
-    calls.map(call => `\nCalled from ${excerpt(call.start, call.end)}`).join('');
+    calls.map(call => `\nCalled from ${excerpt(call.start, call.end, call.source ?? source, call.source !== undefined ? call.sourceURL ?? 'source' : sourceURL)}`).join('');
 }
 
-export function runtimeTrace(source, names) {
+export function runtimeTrace(source, names, sourceURL) {
   const annotate = (error, start, end) => {
     error = locate(error, source, start, end);
+    if (error.lisp.source === source && !error.lisp.sourceURL) error.lisp.sourceURL = sourceURL;
     if (error instanceof ReferenceError) {
       error.message = error.message.replace(/\$(?:local|binding)\d+/g, name => names.get(name) || name);
     }
     return error;
   };
   return {
+    async asyncAt(start, end, evaluate) {
+      try { return await evaluate(); }
+      catch (error) {
+        error = annotate(error, start, end);
+        if (error.lisp.source !== source || error.lisp.sourceURL !== sourceURL) {
+          const last = error.lisp.calls.at(-1);
+          if (error.lisp.calls.length < 12 && !(last?.source === source && last?.sourceURL === sourceURL && last?.start === start && last?.end === end)) {
+            error.lisp.calls.push({ start, end, source, sourceURL });
+          }
+        }
+        throw error;
+      }
+    },
     at(start, end, evaluate) {
       try { return evaluate(); }
       catch (error) { throw annotate(error, start, end); }
@@ -45,7 +60,7 @@ export function runtimeTrace(source, names) {
       catch (error) {
         const alreadyLocated = error instanceof Error && error.lisp;
         error = annotate(error, start, end);
-        if (alreadyLocated && error.lisp.calls.length < 12) error.lisp.calls.push({ start, end });
+        if (alreadyLocated && error.lisp.calls.length < 12) error.lisp.calls.push({ start, end, source, sourceURL });
         throw error;
       }
     },

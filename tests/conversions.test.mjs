@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { num, f32, str } from '../engine/conversions.js';
-import { compile, read } from '../engine/compiler.js';
-import { bindings } from '../engine/bindings.js';
-import { forms } from '../engine/forms.js';
-import { compileShader } from '../engine/shader.js';
+import { num, f32, str } from '../engine/language/conversions.js';
+import { compile, read } from '../engine/compiler/compiler.js';
+import { bindings } from '../engine/language/bindings.js';
+import { forms } from '../engine/compiler/forms.js';
+import { compileShader } from '../engine/compiler/shader.js';
 
 test('num converts booleans and complete decimal strings without narrowing numeric precision', () => {
   for (const [input, expected] of [

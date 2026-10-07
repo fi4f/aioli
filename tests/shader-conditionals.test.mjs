@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
 
 const shader = source => compile(source, {}, forms).shaders[0];
 

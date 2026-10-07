@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
-import { get, put, copy, reCopy, equal, insert, remove } from '../engine/data.js';
-import { collectionInfo, structInfo } from '../engine/structures.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
+import { get, put, copy, reCopy, equal, insert, remove } from '../engine/language/data.js';
+import { collectionInfo, structInfo } from '../engine/language/structures.js';
 const evaluate = (source, trace = true) => compile(source, bindings, forms, { trace }).run();
 
 test('bool fields preserve primitive booleans through nested mutation, copies, and packed storage', () => {

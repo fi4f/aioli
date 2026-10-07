@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
-import { num, f32, i32, u32, str } from '../engine/conversions.js';
-import { assertType, vectorBindings } from '../engine/types.js';
-import { vectorTypes, vectorInfo, matrixSize } from '../engine/numeric-types.js';
-import { get, put, copy, serializeData, deserializeData } from '../engine/data.js';
-import { collectionInfo, packCollection } from '../engine/structures.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
+import { num, f32, i32, u32, str } from '../engine/language/conversions.js';
+import { assertType, vectorBindings } from '../engine/language/types.js';
+import { vectorTypes, vectorInfo, matrixSize } from '../engine/language/numeric-types.js';
+import { get, put, copy, serializeData, deserializeData } from '../engine/language/data.js';
+import { collectionInfo, packCollection } from '../engine/language/structures.js';
 const evaluate = (source, trace = true) => compile(source, bindings, forms, { trace }).run();
 
 test('numeric metadata is shared, immutable, and rejects unknown keys without coercion', () => {

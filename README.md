@@ -1,5 +1,28 @@
 # Aioli
 
+The runtime, compiler, language library, browser adapters, and application hosts
+are separated under `engine/` and `hosts/`. See [ARCHITECTURE.md](./ARCHITECTURE.md)
+for the boundaries and the remaining self-hosted editor work.
+
+Open `/editor.html` to load `editor/main.lisp` through a minimal browser host.
+Mayo draws its own highlighted source editor, line-number gutter, caret,
+selection, and errors through the canvas. The demo Lisp source is formatted
+and commented to explain how the editor works.
+Its Lisp script debounces edits for 400 ms and reloads itself. `text-proxy` supplies
+invisible browser input; `aioli` exposes source, shared state, and self-reload.
+`aioli.tokenize(source)` exposes tolerant lexical spans from the compiler's
+shared scanner; the syntax palette and styled text rendering remain in Lisp.
+Changes stay in memory. Mayo uses `(wrap false)` to clip source lines without reflow.
+The existing development playground remains at `/index.html`.
+
+Mayo redraws when its document, selection, viewport, or diagnostic changes,
+and reuses the completed image otherwise. Visible source is batched into one
+cached text texture; source, selection, and caret compose in one GPU pass.
+Selection and fractional scroll changes reuse that texture.
+`node scripts/profile-mayo.cjs` samples JavaScript frame
+and redundant input-notification costs in headless Chrome (requires Playwright;
+set `AIOLI_URL` for a server other than localhost:3000).
+
 Run `npx serve` from the project root and open `/index.html`.
 Run executes source; output goes to the browser
 console. The second textarea shows the exact generated function body, whose
@@ -10,10 +33,11 @@ mode, `$trace` (the trace helpers). A separate textarea shows generated WGSL.
 
 ## Graphics
 
-The graphics surface is always a developer-supplied WebGPU canvas. Its size is
-set by the HTML width/height attributes (640 × 480 in the editor). There is no Canvas 2D
-or WebGL fallback. Initialization requests an adapter/device and configures the
-canvas with the browser's preferred format. Run is enabled once graphics is ready.
+The developer-supplied canvas is the **outer canvas**, using its default Canvas
+2D context. The runtime creates a separate offscreen **inner canvas** for WebGPU
+rendering. Shader coordinates, contexts, clear, textures, and previous-pass images
+all use inner pixels. WebGPU is still required; Canvas 2D presents the completed
+inner image and does not replace GPU rendering. Run is enabled once graphics is ready.
 Unavailable WebGPU, device loss, and GPU errors are shown in the page and console.
 Use localhost via `npx serve`, or HTTPS.
 
@@ -41,6 +65,12 @@ live in `graphics.js` and supply ordinary bindings to the compiler.
 ## Text
 
 `text` evaluates an ordinary Lisp body with a fresh immediate-mode text builder.
+Text operations validate argument counts during compilation, including inside
+render callbacks. For example, `(resolution)` reports a source-located error
+before a live reload can replace the working scene; `(resolution 2)` is valid.
+Literal setting values such as `(resolution 0)` are also checked at compilation.
+Traced self-reloads check the candidate's first render before accepting it, so
+computed invalid settings reject reload and restore the working editor.
 It captures outer variables directly. Statements, `print`, `if`/`elif`/`else`,
 mutation, and regular function calls work as usual. For example:
 
@@ -78,15 +108,63 @@ that builder after completion raises an error. Text operation names are reserved
 within text bodies. Direct `return` from a text body is rejected; regular nested
 functions can return normally.
 
-Block settings are `(width pixels)`, `(align "left"|"center"|"right")`, and
-`(line-height pixels)`. Their final values apply to the whole block. Without width,
-text uses its natural width. With width, it wraps at whitespace across span
-boundaries; oversized words stay intact and may extend past that width. Line
+Block settings are `width`, `height`, `padding`, `h-align`, `v-align`, and
+`line-height`. Their final values apply to the whole block (last setting wins),
+including text already appended. `h-align` accepts `left`, `center`, or `right`;
+`v-align` accepts `top`, `center`, or `bottom`, as symbols or strings. Defaults are
+left and top. Horizontal alignment positions each line; vertical alignment
+positions the entire multiline block using its unshifted layout metrics.
+
+`(resolution value)` controls text raster resolution separately from layout.
+It also accepts `half` (0.5), `standard` (1), and `double` (2), as symbols or
+strings: `(resolution double)` and `(resolution "double")` are equivalent.
+It is a whole-block setting with a positive finite multiplier and default 1 (no
+resampling). Values above 1 render at higher resolution then downsample, helping
+fractional glyph offsets move more smoothly; values below 1 render at lower
+resolution then upscale. Resampling uses smoothing. Final texture dimensions,
+baseline, origin, wrapping, and alignment stay in the original pixel units;
+outer-canvas presentation still uses nearest-neighbor scaling. Both final and
+intermediate raster dimensions must fit the runtime's texture dimension limit.
+
+```lisp
+(text (width 640) (height 160) (resolution 4)
+      (v-align center) (offset (vec2 0 0.25)) "Smooth motion")
+```
+
+`width` and `height` specify fixed texture dimensions in pixels (rounded up).
+Overflow, glyph overhang, stroke, and offsets are clipped at those boundaries;
+the texture origin does not move to accommodate them. Height does not change
+wrapping or baseline spacing. Without a fixed dimension, that axis uses automatic
+bounds including shifted glyphs and stroke padding. With no fixed height,
+vertical alignment has no extra space to distribute.
+
+`padding` accepts a nonnegative scalar for both axes or a nonnegative `vec2f`
+for horizontal/vertical padding; it defaults to zero. Fixed dimensions include
+padding, and wrapping/alignment use the remaining inner rectangle. For example:
+
+```lisp
+(text (width 640) (height 160) (padding (vec2 20 10))
+      (h-align center) (v-align center)
+      "Animated text" (offset (vec2 0 -10)) "!")
+```
+
+Fixed width wraps at whitespace across span boundaries by default; oversized words stay
+intact and are clipped if they overflow. Line
 height is the distance between baselines; the default uses font metrics with
 20% extra spacing. Paint changes preserve shaping within contiguous spans sharing
 the same font, size, weight, and italic setting. The initial layout supports left-to-right plain text and
 basic whitespace wrapping; paragraph bidirectionality, Unicode line breaking,
 text decorations, and editing/caret behavior are not implemented.
+
+`(wrap false)` disables automatic wrapping while retaining explicit newlines,
+blank lines, and trailing newlines. Fixed `width` and `height` then clip overflow
+without changing subsequent line positions. `(wrap true)` restores the default.
+This is a whole-block boolean setting; the final value applies to all spans.
+
+```lisp
+(text (font "monospace") (size 14) (line-height 20)
+      (width 640) (height 400) (wrap false) (span source))
+```
 
 `(weight value)` accepts a finite numeric weight from `1` to `1000`, or a named
 weight as a symbol or string. Names are `thin` (100), `extralight` (200),
@@ -95,6 +173,17 @@ weight as a symbol or string. Names are `thin` (100), `extralight` (200),
 `(italic)` or `(italic true)` enables italics; `(italic false)` restores upright text (the default).
 Both settings affect subsequent spans and participate in measurement and rendering.
 Available weights and italic faces depend on the selected font.
+
+`(offset (vec2 x y))` visually shifts subsequent spans in pixels, without changing
+their normal layout advance, wrapping, or baseline spacing. Positive y moves
+down; negative y raises text. It defaults to `(vec2 0)` and accepts finite `vec2f`
+values. Offsets are copied per span and included in automatic bounds, but do not
+affect alignment or fixed dimensions. Explicit bounds clip overflow instead.
+To offset an individual character, put it in its own span or bare string:
+
+```lisp
+(text "H" (offset (vec2 0 -5)) "i" (offset (vec2 0)) "!")
+```
 
 ```lisp
 (text (weight semibold) (italic true) (span "Heading")
@@ -111,7 +200,7 @@ Stroke settings mirror Canvas names and defaults:
 | `line-cap` | `butt`, `round`, `square` | `butt` |
 | `line-dash` | List or numeric array of finite nonnegative lengths | Empty (solid) |
 
-Named options accept symbols or strings, including for `align`. Odd-length dash
+Named options accept symbols or strings, including for `h-align`. Odd-length dash
 patterns repeat twice, matching Canvas; `(line-dash (list))` restores a solid stroke.
 Invalid settings raise errors. Stroke settings affect subsequent spans and are
 preserved even when stroke is disabled. Text bounds include stroke padding.
@@ -203,6 +292,175 @@ The complete scene is `examples/shader-text.lisp`.
 
 ## Embedding
 
+### Async functions and promises
+
+`(async (fn (parameters) ...body))` creates a function that returns a promise.
+`(await value)` is allowed at the top level and in an async body. It waits for a promise, or passes
+through an ordinary value. Functions use explicit `return`; otherwise they
+resolve to `nil`. Nested regular `fn` bodies and text builders stay synchronous.
+Shaders do not support promises, async, or await.
+
+Programs containing top-level `await` have `asynchronous: true`, and `run()`
+returns a promise for their result. Other programs execute synchronously.
+Scene activation (`activate` or `setScene`) also returns a promise when its
+initialization uses top-level `await`. The current scene keeps running until
+initialization succeeds; failures leave it active, and a newer activation
+supersedes an older pending activation. Pending initialization code continues
+executing, but its superseded scene is never installed.
+
+```lisp
+(let calculate (async (fn (x:num)
+  (let value (await (async x)))
+  (return (+ value 1)))))
+(let pending (calculate 4))
+```
+
+`async` with any other input is a dispatch/chain expression. It defers its initial expression, turns its
+result into a promise, and supports any number of `then`, `catch`, and `finally`
+stages in source order:
+
+The single literal `(fn ...)` case creates an async function; it does not
+dispatch or call that function. A function held in a variable is an ordinary
+dispatch value: `(async callback)` resolves to the function without invoking it.
+Use `(async (callback arguments))` to dispatch a call. `(await value)` waits for
+a result and never implicitly invokes function values. The former `promise`
+chain form is removed; the `promise` type and explicit helpers remain available.
+
+```lisp
+(async (calculate 4)
+  then (value) { (return (* value 2)) }
+  then (value) { (print value) (return value) }
+  catch (error) { (print error.message) (return 0) }
+  finally { (print "finished") })
+```
+
+`then` and `catch` accept a parameter list with zero or one parameter, and one
+statement or brace block as the body. `finally` accepts a statement or block
+without parameters. All handlers can use `await`. Returned promises are adopted
+before the next stage; thrown errors reject the chain. A normally completing
+`catch` recovers and allows later `then` stages to run. `finally` preserves the
+previous result or rejection unless cleanup throws or rejects. Catch arguments
+are dictionaries containing `name` and `message`. `(throw error)` rethrows a
+caught error; `(throw "message")` raises an error. The chain returns a promise.
+
+`async?` checks whether a value is a promise; an async function itself is not a
+promise until called. `async-all` and `async-race` accept a list of promises
+and/or values. `async-all` resolves to a result list in input order and rejects
+if any item rejects. `async-race` adopts the first fulfillment or rejection;
+it does not wait for the first successful result. Neither cancels remaining
+operations. An empty `async-all` resolves to an empty list, while an empty
+`async-race` remains pending.
+
+```lisp
+(let pending (async-all (list (import "./a.lisp") (import "./b.lisp"))))
+(print (async? pending)) ; true
+(let modules (await pending))
+```
+
+Use `(async value)` to produce a promise and `(async (throw "message"))` to
+reject one. Evaluation of the initial expression is deferred. Use the
+`then`, `catch`, and `finally` stages of `async` for chaining; the former
+`promise-*` helper bindings have been removed. Promises can be stored in
+dictionaries and lists or asserted with the `promise` type.
+
+Async scene callbacks use an explicit async function body:
+
+`on` accepts an explicit `fn`, an `async`-wrapped `fn`, or a function variable/
+dictionary field. For example, `(on keydown (fn (event) ...body))` or
+`(on keydown handler)`. The original `(on keydown (event) ...body)` shorthand
+also works. Function bindings are captured when the scene is initialized;
+reassigning the variable later does not replace the registered callback.
+The same parameter limits and synchronous update/render restriction apply to
+function variables and inline declarations.
+
+```lisp
+(on attach (async (fn ()
+  (set value (await (calculate 4))))))
+(on keydown (async (fn (event)
+  (set value (await (calculate value))))))
+```
+
+Async `attach` delays the scene loop until it resolves. Async input callbacks
+do not block animation; their rejected results are reported through `onError`
+and stop the current scene. Async resize/detach callbacks are also supported;
+resize does not delay rendering, and detach cleanup does not delay replacement.
+`update` and `render` declarations remain synchronous because render contexts
+are valid only during their frame. Return a promise from a callback if the
+runtime should observe its rejection, or handle it explicitly with `catch`.
+Scene replacement ignores stale attach completions and callback failures, but
+does not cancel arbitrary async work or its side effects on shared host objects.
+
+### Outer and inner canvases
+
+Create a runtime with optional inner dimensions and a scale increment:
+
+```javascript
+const runtime = new Aioli({
+  innerCanvas: { width: 320, height: 180, scaleStep: 1 }
+});
+await runtime.attach(outerCanvas);
+runtime.configureInnerCanvas({ width: 640, height: 360, scaleStep: 0.5 });
+```
+
+The runtime owns sizing of both canvases. At attachment and when the outer
+canvas is resized, it reads `getBoundingClientRect()` and sets the outer bitmap
+to the rounded rectangle dimensions (minimum one pixel). A runtime-owned
+`ResizeObserver` detects layout changes; frame preparation also checks bounds.
+`width` and `height` default independently to that measured size. Set either
+to `null` to resume following that outer dimension.
+The inner image is centered and scaled uniformly to fit. A positive `scaleStep`
+snaps the fit scale down to a multiple of that increment: 1 gives integer scales,
+0.5 gives half-step scales. When no increment fits, the minimum increment is kept
+and the image is cropped symmetrically. Zero or `null` disables scale snapping.
+The outer canvas paints black borders and uses nearest-neighbor drawing,
+with smoothing and filters disabled. Control the displayed size through layout
+or CSS; the host does not need to maintain bitmap attributes or resize listeners.
+Explicit inner dimensions still control the logical rendering resolution.
+
+Regular Lisp can change configuration from anywhere; no dedicated configuration
+callback is required. `configure` accepts a dictionary or key/value pairs;
+keys in the pair form can be symbols or strings. `(configure)` leaves the
+configuration unchanged and returns the requested settings:
+
+```lisp
+(configure w 320 h 180 scale-step 1 ups 120)
+(configure (dict "w" 320 "h" 180 "scale-step" 1 "ups" 120)) ; equivalent dictionary form
+(configure (dict "w" nil)) ; width follows the outer canvas again
+(let view (canvas))
+```
+
+`ups` sets updates per second (default 60) and must be a positive finite number.
+It can also be passed as `new Aioli({ ups: 120 })`. Rendering always follows
+the browser’s animation frames. Update time accumulates, including unfinished
+catch-up work; changing `ups` preserves this backlog and takes effect on the
+next frame. `(configure)` includes the requested `ups`.
+
+Configuration changes apply at the next frame boundary, before updates/rendering
+or a standalone `clear`. A change during a shader/render callback leaves that
+callback's dimensions unchanged. `(canvas)` returns the applied canvas size:
+`w`, `h`, and `wh`. Lisp operates in canvas coordinates. Presentation layout and
+coordinate conversion are managed by the runtime; JavaScript can use
+`runtime.display.layout()`, `runtime.display.toInner(x, y)`, and
+`runtime.display.toOuter(x, y)` for embedding and overlays.
+
+```lisp
+(on resize (event)
+  (print event.wh event.old-wh))
+```
+
+`resize` fires after an applied inner width or height change and before the
+next update/render callback. Its dictionary contains `w`, `h`, `wh`, `old-w`,
+`old-h`, and `old-wh`. It covers configured size changes and outer resizes
+that affect an automatic inner dimension. Initial attachment, scale changes,
+and outer resizes with fixed inner dimensions do not fire it. A inner
+resize resets `before` to opaque black and reallocates render textures; changes
+to presentation scale alone preserve the inner image and feedback textures.
+
+All input listeners stay attached to the outer canvas. Pointer `x`, `y`, `xy`,
+and `uv` use inner coordinates. Events in letterbox areas still fire, with
+negative/out-of-range coordinates and `inside: false`. Pointer queries reproject their last position
+using the current applied layout, even if no new movement has occurred.
+
 Scenes support keyboard, pointer (mouse, touch, pen), wheel, and gamepad input.
 Input callbacks use the same `(on name (event) ...)` syntax; the optional event
 parameter is a dictionary. State is updated before the callback runs. Queries
@@ -223,7 +481,7 @@ return independent snapshots, so changing a returned value does not change input
 | Callbacks | Event fields |
 | --- | --- |
 | `keydown`, `keyup` | `code` (physical key, e.g. `KeyW`), `key`, `repeat`, `alt`, `ctrl`, `shift`, `meta` |
-| `pointerdown`, `pointerup`, `pointermove`, `pointercancel`, `pointerenter`, `pointerleave` | `id`, `type` (`mouse`/`touch`/`pen`), `primary`, `x`, `y`, `xy`, `uv`, `button`, `buttons`, `pressure`, modifier booleans |
+| `pointerdown`, `pointerup`, `pointermove`, `pointercancel`, `pointerenter`, `pointerleave` | `id`, `type` (`mouse`/`touch`/`pen`), `primary`, inner `x`, `y`, `xy`, `uv`, `inside`, `button`, `buttons`, `pressure`, modifier booleans |
 | `wheel` | `dx`, `dy`, `dz`, `mode` (browser delta units), modifier booleans |
 | `joyconnected`, `joydisconnected` | Gamepad snapshot: `index`, `id`, `mapping`, `connected`, `timestamp`, `axes`, `buttons` |
 | `joydown`, `joyup` | `index`, `button`, `value`, `pressed` |
@@ -250,7 +508,13 @@ tests button 0 on gamepad 2. Both functions return booleans like `key?`.
 
 `(pointer)` returns the primary pointer, `(pointer id)` selects an id, and
 `(pointers)` lists tracked pointers. Missing pointers return `nil`. Positions use
-canvas backing pixels, accounting for CSS scaling; `uv` is `xy / canvas dimensions`.
+inner canvas pixels, accounting for CSS scaling and presentation offset/scale;
+`uv` is `xy / inner dimensions`.
+
+In shaders, `(sample image)` defaults to the image's magic `uv` (`xy / image.wh`),
+for both textures and hoisted text. `(sample image coordinates)` supplies explicit
+`vec2f` coordinates. This draws an image at its natural pixel size by default;
+use `(sample image uv)` to stretch it across the inner canvas.
 `buttons` is the browser button bitmask. Pointer down captures the pointer so
 drags continue outside the canvas. Finished touches, canceled pointers, and
 uncaptured pointers leaving the canvas are removed; mouse hover state remains
@@ -297,11 +561,75 @@ Synchronous compilation/execution and loading errors throw to the caller.
 Call `runtime.destroy()` to release GPU resources and canvas ownership.
 Only one runtime may own a canvas at a time.
 
+Loops are statement forms in regular code and shaders:
+
+`<`, `>`, `<=`, and `>=` accept exactly two numeric scalars and return a boolean,
+in regular code and shaders. Shader operands must share a scalar type (`f32`,
+`i32`, or `u32`); convert explicitly when needed. For example,
+`(while (< i 10) (set i (+ i 1)))`. Vectors, matrices, and nonnumeric values
+are rejected. Regular-code NaN comparisons return false.
+
+Math functions work in regular code and shaders: `min` and `max` take two
+operands, `clamp` takes `(value minimum maximum)`, and `sin`, `cos`, `tan`,
+`asin`, `acos`, `atan`, and `sqrt` take one operand. Trig angles use radians.
+They accept numeric scalars or operate component-wise on matching vectors;
+`min`, `max`, and `clamp` broadcast scalars to a vector's dimension. Trig and
+square root require float vectors in either compiler, and float scalars in shaders.
+Shader operands must share a scalar family. `clamp` requires minimum <= maximum.
+
+```lisp
+(let wave (sin t))
+(let bounded (clamp (vec3 -1 0.5 2) 0 1)) ; vec3 0 0.5 1
+```
+
+```lisp
+(while condition
+  ...body)
+(until condition
+  ...body)
+(for i 1..10
+  (print i)) ; regular code: 1 through 9
+(for i 10..1
+  (print i)) ; 10 through 2
+(for i count
+  (print i)) ; 0 through count - 1
+(for item collection
+  ...body)
+```
+
+`while` re-evaluates its condition before each iteration using ordinary condition
+truthiness. `until` runs while its condition is false, using the same truthiness
+rules. `for` with a range evaluates its bounds once, from left to right, excludes the end,
+and steps by 1 when ascending or -1 when descending. Equal endpoints run zero
+iterations. Counts must be nonnegative; endpoints must be finite safe integers
+in regular code. Ranges are syntax, not values, and only work as `for` inputs.
+Endpoints can be variables, field accesses, or expressions, for example
+`(for i (+ start 1)..(- end 1) ...body)`. Keep `..` adjacent to the left endpoint.
+
+`for` evaluates its collection once and binds each element in order. It accepts
+lists, arrays, and `many` in regular code; shaders accept arrays and `many`,
+including storage inputs. The initial elements are selected before iterating;
+adding or removing items does not extend the loop. Regular object elements retain
+their usual reference semantics. Shader collection iteration expands to indexed
+WGSL loops. Each iteration has a fresh scope; loop bindings are local to the body.
+Assigning an `for` range binding does not change its private loop counter.
+
+`(break)` exits the innermost loop and `(continue)` starts its next iteration.
+Both require statement position within a loop in the same function; nested
+functions and text builders cannot control an enclosing loop. Bodies may use
+brace blocks and ordinary nested loops. Returns inside loops return from the
+containing function; shader return analysis still requires an explicit return
+after a potentially empty loop.
+
+Shader `for` range and count bindings are f32 values. Bounds must be integers within Â±16777216
+so unit steps remain exact. Invalid literal bounds fail compilation; invalid
+dynamic bounds skip the loop. Neither compiler imposes an iteration limit.
+
 | Field | Update context | Render context |
 |---|---|---|
 | `t` | Accumulated simulation time at the end of this fixed step | Elapsed frame time since scene activation |
-| `dt` | Fixed `1 / updateHz` seconds | Actual elapsed seconds since the previous frame |
-| `w`, `h` | Current canvas dimensions in pixels | Dimensions of this render frame |
+| `dt` | Fixed `1 / ups` seconds | Actual elapsed seconds since the previous frame |
+| `w`, `h` | Current inner canvas dimensions in pixels | Inner dimensions of this render frame |
 | `before` | Absent (`nil` on access) | Latest shader output in this callback; last completed frame before the first draw, or opaque black initially/after resize |
 
 The first render has t/dt = 0 and no update. A bounded catch-up can leave simulation
@@ -311,7 +639,7 @@ new snapshot. Mutating timing/dimension fields does not change the scheduler,
 canvas, or numeric shader builtins. Copies, update contexts, and saved render contexts cannot
 authorize shader calls in another frame.
 Elapsed frame time accumulates, and every update receives
-exactly `1 / updateHz` seconds. Fractional time carries into subsequent frames.
+exactly `1 / ups` seconds. Fractional time carries into subsequent frames.
 `maxUpdatesPerFrame` defaults to 8 to bound catch-up work; excess accumulated time
 is retained rather than discarded, so a long pause can produce a backlog.
 
@@ -325,6 +653,89 @@ use latest-request-wins activation.
 `runtime.run(source)` evaluates a standalone snippet without changing the scene.
 `runtime.compileScene(source)` returns an inspectable compiled scene;
 `runtime.activate(program)` evaluates and activates it with fresh scene locals.
+
+### Imports and scene paths
+
+`import` is a runtime function returning a promise for a module namespace.
+Use `await` at the top level or inside an async function; the path can be
+computed dynamically. No `export` or `scene` declaration is required.
+
+```lisp
+; lib/math.lisp
+(let multiplier 2)
+(let multiply (fn (value)
+  (return (* value multiplier))))
+```
+
+```lisp
+(let math (await (import "./lib/math.lisp")))
+(print (math.multiply 3)) ; 6
+(set math.multiplier 4)
+(print (math.multiply 3)) ; 12
+(set math.multiply (fn (value) (return (+ value 1))))
+```
+
+The namespace is a dictionary exposing every top-level `let` and `struct`
+binding, plus declared callbacks. Its members are writable, and assignments
+update the actual bindings used by functions inside the module. New dictionary
+members can also be added. Existing lexical scopes still apply: function
+parameters and nested block locals belong to those scopes. Host builtins are
+available to module code but are not copied into its namespace. If a callback
+and an explicit top-level binding share a name, the explicit binding occupies
+that namespace member. Importing callbacks does not activate a scene.
+
+Within a runtime, imports of the same resolved URL share one initialization,
+namespace, and state, including concurrent imports. Module initialization can
+use top-level `await`. Separate runtimes have separate module caches and state;
+the same mutable host value explicitly supplied to both runtimes through
+`bindings` remains shared. A saved function value continues to reference that
+function after its namespace member is replaced. Local duplicate declarations
+remain errors; separate namespaces can contain the same member names without
+conflicting. An import used as a standalone statement merges its members into
+the current lexical scope:
+
+```lisp
+(await (import "./examples/library.lisp"))
+(test)
+```
+
+When the import is used as a value, such as in `(let library (await (import
+"./examples/library.lisp")))`, it stays namespaced. Merged names remain live:
+`(set test replacement)` patches the original module binding. A module can
+also expose bindings from its own standalone imports. Reimporting the same
+namespace is harmless; collisions with local declarations, builtins, reserved
+forms, or a different imported namespace reject the merge before any names are
+added. Use a namespaced import to resolve a collision. Nested imports belong to
+their block/function scope. `await` is still required to use imported names in
+subsequent statements; an unawaited standalone import merges only when its
+promise resolves. Unknown merged names report runtime Lisp traces.
+
+```lisp
+(await (set-scene "./scenes/menu.lisp"))
+```
+
+`set-scene` loads a script as a scene, waits for its initialization, and installs
+its callbacks. All callbacks are optional; a script with none simply runs its
+initialization and stays idle. Each activation gets fresh scene locals, while
+imported modules stay shared. The existing scene keeps running during loading;
+failed loads leave it active, and newer activation requests supersede older
+ones. Superseded initialization is not cancelled and its effects are not rolled
+back. JavaScript `runtime.load(path)` performs the same path-based loading;
+`runtime.setScene(source)` continues to accept source text.
+
+Paths follow URL resolution: relative paths resolve against the importing
+script's URL, absolute URLs and root-relative paths are supported, and queries
+identify distinct modules. Fragments are ignored. Paths are exact: there is no
+extension guessing, directory search, or package-name resolver. The default
+base URL is the document's base URI. Set `new Aioli({ baseURL: ... })` or pass
+`{ sourceURL: ... }` when compiling/running source text to establish its origin.
+Imports inside a function retain the URL of the script that defined it.
+
+Fetch, compile, and initialization failures reject the import promise; failed
+modules can be retried. Circular initialization dependencies reject with their
+URL chain. Destroying a runtime discards its module cache and prevents pending
+loads from being initialized or installed. The runtime's optional `fetch`
+constructor setting can supply a custom fetch-compatible source loader.
 Callbacks are synchronous. Run checks with
 `node --test tests/compiler.test.mjs tests/scenes.test.mjs tests/shader.test.mjs tests/types.test.mjs tests/data.test.mjs tests/graphics.test.mjs tests/swizzle.test.mjs tests/access.test.mjs tests/logical.test.mjs tests/nil.test.mjs tests/truthiness.test.mjs tests/selectors.test.mjs tests/conversions.test.mjs tests/structs.test.mjs tests/bool-structs.test.mjs tests/numeric-types.test.mjs tests/arrays.test.mjs tests/many.test.mjs tests/cap.test.mjs tests/matrix-access.test.mjs tests/matrix-names.test.mjs tests/type-aliases.test.mjs tests/constructors.test.mjs tests/transforms.test.mjs tests/shader-conditionals.test.mjs`.
 
@@ -402,6 +813,10 @@ Textures expose read-only `w` and `h` pixel dimensions and `wh` as a `vec2f`,
 in regular code and shaders: `image.w`, `image.h`, `image.wh`, or
 `(get image "wh")`. This includes shader outputs, `context.before`, and text
 textures such as `label.texture.wh`. Each regular-code `wh` read returns a fresh vector.
+Inside shaders, textures also expose `image.uv`, equivalent to `xy / image.wh`.
+It uses the current pixel coordinates even inside helpers or when a local `uv`
+variable exists. `(get image "uv")` also works. For example,
+`(blend (sample image image.uv))` draws a passed text texture at its natural pixel size.
 It is a borrowed handle belonging to this runtime's current render frame; saving
 it and using it in a later frame is rejected. Earlier passes in the current
 callback remain available through the textures those shader calls return.
@@ -891,16 +1306,23 @@ names. Unknown or repeated parameters are rejected. Regular constructors require
 finite f32 components and reject overflow. Each result owns fresh mutable matrix
 storage; constructor inputs are preserved.
 
-`(affine matrix vector)` transforms a point with an implicit final component of
-one and discards the final component of the result, without perspective division.
+`(transform matrix vector)` transforms a point with an implicit final component
+of one, divides the remaining coordinates by the final homogeneous coordinate,
+then discards that final coordinate.
 It accepts `mat3x3f` with `vec2f`, or `mat4x4f` with `vec3f`, in regular code
-and shaders. For example, `(affine (2d translate (vec2 10 20)) (vec2 1 2))`
+and shaders. For example, `(transform (2d translate (vec2 10 20)) (vec2 1 2))`
 returns `(vec2 11 22)`. Use `*` with an explicit homogeneous vector for directions.
 
-`(project matrix vector)` accepts the same operands, but divides the remaining
-coordinates by the final homogeneous coordinate. For a final coordinate of zero,
+For a final coordinate of zero,
 regular code follows floating-point division semantics (infinity or NaN).
 Use `*` with an explicit homogeneous vector to retain the full result.
+
+`(inverse matrix)` returns a fresh inverse of a `mat2x2f`, `mat3x3f`, or `mat4x4f`
+in regular code and shaders. Undo a point transform with
+`(transform (inverse matrix) point)`. Cache the inverse when transforming many
+points with the same matrix. Regular code rejects nonfinite components, singular
+matrices, and inverse results outside finite f32 range. Shader singular matrices
+return a zero matrix; use invertible matrices for meaningful results.
 
 Use dot notation for vector components and swizzles in regular code and shaders:
 
@@ -1015,7 +1437,7 @@ explicit conversions between floating, signed, and unsigned values.
 Regular scalar arithmetic uses JavaScript number semantics; shader arithmetic uses
 its declared WGSL scalar type.
 
-Vectors use `vec2f`–`vec4f`, `vec2i`–`vec4i`, and `vec2u`–`vec4u`.
+Vectors use `vec2f`â€“`vec4f`, `vec2i`â€“`vec4i`, and `vec2u`â€“`vec4u`.
 Their tags distinguish component type and dimension. Constructors accept numeric
 components, scalar splats, vector composition, same-dimension vector conversions,
 and no arguments for zero initialization. A single scalar splats into every

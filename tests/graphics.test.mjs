@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createGraphics } from '../engine/graphics.js';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
-import { list, dict, get, copy, put, deserializeData, serializeData } from '../engine/data.js';
-import { vectorBindings, matrixBindings } from '../engine/types.js';
-import { createZeroArray, createMany } from '../engine/structures.js';
+import { createGraphics } from '../engine/browser/graphics.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
+import { list, dict, get, copy, put, deserializeData, serializeData } from '../engine/language/data.js';
+import { vectorBindings, matrixBindings } from '../engine/language/types.js';
+import { createZeroArray, createMany } from '../engine/language/structures.js';
 
 test('graphics snapshots mutable numeric data extracted from collections and rejects lists', async t => {
   const writes = [], groups = [];

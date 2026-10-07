@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { arithmetic } from '../engine/arithmetic.js';
-import { vectorBindings } from '../engine/types.js';
-import { vectorTypes, vectorInfo } from '../engine/numeric-types.js';
+import { arithmetic } from '../engine/language/arithmetic.js';
+import { vectorBindings } from '../engine/language/types.js';
+import { vectorTypes, vectorInfo } from '../engine/language/numeric-types.js';
 
 const operators = ['+', '-', '*', '/', '%'];
 function reference(operator, x, y, scalar) {

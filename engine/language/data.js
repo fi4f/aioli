@@ -6,7 +6,10 @@ export function registerData(value, kind) { kinds.set(value, kind); return value
 const opaque = new WeakSet();
 const textureSizes = new WeakMap();
 export function registerTextureSize(handle, width, height) { textureSizes.set(handle, [width, height]); }
-export const normalizeNil = value => value === undefined ? null : value;
+export const normalizeNil = value => {
+  if (value instanceof Promise) opaque.add(value);
+  return value === undefined ? null : value;
+};
 export function bool(value) {
   if (arguments.length !== 1) throw new TypeError('bool expects exactly one value');
   if (value === null || value === undefined || value === false || value === '' || value === 0 || Number.isNaN(value)) return false;

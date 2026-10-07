@@ -1,31 +1,36 @@
-import { locate, runtimeTrace } from './trace.js';
+import { locate, runtimeTrace } from '../language/trace.js';
 import { compileShader } from './shader.js';
-import { assertType, parseParameters, typeNames, access, setAccess } from './types.js';
-import { createStruct, createArray, createMany, arrayType, manyType } from './structures.js';
-import { normalizeNil, bool } from './data.js';
-import { scalarTypes, vectorTypes, canonicalType } from './numeric-types.js';
-import { isTransformConstructor } from './transforms.js';
-import { inputCallbacks } from './input.js';
+import { assertType, parseParameters, typeNames, access, setAccess } from '../language/types.js';
+import { createStruct, createArray, createMany, arrayType, manyType } from '../language/structures.js';
+import { normalizeNil, bool } from '../language/data.js';
+import { scalarTypes, vectorTypes, canonicalType } from '../language/numeric-types.js';
+import { isTransformConstructor } from '../language/transforms.js';
+import { isConfigureBinding } from '../runtime/contracts.js';
+import { inputCallbacks } from '../runtime/contracts.js';
+import { loopRuntime } from '../language/loops.js';
+import { promiseRuntime } from '../language/promises.js';
+import { moduleNamespace, importRuntime } from '../runtime/modules.js';
 import { nameComment } from './codegen.js';
-import { textOperations, textNamedOptions, createTextBuilder, textOperation, finishTextBuilder, textDescription, bindTextShader } from './text.js';
+import { scanToken } from './tokenize.js';
+import { textOperations, textNamedOptions, validateTextArity, createTextBuilder, textOperation, finishTextBuilder, textDescription, bindTextShader } from '../language/text.js';
 
 export function read(source) {
   let i = 0;
   const fail = message => { throw locate(new SyntaxError(message), source, Math.min(i, source.length)); };
   const skip = () => {
     while (i < source.length) {
-      if (/\s/.test(source[i])) i++;
-      else if (source[i] === ';') {
-        while (i < source.length && source[i] !== '\n') i++;
-      } else break;
+      const token = scanToken(source, i);
+      if (token.kind === 'whitespace' || token.kind === 'comment') i = token.end;
+      else break;
     }
   };
   const expression = () => {
     skip();
+    if (i >= source.length) fail('Expected an expression');
     const start = i;
     try {
       let node = { ...readExpression(), start, end: i };
-      while (source[i] === '.') {
+      while (source[i] === '.' && source[i + 1] !== '.') {
         const fieldStart = i++;
         let key, quoted = false;
         if (source[i] === '"') {
@@ -39,12 +44,24 @@ export function read(source) {
         }
         node = { kind: 'access', target: node, key, quoted, start, end: i, fieldStart };
       }
+      if (source.slice(i, i + 2) === '..') {
+        i += 2;
+        const end = expression();
+        node = { kind: 'range', from: node, to: end, start, end: i };
+      }
       return node;
     } catch (error) { throw locate(error, source, start, i); }
   };
   const readExpression = () => {
     const start = i, character = source[i++];
     if (character === ':') return { kind: 'colon' };
+    if (character === '<' || character === '>') {
+      const end = source[i] === '=' ? i + 1 : i;
+      if (end === source.length || /[\s(){};":]/.test(source[end])) {
+        i = end;
+        return { kind: 'symbol', name: source.slice(start, i) };
+      }
+    }
     if (character === 'f' && source[i] === '"') {
       i++;
       const parts = [];
@@ -92,26 +109,28 @@ export function read(source) {
     }
     if (character === ')' || character === '}') fail(`Unexpected closing ${character}`);
     if (character === '"') {
-      while (i < source.length && source[i] !== '"') {
-        if (source[i] === '\\') i++;
-        i++;
-      }
-      if (i >= source.length) fail('Unterminated string');
-      i++;
+      const token = scanToken(source, start);
+      i = token.end;
+      if (!token.closed) fail('Unterminated string');
       try {
         return { kind: 'literal', value: JSON.parse(source.slice(start, i)) };
       } catch { fail('Invalid string'); }
     }
-    const numeric = source.slice(start).match(/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?(?=$|[\s(){};":.])/);
-    if (numeric) {
-      i = start + numeric[0].length;
-      const value = Number(numeric[0]);
+    const lexical = scanToken(source, start);
+    if (lexical.kind === 'number') {
+      i = lexical.end;
+      const value = Number(lexical.text);
       if (!Number.isFinite(value)) fail('Number must be finite');
       return { kind: 'literal', value };
     }
     if (character === '.') fail('Expected an expression before dot access');
+    if (lexical.kind === 'word') {
+      i = lexical.end;
+      if (lexical.malformed) fail('Malformed array type annotation');
+      if (lexical.angleDepth !== 0) fail('Missing closing angle bracket');
+    }
     let depth = 0;
-    while (i < source.length) {
+    while (lexical.kind !== 'word' && i < source.length) {
       if (source[i] === '<') depth++;
       else if (source[i] === '>') depth--;
       if (depth < 0) fail('Unexpected closing angle bracket');
@@ -140,14 +159,26 @@ export function read(source) {
 }
 
 // Bindings are runtime values/functions; forms are trusted compile-time emitters.
-export function compile(source, bindings = {}, forms = {}, { trace = true, scene = false, textRenderer = textDescription } = {}) {
+function standaloneImport(node) {
+  if (node?.kind !== 'list') return false;
+  if (node.items[0]?.name === 'import') return 'promise';
+  if (node.items[0]?.name === 'await' && node.items.length === 2 &&
+      node.items[1]?.kind === 'list' && node.items[1].items[0]?.name === 'import') return 'await';
+  return false;
+}
+
+export function compile(source, bindings = {}, forms = {}, { trace = true, scene = false, module = false, sourceURL, textRenderer = textDescription } = {}) {
   let nextLocal = 0;
   let functionDepth = 0;
+  let asyncFunction = false;
+  let loopDepth = 0;
   const textScopes = [];
   let nextText = 0;
   const hosts = new Map(Object.keys(bindings).map((name, index) =>
-    [name, { identifier: `$binding${index}`, mutable: false, namedArguments: isTransformConstructor(bindings[name]) }]));
+    [name, { identifier: `$binding${index}`, mutable: false, namedArguments: isTransformConstructor(bindings[name]), configurationArguments: isConfigureBinding(bindings[name]) }]));
   const scopes = [hosts];
+  const importScopes = new WeakMap();
+  let nextImportScope = 0;
   const names = new Map([...hosts].map(([name, variable]) => [variable.identifier, name]));
   const callbacks = new Set();
   const shaders = [];
@@ -160,6 +191,8 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
         return variable;
       }
     }
+    const imported = scopes.toReversed().map(scope => importScopes.get(scope)).filter(Boolean);
+    if (imported.length) return { identifier: `$imports.cell([${imported.join(', ')}], ${JSON.stringify(name)}).value`, mutable: true };
     throw new SyntaxError(`Unknown symbol: ${name}`);
   };
   const symbolName = node => {
@@ -178,11 +211,22 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
     return type;
   };
   const context = {
+    callbackValue(nameNode, value) {
+      if (!scene && !module) throw new SyntaxError('on requires scene or module compilation');
+      if (scopes.length !== 2 || functionDepth) throw new SyntaxError('on must be declared at scene top level');
+      const name = symbolName(nameNode);
+      if (!['attach', 'detach', 'update', 'render', 'resize', ...inputCallbacks].includes(name)) throw new SyntaxError(`Unknown callback: ${name}`);
+      if (callbacks.has(name)) throw new SyntaxError(`Duplicate callback: ${name}`);
+      callbacks.add(name);
+      return `$scene[${JSON.stringify(name)}] = $promises.callback(${emit(value)}, ${JSON.stringify(name)}, ${['attach', 'detach'].includes(name) ? 0 : 1}, ${!['update', 'render'].includes(name)});`;
+    },
     text(nodes) {
       const builder = `$text${nextText++}`;
+      const savedLoopDepth = loopDepth; loopDepth = 0;
+      const savedAsync = asyncFunction; asyncFunction = false;
       textScopes.push({ builder, functionDepth });
       try { return `(function() {\nconst ${builder} = $text.create();\n${sequence(nodes)}\nreturn $text.finish(${builder});\n})()`; }
-      finally { textScopes.pop(); }
+      finally { textScopes.pop(); loopDepth = savedLoopDepth; asyncFunction = savedAsync; }
     },
     array(args, kind = "array") {
       const [spec, ...values] = args;
@@ -205,8 +249,8 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
       const constructor = createStruct(name, fields), index = descriptors.length;
       descriptors.push(constructor);
       const variable = scopes.at(-1).get(name);
-      variable.definition = constructor; variable.mutable = false;
-      return `${nameComment(name)}\nconst ${variable.identifier} = $descriptors[${index}];`;
+      variable.definition = constructor; variable.mutable = module && scopes.length === 2;
+      return `${nameComment(name)}\n${variable.mutable ? 'let' : 'const'} ${variable.identifier} = $descriptors[${index}];`;
     },
     setAccess(node, replacement) { return `$setAccess(${emit(node.target)}, ${JSON.stringify(node.key)}, ${emit(replacement)}, ${node.quoted})`; },
     condition(node) { return `$bool(${emit(node)})`; },
@@ -247,13 +291,14 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
       const declarations = [...texts].sort((a, b) => a.start - b.start).map(text => `const ${text.identifier} = ${text.code};`).join('\n');
       return `(function() {\n${declarations}\nreturn $text.bind($shaders[${index}], [${texts.map(text => text.identifier).join(', ')}], ${descriptor.parameterCount});\n})()`;
     },
-    callback(nameNode, parameters, body) {
-      if (!scene) throw new SyntaxError('on requires scene compilation');
+    callback(nameNode, parameters, body, asynchronous = false) {
+      if (!scene && !module) throw new SyntaxError('on requires scene or module compilation');
       if (scopes.length !== 2 || functionDepth) throw new SyntaxError('on must be declared at scene top level');
       const name = symbolName(nameNode);
-      if (!['attach', 'detach', 'update', 'render', ...inputCallbacks].includes(name)) throw new SyntaxError(`Unknown callback: ${name}`);
+      if (asynchronous && ['update', 'render'].includes(name)) throw new SyntaxError('update and render callbacks must remain synchronous');
+      if (!['attach', 'detach', 'update', 'render', 'resize', ...inputCallbacks].includes(name)) throw new SyntaxError(`Unknown callback: ${name}`);
       if (callbacks.has(name)) throw new SyntaxError(`Duplicate callback: ${name}`);
-      const receivesTime = name === 'update' || name === 'render' || inputCallbacks.includes(name);
+      const receivesTime = name === 'update' || name === 'render' || name === 'resize' || inputCallbacks.includes(name);
       const parsed = parseParameters(parameters, { fail: (message, node) => {
         throw locate(new SyntaxError(message), source, node.start, node.end);
       } });
@@ -262,7 +307,7 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
         throw new SyntaxError(`${name} accepts ${receivesTime ? `at most one ${argument} parameter` : 'no parameters'}`);
       }
       callbacks.add(name);
-      return `$scene[${JSON.stringify(name)}] = ${context.function(parameters, body)};`;
+      return `$scene[${JSON.stringify(name)}] = ${context.function(parameters, body, asynchronous)};`;
     },
     declaration(node) {
       return scopes.at(-1).get(symbolName(node)).identifier;
@@ -270,12 +315,68 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
     declarationComment(node) { return nameComment(symbolName(node)); },
     assign(node) {
       const name = symbolName(node), variable = lookup(name);
-      if (variable.definition) throw new SyntaxError(`Cannot reassign struct: ${name}`);
+      if (variable.definition && !variable.mutable) throw new SyntaxError(`Cannot reassign struct: ${name}`);
       if (!variable.mutable) throw new SyntaxError(`Cannot assign host binding: ${name}`);
       return variable.identifier;
     },
     block(nodes) { return `{\n${sequence(nodes)}\n}`; },
-    function(parameters, body) {
+    loop(name, args) {
+      if (name === 'break' || name === 'continue') {
+        if (args.length || !loopDepth) throw new SyntaxError(`${name} requires a loop and no arguments`);
+        return { statement: `${name};` };
+      }
+      const conditional = name === 'while' || name === 'until';
+      const minimum = conditional ? 1 : 2;
+      if (args.length < minimum) throw new SyntaxError(`${name} requires ${conditional ? 'a condition' : 'a binding name and input'}`);
+      if (name === 'for') args = [args[1], args[0], ...args.slice(2)];
+      if (conditional) {
+        const condition = context.condition(args[0]);
+        loopDepth++;
+        try { return { statement: `while (${name === 'until' ? `!(${condition})` : condition}) ${context.block(args.slice(1))}` }; }
+        finally { loopDepth--; }
+      }
+      const binding = symbolName(args[1]);
+      if (Object.hasOwn(forms, binding) || textScopes.length && textOperations.has(binding)) throw new SyntaxError(`Invalid loop binding: ${binding}`);
+      const id = `$local${nextLocal++}`, scope = new Map([[binding, { identifier: id, mutable: true }]]);
+      names.set(id, binding);
+      const temp = `$loop${nextLocal++}`;
+      const checked = (code, at) => trace ? hasAwait(at) ? `(await $trace.asyncAt(${at.start}, ${at.end}, async () => (${code})))` : `$trace.at(${at.start}, ${at.end}, () => (${code}))` : code;
+      let prefix, header, assignment;
+      const range = args[0];
+      const input = range.kind === 'range' ? `$loops.range(${emit(range.from)}, ${emit(range.to)})` : `$loops.for(${emit(range)})`;
+      prefix = `const ${temp} = ${checked(input, range)};`;
+      header = `let ${temp}i = ${temp}.from; ${temp}.step > 0 ? ${temp}i < ${temp}.to : ${temp}i > ${temp}.to; ${temp}i += ${temp}.step`;
+      assignment = `let ${id} = ${temp}.range ? ${temp}i : $loops.get(${temp}.value, ${temp}i);`;
+      loopDepth++;
+      try { return { statement: `{\n${prefix}\nfor (${header}) {\n${assignment}\n${sequence(args.slice(2), false, scope)}\n}\n}` }; }
+      finally { loopDepth--; }
+    },
+    await(args) {
+      if (!asyncFunction) throw new SyntaxError('await requires top-level code, an async function or a promise handler');
+      if (args.length !== 1) throw new SyntaxError('await expects one value');
+      return `$nil((await ${emit(args[0])}))`;
+    },
+    chain(args) {
+      if (!args.length) throw new SyntaxError('async expects an initial expression');
+      const initial = args[0];
+      let code = `Promise.resolve().then(${context.function([], [{ kind: 'list', items: [{ kind: 'symbol', name: 'return', start: initial.start, end: initial.start }, initial], start: initial.start, end: initial.end }], true)})`;
+      for (let i = 1; i < args.length;) {
+        const marker = args[i++], name = marker?.name;
+        if (!['then', 'catch', 'finally'].includes(name)) throw new SyntaxError('Expected then, catch or finally in async chain');
+        let parameters = [];
+        if (name !== 'finally') {
+          const spec = args[i++];
+          if (spec?.kind !== 'list' || parseParameters(spec.items, { fail: message => { throw new SyntaxError(message); } }).length > 1) throw new SyntaxError(`${name} expects zero or one handler parameter`);
+          parameters = spec.items;
+        }
+        const body = args[i++];
+        if (!body) throw new SyntaxError(`${name} expects a handler body`);
+        const fn = context.function(parameters, body.kind === 'block' ? body.items : [body], true);
+        code += name === 'catch' ? `.catch(error => (${fn})($promises.error(error)))` : `.${name}(${fn})`;
+      }
+      return `$promises.mark(${code})`;
+    },
+    function(parameters, body, asynchronous = false) {
       const scope = new Map();
       const checks = [];
       const parsed = parseParameters(parameters, { fail: (message, node) => {
@@ -296,9 +397,12 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
       }
       const identifiers = [...scope].map(([name, variable]) => `${nameComment(name)} ${variable.identifier} = null`);
       functionDepth++;
+      const savedAsync = asyncFunction; asyncFunction = asynchronous;
+      const savedLoopDepth = loopDepth; loopDepth = 0;
       try {
-        return `(function(${identifiers.join(', ')}) {\n${checks.join('\n')}\n${sequence(body, false, scope)}\nreturn null;\n})`;
-      } finally { functionDepth--; }
+        const code = `(${asynchronous ? 'async ' : ''}function(${identifiers.join(', ')}) {\n${checks.join('\n')}\n${sequence(body, false, scope)}\nreturn null;\n})`;
+        return `$promises.define(${code}, ${parsed.length}, ${asynchronous})`;
+      } finally { functionDepth--; loopDepth = savedLoopDepth; asyncFunction = savedAsync; }
     },
     statement(node) {
       const result = emit(node, true);
@@ -309,11 +413,32 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
     try {
       const result = emitRaw(node, statement);
       return trace && typeof result === 'string'
-        ? `$trace.at(${node.start}, ${node.end}, () => (${result}))`
+        ? hasAwait(node) ? `(await $trace.asyncAt(${node.start}, ${node.end}, async () => (${result})))` : `$trace.at(${node.start}, ${node.end}, () => (${result}))`
         : result;
     } catch (error) { throw locate(error, source, node.start, node.end); }
   };
+  function hasAwait(node) {
+    if (node.kind === 'list') {
+      if (['fn', 'async', 'text', 'sh', 'on'].includes(node.items[0]?.name)) return false;
+      if (node.items[0]?.name === 'await') return true;
+      return node.items.some(hasAwait);
+    }
+    if (node.kind === 'block') return node.items.some(hasAwait);
+    if (node.kind === 'access') return hasAwait(node.target);
+    if (node.kind === 'range') return hasAwait(node.from) || hasAwait(node.to);
+    if (node.kind === 'template') return node.parts.some(part => part.kind === 'interpolation' && hasAwait(part.expression));
+    return false;
+  }
   const emitRaw = (node, statement = false) => {
+    const importing = statement && standaloneImport(node);
+    if (importing) {
+      const target = importScopes.get(scopes.at(-1));
+      const value = emit(node);
+      return importing === 'await'
+        ? `$imports.merge(${target}, ${value})`
+        : `$promises.mark(Promise.resolve(${value}).then(namespace => $imports.merge(${target}, namespace)))`;
+    }
+    if (node.kind === 'range') throw new SyntaxError('Ranges are only supported as for inputs');
     if (statement && textScopes.length && (node.kind === 'template' || node.kind === 'literal' && typeof node.value === 'string')) {
       return `$text.apply(${textScopes.at(-1).builder}, "span", ${emit(node)})`;
     }
@@ -343,7 +468,14 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
     if (!head) throw new SyntaxError('Empty list is not callable');
     if (head.kind === 'symbol' && textScopes.length) {
       if (head.name === 'return' && functionDepth === textScopes.at(-1).functionDepth) throw new SyntaxError('return cannot exit a text body; its result is the completed text');
-      if (textOperations.has(head.name)) return `$text.apply(${textScopes.at(-1).builder}, ${JSON.stringify(head.name)}${args.length ? ', ' + args.map(arg => arg.kind === 'symbol' && textNamedOptions[head.name]?.includes(arg.name) ? JSON.stringify(arg.name) : emit(arg)).join(', ') : ''})`;
+      if (textOperations.has(head.name)) {
+        validateTextArity(head.name, args.length);
+        if (args.every(arg => arg.kind === 'literal' ||
+          arg.kind === 'symbol' && textNamedOptions[head.name]?.includes(arg.name))) {
+          textOperation(createTextBuilder(), head.name, ...args.map(arg => arg.kind === 'literal' ? arg.value : arg.name));
+        }
+        return `$text.apply(${textScopes.at(-1).builder}, ${JSON.stringify(head.name)}${args.length ? ', ' + args.map(arg => arg.kind === 'symbol' && textNamedOptions[head.name]?.includes(arg.name) ? JSON.stringify(arg.name) : emit(arg)).join(', ') : ''})`;
+      }
     }
     if (node.items[1]?.kind === 'colon') {
       if (node.items.length !== 3) throw new SyntaxError('Type assertion expects (value : type)');
@@ -357,7 +489,7 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
       return result;
     }
     const callee = emit(head);
-    const constructor = head.kind === 'symbol' && (lookup(head.name).definition || lookup(head.name).namedArguments);
+    const constructor = head.kind === 'symbol' && (lookup(head.name).definition || lookup(head.name).namedArguments || args.length !== 1 && lookup(head.name).configurationArguments);
     const argumentsCode = args.map((arg, index) => constructor && index % 2 === 0 && arg.kind === 'symbol' ? JSON.stringify(arg.name) : emit(arg)).join(', ');
     return trace
       ? `$nil($trace.call(${node.start}, ${node.end}, ${callee}, [${argumentsCode}]))`
@@ -382,24 +514,43 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
           throw locate(error, source, node.start, node.end);
         }
       }
-      return nodes.map((node, index) => {
+      let prefix = '';
+      if (nodes.some(standaloneImport)) {
+        const identifier = `$importScope${nextImportScope++}`;
+        const parents = scopes.slice(0, -1).toReversed().map(scope => importScopes.get(scope)).filter(Boolean);
+        const reserved = [...new Set([...scopes.flatMap(scope => [...scope.keys()]), ...Object.keys(forms), ...(textScopes.length ? textOperations : [])])];
+        importScopes.set(scope, identifier);
+        prefix = `const ${identifier} = $imports.scope(${JSON.stringify(reserved)}, [${parents.join(', ')}]);\n`;
+      }
+      return prefix + nodes.map((node, index) => {
         const result = emit(node, true);
         if (typeof result !== 'string') return result.statement;
         return `${returnLast && index === nodes.length - 1 ? 'return ' : ''}${result};`;
       }).join('\n');
     } finally { scopes.pop(); }
   }
+  const nodes = read(source);
+  const asynchronous = nodes.some(hasAwait);
+  asyncFunction = asynchronous;
+  const Execute = asynchronous ? Object.getPrototypeOf(async function () {}).constructor : Function;
   const declarations = [...hosts].map(([name, variable]) =>
     `const ${variable.identifier} = $nil($bindings[${JSON.stringify(name)}]);`);
+  const moduleScope = new Map();
+  const body = sequence(nodes, !scene && !module, moduleScope);
+  const members = [...moduleScope].map(([name, variable]) =>
+    `[${JSON.stringify(name)}, () => ${variable.identifier}, value => { ${variable.identifier} = value; }]`).join(', ');
   const javascript = ['"use strict";', ...declarations,
-    ...(scene ? ['const $scene = {};'] : []),
-    sequence(read(source), !scene),
-    ...(scene ? ['return $scene;'] : ['return null;']),
+    ...(scene || module ? ['const $scene = {};'] : []),
+    body,
+    module ? `return $module([${members}], $scene, ${importScopes.get(moduleScope) ?? 'undefined'});` : scene ? 'return $scene;' : 'return null;',
   ].join('\n');
   const execute = trace
-    ? new Function('$bindings', '$shaders', '$assert', '$access', '$nil', '$bool', '$setAccess', '$descriptors', '$array', '$many', '$trace', '$text', javascript)
-    : new Function('$bindings', '$shaders', '$assert', '$access', '$nil', '$bool', '$setAccess', '$descriptors', '$array', '$many', '$text', javascript);
-  const tracer = trace ? runtimeTrace(source, names) : undefined;
+    ? new Execute('$bindings', '$shaders', '$assert', '$access', '$nil', '$bool', '$setAccess', '$descriptors', '$array', '$many', '$trace', '$text', '$loops', '$promises', '$module', '$imports', javascript)
+    : new Execute('$bindings', '$shaders', '$assert', '$access', '$nil', '$bool', '$setAccess', '$descriptors', '$array', '$many', '$text', '$loops', '$promises', '$module', '$imports', javascript);
+  const tracer = trace ? runtimeTrace(source, names, sourceURL) : undefined;
   const textRuntime = { create: createTextBuilder, apply: textOperation, finish: builder => textRenderer(finishTextBuilder(builder)), bind: bindTextShader };
-  return { javascript, scene, shaders, run: (shaderValues = []) => execute(bindings, shaderValues, assertType, access, normalizeNil, bool, setAccess, descriptors, createArray, createMany, ...(trace ? [tracer] : []), textRuntime) };
+  return { javascript, scene, module, asynchronous, shaders, run: (shaderValues = []) => {
+    const result = execute(bindings, shaderValues, assertType, access, normalizeNil, bool, setAccess, descriptors, createArray, createMany, ...(trace ? [tracer] : []), textRuntime, loopRuntime, promiseRuntime, moduleNamespace, importRuntime);
+    return asynchronous ? promiseRuntime.mark(result) : result;
+  } };
 }

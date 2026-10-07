@@ -1,15 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { arithmetic } from '../engine/arithmetic.js';
-import { ScenePlayer } from '../engine/scenes.js';
-import { dict, get } from '../engine/data.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { arithmetic } from '../engine/language/arithmetic.js';
+import { Stage } from '../engine/runtime/stage.js';
+import { dict, get } from '../engine/language/data.js';
 
 function harness(options = {}) {
   let nextId = 0;
   const frames = new Map(), errors = [];
-  const player = new ScenePlayer({
+  const stage = new Stage({
     ...options, onError: error => errors.push(error),
     requestFrame: fn => { const id = ++nextId; frames.set(id, fn); return id; },
     cancelFrame: id => frames.delete(id),
@@ -18,14 +18,14 @@ function harness(options = {}) {
     const [id, fn] = frames.entries().next().value;
     frames.delete(id); fn(time);
   };
-  return { player, tick, frames, errors };
+  return { stage, tick, frames, errors };
 }
 
 test('update and render receive fresh dictionaries with independent clocks and current dimensions', () => {
   const dimensions = { w: 320, h: 200 };
-  const { player, tick } = harness({ updateHz: 10, maxUpdatesPerFrame: 2, dimensions: () => dimensions });
+  const { stage, tick } = harness({ updateHz: 10, maxUpdatesPerFrame: 2, dimensions: () => dimensions });
   const updated = [], rendered = [];
-  player.replace({ update: context => updated.push(context), render: context => rendered.push(context) });
+  stage.replace({ update: context => updated.push(context), render: context => rendered.push(context) });
   tick(0); tick(350);
   assert.equal(get(rendered[0], 't'), 0);
   assert.equal(get(rendered[0], 'dt'), 0);
@@ -44,7 +44,7 @@ test('update and render receive fresh dictionaries with independent clocks and c
   assert.equal(get(updated[0], 'w'), 320);
   assert.notEqual(updated[0], updated[1]);
   assert.notEqual(rendered[0], rendered[1]);
-  player.replace({ update: context => updated.push(context), render: context => rendered.push(context) });
+  stage.replace({ update: context => updated.push(context), render: context => rendered.push(context) });
   tick(9999); tick(10099);
   assert.equal(get(updated.at(-1), 't'), 0.1);
   assert.equal(get(rendered.at(-2), 't'), 0);
@@ -76,9 +76,9 @@ test('invalid callback declarations fail compilation', () => {
 });
 
 test('fixed steps accumulate across frames; rendering follows updates', () => {
-  const { player, tick } = harness({ updateHz: 120 });
+  const { stage, tick } = harness({ updateHz: 120 });
   const events = [], intervals = [];
-  player.replace({ attach: () => events.push('attach'),
+  stage.replace({ attach: () => events.push('attach'),
     update: context => { events.push('update'); intervals.push(get(context, 'dt')); }, render: () => events.push('render') });
   tick(0); tick(4); tick(20); tick(25);
   assert.deepEqual(events, ['attach', 'render', 'render', 'update', 'update', 'render', 'update', 'render']);
@@ -86,24 +86,24 @@ test('fixed steps accumulate across frames; rendering follows updates', () => {
 });
 
 test('render receives variable frame dt independently of fixed updates', () => {
-  const { player, tick } = harness({ updateHz: 120, maxUpdatesPerFrame: 1 });
+  const { stage, tick } = harness({ updateHz: 120, maxUpdatesPerFrame: 1 });
   const rendered = [], updated = [];
   const scene = compile('(on update (context) (update-time context.dt)) (on render (context) (render-time context.dt))', {
     'update-time': dt => updated.push(dt), 'render-time': dt => rendered.push(dt),
   }, forms, { scene: true }).run();
-  player.replace(scene);
+  stage.replace(scene);
   tick(100); tick(104); tick(124); tick(124);
   assert.deepEqual(rendered, [0, 0.004, 0.02, 0]);
   assert.deepEqual(updated, [1 / 120, 1 / 120]);
-  player.replace(scene);
+  stage.replace(scene);
   tick(9999);
   assert.equal(rendered.at(-1), 0);
 });
 
 test('catch-up is bounded without dropping accumulated time', () => {
-  const { player, tick } = harness({ updateHz: 10, maxUpdatesPerFrame: 2 });
+  const { stage, tick } = harness({ updateHz: 10, maxUpdatesPerFrame: 2 });
   let updates = 0, renders = 0;
-  player.replace({ update: () => updates++, render: () => renders++ });
+  stage.replace({ update: () => updates++, render: () => renders++ });
   tick(0); tick(500);
   assert.equal(updates, 2);
   tick(500); tick(500);
@@ -111,26 +111,51 @@ test('catch-up is bounded without dropping accumulated time', () => {
 });
 
 test('replacement calls detach/attach once and resets timing', () => {
-  const { player, tick, frames } = harness();
+  const { stage, tick, frames } = harness();
   const events = [];
-  player.replace({ attach: () => events.push('a+'), detach: () => events.push('a-') });
+  stage.replace({ attach: () => events.push('a+'), detach: () => events.push('a-') });
   tick(0);
-  player.replace({ attach: () => events.push('b+'), detach: () => events.push('b-'), update: () => events.push('update') });
+  stage.replace({ attach: () => events.push('b+'), detach: () => events.push('b-'), update: () => events.push('update') });
   tick(9999);
-  player.replace(null); player.replace(null);
+  stage.replace(null); stage.replace(null);
   assert.deepEqual(events, ['a+', 'a-', 'b+', 'b-']); assert.equal(frames.size, 0);
 });
 
 test('callback failures stop frames and report once', () => {
-  const { player, tick, frames, errors } = harness();
+  const { stage, tick, frames, errors } = harness();
   const error = new Error('render failed');
-  player.replace({ render() { throw error; } }); tick(0);
+  stage.replace({ render() { throw error; } }); tick(0);
   assert.deepEqual(errors, [error]); assert.equal(frames.size, 0);
-  assert.throws(() => player.replace({ attach() { throw error; } }), /render failed/);
-  assert.equal(player.scene, null);
+  assert.throws(() => stage.replace({ attach() { throw error; } }), /render failed/);
+  assert.equal(stage.scene, null);
 });
 
 test('invalid timing settings are rejected', () => {
   for (const updateHz of [0, -1, Infinity, NaN, '60']) assert.throws(() => harness({ updateHz }), TypeError);
   assert.throws(() => harness({ maxUpdatesPerFrame: 0 }), TypeError);
+});
+
+test('ups changes preserve accumulated backlog and rendering follows every browser frame', () => {
+  const { stage, tick } = harness({ ups: 120, maxUpdatesPerFrame: 1 });
+  const updates = [], renders = [];
+  stage.replace({ update: context => updates.push(get(context, 'dt')), render: context => renders.push(get(context, 'dt')) });
+  tick(0); tick(1000 / 60);
+  assert.deepEqual(updates, [1 / 120]);
+  stage.configureUps(240);
+  tick(1000 / 60); tick(1000 / 60);
+  assert.deepEqual(updates, [1 / 120, 1 / 240, 1 / 240]);
+  assert.equal(stage.accumulator, 0);
+  assert.equal(renders.length, 4);
+  for (const ups of [0, -1, Infinity, NaN, '60', null, Number.MIN_VALUE]) assert.throws(() => stage.configureUps(ups), /ups/);
+  assert.equal(stage.requestedUps, 240);
+});
+
+test('ups changes from an update callback wait until the next frame', () => {
+  const { stage, tick } = harness({ ups: 120 });
+  const updates = [];
+  stage.replace({ update: context => { updates.push(get(context, 'dt')); stage.configureUps(60); } });
+  tick(0); tick(1000 / 60);
+  assert.deepEqual(updates, [1 / 120, 1 / 120]);
+  tick(2000 / 60);
+  assert.deepEqual(updates, [1 / 120, 1 / 120, 1 / 60]);
 });

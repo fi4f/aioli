@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
-import { list, dict } from '../engine/data.js';
-import { createArray, createMany } from '../engine/structures.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
+import { list, dict } from '../engine/language/data.js';
+import { createArray, createMany } from '../engine/language/structures.js';
 
 test('collection predicates distinguish registered language types from host values and each other', () => {
   const values = { list: list(), dict: dict(), array: createArray('f32', 2), many: createMany('f32', undefined) };

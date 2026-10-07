@@ -1,17 +1,17 @@
-import { vertexWGSL } from './shader.js';
-import { locate } from './trace.js';
-import { assertType, registerTexture } from './types.js';
-import { dict, dataKind, reCopy, get, put, vector } from './data.js';
-import { collectionInfo, sameElement, packCollection } from './structures.js';
-import { scalarTypes, vectorInfo, matrixSize } from './numeric-types.js';
-import { rasterizeText } from './text.js';
+import { vertexWGSL } from '../compiler/shader.js';
+import { locate } from '../language/trace.js';
+import { assertType, registerTexture } from '../language/types.js';
+import { dict, dataKind, reCopy, get, put, vector } from '../language/data.js';
+import { collectionInfo, sameElement, packCollection } from '../language/structures.js';
+import { scalarTypes, vectorInfo, matrixSize } from '../language/numeric-types.js';
+import { rasterizeText } from '../language/text.js';
 
-export async function createGraphics(canvas, reportError = console.error) {
+export async function createGraphics(innerCanvas, reportError = console.error, { prepare, present: painted } = {}) {
   if (!navigator.gpu) throw new Error('WebGPU is required but unavailable in this browser.');
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error('WebGPU could not obtain a GPU adapter.');
   const device = await adapter.requestDevice();
-  const context = canvas.getContext('webgpu');
+  const context = innerCanvas.getContext('webgpu');
   if (!context) { device.destroy(); throw new Error('Unable to create the WebGPU canvas context.'); }
   const format = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ device, format, alphaMode: 'opaque' });
@@ -58,12 +58,12 @@ export async function createGraphics(canvas, reportError = console.error) {
     blackTexture?.destroy(); blackTexture = null;
   };
   const resize = () => {
-    if (width === canvas.width && height === canvas.height) return;
-    if (!canvas.width || !canvas.height || canvas.width > device.limits.maxTextureDimension2D || canvas.height > device.limits.maxTextureDimension2D) {
+    if (width === innerCanvas.width && height === innerCanvas.height) return;
+    if (!innerCanvas.width || !innerCanvas.height || innerCanvas.width > device.limits.maxTextureDimension2D || innerCanvas.height > device.limits.maxTextureDimension2D) {
       throw new RangeError('Canvas dimensions must be positive and within WebGPU texture limits.');
     }
     resetTextures();
-    width = canvas.width; height = canvas.height;
+    width = innerCanvas.width; height = innerCanvas.height;
   };
   const target = (pool, index) => {
     pools[pool][index] ??= device.createTexture({
@@ -241,8 +241,10 @@ export async function createGraphics(canvas, reportError = console.error) {
   };
 
   const render = (callback, dt = 0, t = 0) => {
-    available(); resize();
+    available();
     if (activeFrame) throw new Error('Cannot start a render frame inside another frame.');
+    prepare?.(device.limits.maxTextureDimension2D);
+    resize();
     const frame = { context: dict('t', t, 'dt', dt, 'w', width, 'h', height), encoder: device.createCommandEncoder(),
       pool: completed ? 1 - completed.pool : 0, drawCount: 0, output: null, dt, t };
     const before = registerTexture(Object.freeze({}), width, height);
@@ -254,11 +256,13 @@ export async function createGraphics(canvas, reportError = console.error) {
       present(frame.encoder, frame.output || completed?.texture);
       device.queue.submit([frame.encoder.finish()]);
       if (frame.output) completed = { texture: frame.output, pool: frame.pool };
+      painted?.();
     } catch (error) {
       // Discard recorded passes and keep the last completed image visible.
       const encoder = device.createCommandEncoder();
       present(encoder, completed?.texture);
       device.queue.submit([encoder.finish()]);
+      painted?.();
       throw error;
     } finally { activeFrame = null; }
   };

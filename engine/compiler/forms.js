@@ -1,6 +1,17 @@
 import { parseConditional } from './conditionals.js';
 // Emitters return an expression string or { statement: JavaScript }.
 export const forms = {
+  async(args, emit, context) {
+    if (args.length === 1 && args[0]?.kind === 'list' && args[0].items[0]?.name === 'fn') {
+      const [, parameters, ...body] = args[0].items;
+      if (parameters?.kind !== 'list') throw new SyntaxError('async fn expects a parameter list');
+      return context.function(parameters.items, body, true);
+    }
+    return context.chain(args);
+  },
+  await(args, emit, context) { return context.await(args); },
+  while: loopForm('while'), until: loopForm('until'), for: loopForm('for'),
+  break: loopForm('break'), continue: loopForm('continue'),
   text(args, emit, context) { return context.text(args); },
   struct(args, emit, context) {
     if (!context.inStatement) throw new SyntaxError('struct requires statement position');
@@ -16,6 +27,24 @@ export const forms = {
   },
   sh(args, emit, context) { return context.shader(context.node); },
   on(args, emit, context) {
+    if (args.length === 2 && args[1]?.kind === 'list' && args[1].items[0]?.name === 'fn') {
+      const [, parameters, ...body] = args[1].items;
+      if (parameters?.kind !== 'list') throw new SyntaxError('fn callback expects a parameter list');
+      if (!context.inStatement) throw new SyntaxError('on requires statement position');
+      return { statement: context.callback(args[0], parameters.items, body) };
+    }
+    if (args.length === 2 && args[1]?.kind === 'list' && args[1].items[0]?.name === 'async') {
+      const wrapped = args[1].items[1];
+      if (args[1].items.length !== 2 || wrapped?.kind !== 'list' || wrapped.items[0]?.name !== 'fn') throw new SyntaxError('async callback expects (async (fn (parameters) ...body))');
+      const [, parameters, ...body] = wrapped.items;
+      if (parameters?.kind !== 'list') throw new SyntaxError('async callback expects a parameter list');
+      if (!context.inStatement) throw new SyntaxError('on requires statement position');
+      return { statement: context.callback(args[0], parameters.items, body, true) };
+    }
+    if (args.length === 2 && ['symbol', 'access'].includes(args[1]?.kind)) {
+      if (!context.inStatement) throw new SyntaxError('on requires statement position');
+      return { statement: context.callbackValue(args[0], args[1]) };
+    }
     if (args.length < 2 || args[1].kind !== 'list') {
       throw new SyntaxError('on expects callback name, parameter list, and body statements');
     }
@@ -55,6 +84,12 @@ export const forms = {
     return `(${condition} ? ${emit(args[1])} : ${args[2] ? emit(args[2]) : 'null'})`;
   },
 };
+function loopForm(name) {
+  return (args, emit, context) => {
+    if (!context.inStatement) throw new SyntaxError(`${name} requires statement position`);
+    return context.loop(name, args);
+  };
+}
 
 function boolOperand(name, node, index, emit, context) {
   return context.assertion(emit(node), { kind: 'symbol', name: 'bool', start: node.start, end: node.end },

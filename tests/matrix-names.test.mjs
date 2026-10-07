@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
-import { assertType } from '../engine/types.js';
-import { serializeData, deserializeData } from '../engine/data.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
+import { assertType } from '../engine/language/types.js';
+import { serializeData, deserializeData } from '../engine/language/data.js';
 
 test('qualified square matrix names work across constructors, assertions, JSON, structs, and shaders', () => {
   for (const size of [2, 3, 4]) {

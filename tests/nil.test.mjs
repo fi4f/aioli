@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile, read } from '../engine/compiler.js';
-import { bindings } from '../engine/bindings.js';
-import { forms } from '../engine/forms.js';
-import { list, dict, get, put } from '../engine/data.js';
-import { assertType } from '../engine/types.js';
+import { compile, read } from '../engine/compiler/compiler.js';
+import { bindings } from '../engine/language/bindings.js';
+import { forms } from '../engine/compiler/forms.js';
+import { list, dict, get, put } from '../engine/language/data.js';
+import { assertType } from '../engine/language/types.js';
 
 test('nil is the reserved null-backed sentinel and supports annotations and JSON', () => {
   assert.equal(read('nil')[0].value, null);

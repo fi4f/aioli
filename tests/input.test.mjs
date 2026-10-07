@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createInput, inputCallbacks } from '../engine/input.js';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
-import { get, put } from '../engine/data.js';
-import { ScenePlayer } from '../engine/scenes.js';
+import { createInput, inputCallbacks } from '../engine/browser/input.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
+import { get, put } from '../engine/language/data.js';
+import { Stage } from '../engine/runtime/stage.js';
 
 function harness(onEvent = () => {}) {
   const document = new EventTarget(), window = new EventTarget(), canvas = new EventTarget();
@@ -157,12 +157,12 @@ test('input callbacks compile in both modes, share scene state and validate arit
   }
 });
 
-test('scene player resets input on replacement and polls before simulation and render', () => {
+test('scene stage resets input on replacement and polls before simulation and render', () => {
   const events = [];
-  const player = new ScenePlayer({ requestFrame: () => 1, cancelFrame() {}, updateHz: 10 });
-  player.input = { reset: () => events.push('reset'), poll: () => events.push('poll') };
-  player.replace({ attach: () => events.push('attach'), update: () => events.push('update'), render: () => events.push('render') });
-  player.frame(0); player.frame(100); player.replace(null);
+  const stage = new Stage({ requestFrame: () => 1, cancelFrame() {}, updateHz: 10 });
+  stage.input = { reset: () => events.push('reset'), poll: () => events.push('poll') };
+  stage.replace({ attach: () => events.push('attach'), update: () => events.push('update'), render: () => events.push('render') });
+  stage.frame(0); stage.frame(100); stage.replace(null);
   assert.deepEqual(events, ['reset','attach','poll','render','poll','update','render','reset']);
 });
 
@@ -172,11 +172,11 @@ test('stopping or replacing a scene during gamepad polling discards remaining ca
   h.input.poll();
   assert.deepEqual(h.events.map(event => event[0]), ['joyconnected']);
   assert.equal(h.input.bindings.joys().values.length, 0);
-  const player = new ScenePlayer({ requestFrame: () => 1, cancelFrame() {} });
+  const stage = new Stage({ requestFrame: () => 1, cancelFrame() {} });
   let rendered = false;
-  player.replace({ render: () => { rendered = true; } });
-  player.input = { poll: () => player.stop() };
-  player.frame(0);
+  stage.replace({ render: () => { rendered = true; } });
+  stage.input = { poll: () => stage.stop() };
+  stage.frame(0);
   assert.equal(rendered, false);
   h.input.destroy();
 });

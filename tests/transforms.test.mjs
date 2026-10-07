@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
 
 const evaluate = (source, trace = true, extra = {}) => compile(source, { ...bindings, ...extra }, forms, { trace }).run();
 const close = (actual, expected) => {
@@ -10,57 +10,50 @@ const close = (actual, expected) => {
   actual.forEach((value, i) => assert.ok(Math.abs(value - expected[i]) < 0.00001, `${actual} != ${expected}`));
 };
 
-test('affine transforms points and discards the homogeneous result without division', () => {
+test('transform applies translation, rotation and scale to points with fresh output', () => {
+  assert.equal(Object.hasOwn(bindings, 'affine'), false);
+  assert.equal(Object.hasOwn(bindings, 'project'), false);
   for (const trace of [true, false]) {
-    close(evaluate('(affine (2d translate (vec2 10 20)) (vec2 2 3))', trace).values, [12, 23]);
-    close(evaluate('(affine (3d translate (vec3 10 20 30) scale 2) (vec3 1 2 3))', trace).values, [12, 24, 36]);
-    close(evaluate('(affine (2d rotate 1.5707963267948966 scale (vec2 2 3)) (vec2 1 2))', trace).values, [-6, 2]);
-    close(evaluate('(affine (mat3 1 0 7 0 1 8 10 20 2) (vec2 2 3))', trace).values, [12, 23]);
-    assert.equal(evaluate('(let p (vec2 2 3)) (let a (affine (2d) p)) (set a.x 99) p.x', trace), 2);
-    close(evaluate('(let f affine) (f (2d) (vec2 2 3))', trace).values, [2, 3]);
-    for (const source of ['(affine)', '(affine (2d))', '(affine (2d) (vec2) 1)', '(affine (2d) (vec3))', '(affine (3d) (vec2))', '(affine (2d) (vec2i))', '(affine (vec3) (vec2))', '(2d position (vec2))', '(3d rotation (vec3))']) {
+    close(evaluate('(transform (2d translate (vec2 10 20)) (vec2 2 3))', trace).values, [12, 23]);
+    close(evaluate('(transform (3d translate (vec3 10 20 30) scale 2) (vec3 1 2 3))', trace).values, [12, 24, 36]);
+    close(evaluate('(transform (2d rotate 1.5707963267948966 scale (vec2 2 3)) (vec2 1 2))', trace).values, [-6, 2]);
+    close(evaluate('(transform (mat3 1 0 0 0 1 0 10 20 1) (vec2 2 3))', trace).values, [12, 23]);
+    assert.equal(evaluate('(let p (vec2 2 3)) (let a (transform (2d) p)) (set a.x 99) p.x', trace), 2);
+    close(evaluate('(let f transform) (f (2d) (vec2 2 3))', trace).values, [2, 3]);
+    for (const source of ['(transform)', '(transform (2d))', '(transform (2d) (vec2) 1)', '(transform (2d) (vec3))', '(transform (3d) (vec2))', '(transform (2d) (vec2i))', '(transform (vec3) (vec2))', '(2d position (vec2))', '(3d rotation (vec3))']) {
       assert.throws(() => evaluate(source, trace), Error, source);
     }
   }
 });
 
-test('shader affine promotes and truncates float vectors and validates operands', () => {
-  const shader = source => compile(`(sh () ${source})`, bindings, forms).shaders[0].wgsl;
-  const wgsl = shader('(let a (affine (2d translate (vec2 10 20)) (vec2 1 2))) (let b (affine (3d scale 2) (vec3 1 2 3))) (return (vec4 a b.x 1))');
-  assert.match(wgsl, /\* vec3f\(vec2f\(1f, 2f\), 1f\)\)\.xy/);
-  assert.match(wgsl, /\* vec4f\(vec3f\(1f, 2f, 3f\), 1f\)\)\.xyz/);
-  for (const source of ['(affine)', '(affine (2d))', '(affine (2d) (vec2) 1)', '(affine (2d) (vec3))', '(affine (3d) (vec2))', '(affine (2d) (vec2i))', '(affine (vec3) (vec2))']) {
-    assert.throws(() => shader(`(let a ${source}) (return (vec4 1))`), SyntaxError, source);
-  }
-});
-
-test('project divides by the homogeneous coordinate in both dimensions', () => {
+test('transform divides by the homogeneous coordinate in both dimensions', () => {
   for (const trace of [true, false]) {
-    close(evaluate('(project (2d translate (vec2 10 20)) (vec2 2 3))', trace).values, [12, 23]);
-    close(evaluate('(project (mat3 1 0 1 0 1 0 10 20 2) (vec2 2 3))', trace).values, [3, 5.75]);
-    close(evaluate('(project (mat4 1 0 0 0 0 1 0 0 0 0 1 1 10 20 30 1) (vec3 2 3 3))', trace).values, [3, 5.75, 8.25]);
-    close(evaluate('(let f project) (f (2d) (vec2 2 3))', trace).values, [2, 3]);
+    close(evaluate('(transform (2d translate (vec2 10 20)) (vec2 2 3))', trace).values, [12, 23]);
+    close(evaluate('(transform (mat3 1 0 1 0 1 0 10 20 2) (vec2 2 3))', trace).values, [3, 5.75]);
+    close(evaluate('(transform (mat4 1 0 0 0 0 1 0 0 0 0 1 1 10 20 30 1) (vec3 2 3 3))', trace).values, [3, 5.75, 8.25]);
+    close(evaluate('(let f transform) (f (2d) (vec2 2 3))', trace).values, [2, 3]);
     const events = [];
-    close(evaluate('(project (nextMatrix) (nextPoint))', trace, {
+    close(evaluate('(transform (nextMatrix) (nextPoint))', trace, {
       nextMatrix: () => { events.push('matrix'); return bindings['2d'](); },
       nextPoint: () => { events.push('point'); return bindings.vec2(2, 3); },
     }).values, [2, 3]);
     assert.deepEqual(events, ['matrix', 'point']);
-    const zero = evaluate('(project (mat3 1 0 0 0 1 0 0 0 0) (vec2 1 0))', trace).values;
+    const zero = evaluate('(transform (mat3 1 0 0 0 1 0 0 0 0) (vec2 1 0))', trace).values;
     assert.equal(zero[0], Infinity); assert.ok(Number.isNaN(zero[1]));
-    for (const source of ['(project)', '(project (2d))', '(project (2d) (vec2) 1)', '(project (2d) (vec3))', '(project (3d) (vec2))', '(project (2d) (vec2i))', '(project (vec3) (vec2))', '(apply (2d) (vec2))']) {
+    for (const source of ['(transform)', '(transform (2d))', '(transform (2d) (vec2) 1)', '(transform (2d) (vec3))', '(transform (3d) (vec2))', '(transform (2d) (vec2i))', '(transform (vec3) (vec2))', '(apply (2d) (vec2))']) {
       assert.throws(() => evaluate(source, trace), Error, source);
     }
   }
 });
 
-test('shader project evaluates multiplication once and divides by z or w', () => {
+test('shader transform evaluates multiplication once and divides by z or w', () => {
   const shader = source => compile(`(sh () ${source})`, bindings, forms).shaders[0].wgsl;
-  const wgsl = shader('(let a (project (2d) (vec2 1 2))) (let b (project (3d) (vec3 1 2 3))) (return (vec4 a b.x 1))');
+  const wgsl = shader('(let a (transform (2d) (vec2 1 2))) (let b (transform (3d) (vec3 1 2 3))) (return (vec4 a b.x 1))');
   assert.match(wgsl, /homogeneous\.xy \/ homogeneous\.z/);
   assert.match(wgsl, /homogeneous\.xyz \/ homogeneous\.w/);
   assert.equal((wgsl.match(/let homogeneous = transform \*/g) || []).length, 2);
-  for (const source of ['(project)', '(project (2d))', '(project (2d) (vec2) 1)', '(project (2d) (vec3))', '(project (3d) (vec2))', '(project (2d) (vec2i))', '(project (vec3) (vec2))']) {
+  for (const name of ['affine', 'project']) assert.throws(() => shader(`(return (vec4 (${name} (2d) (vec2)) 0 1))`), /Unknown shader symbol/);
+  for (const source of ['(transform)', '(transform (2d))', '(transform (2d) (vec2) 1)', '(transform (2d) (vec3))', '(transform (3d) (vec2))', '(transform (2d) (vec2i))', '(transform (vec3) (vec2))']) {
     assert.throws(() => shader(`(let a ${source}) (return (vec4 1))`), SyntaxError, source);
   }
 });
@@ -119,8 +112,8 @@ test('shader transform constructors validate named types and emit shared helpers
     (let a (2d scale 2 rotate 0.1 translate (vec2 0.2 0.3) skew (vec2 0.1)))
     (let b (2d)) (let c (3d skew skew))
     (let d (3d "scale" (vec3 2) skew (array (f32 6))))
-    (let affine (fn (p:vec3) (return (* (2d) p))))
-    (return (vec4 (+ (affine (vec3 1)).x a.0.0 b.0.0 c.0.0 d.0.0))))`);
+    (let transform (fn (p:vec3) (return (* (2d) p))))
+    (return (vec4 (+ (transform (vec3 1)).x a.0.0 b.0.0 c.0.0 d.0.0))))`);
   assert.equal((wgsl.match(/fn transform2d\(/g) || []).length, 1);
   assert.equal((wgsl.match(/fn transform3d\(/g) || []).length, 1);
   for (const source of ['(2d unknown 1)', '(2d scale)', '(2d rotate (vec2))', '(2d translate (vec2u))', '(3d scale true)', '(3d skew (array (f32 5)))', '(3d skew (many (f32 6)))', '(3d translate (vec3) translate (vec3))']) {

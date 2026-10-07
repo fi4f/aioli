@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
-import { createStruct, createZeroArray, collectionInfo } from '../engine/structures.js';
-import { get, put, copy, reCopy, equal } from '../engine/data.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
+import { createStruct, createZeroArray, collectionInfo } from '../engine/language/structures.js';
+import { get, put, copy, reCopy, equal } from '../engine/language/data.js';
 
 test('struct field indexes support special keys, reordered arguments, and definition identity', () => {
   const declarations = [['__proto__', 'f32'], ['constructor', 'i32'], ['', 'u32'], ['a string key', 'bool']];

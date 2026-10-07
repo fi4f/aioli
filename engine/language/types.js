@@ -1,11 +1,12 @@
 import { dataKind, vector, matrix, matrixColumn, registerOpaque, get } from './data.js';
 import { put, registerTextureSize } from './data.js';
+import { isPromise } from './promises.js';
 import { structDefinitionInfo, isCheckedView } from './structures.js';
 import { scalarTypes, vectorTypes, vectorInfo, scalarMatches, matrixSize, matrixTypes, typeAliases, canonicalType } from './numeric-types.js';
 import { swizzleAccessors, swizzleNames, writableSwizzleNames } from './swizzles.generated.js';
 const textures = new WeakSet();
 
-export const typeNames = new Set(['nil', 'bool', 'function', 'list', 'dict', 'struct', 'array', 'many', 'mat2x2f', 'mat3x3f', 'mat4x4f', 'texture2d']);
+export const typeNames = new Set(['nil', 'bool', 'function', 'promise', 'list', 'dict', 'struct', 'array', 'many', 'mat2x2f', 'mat3x3f', 'mat4x4f', 'texture2d']);
 for (const type of ['num', 'str', ...scalarTypes, ...vectorTypes, ...Object.keys(typeAliases)]) typeNames.add(type);
 
 export function registerTexture(handle, width, height) {
@@ -23,6 +24,7 @@ export function assertType(value, type, label = 'Value') {
     case 'nil': matches = value === null; break;
     case 'bool': matches = typeof value === 'boolean'; break;
     case 'function': matches = typeof value === 'function'; break;
+    case 'promise': matches = isPromise(value); break;
     case 'list': case 'dict': case 'struct': case 'array': case 'many': matches = dataKind(value) === type; break;
     case 'mat2x2f': case 'mat3x3f': case 'mat4x4f':
       matches = dataKind(value) === type && value.values.length === matrixSize(type) ** (type.startsWith('mat') ? 2 : 1) &&

@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile, read } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
-import { collectionInfo, structInfo } from '../engine/structures.js';
-import { get, put, copy, reCopy, equal, insert, remove } from '../engine/data.js';
+import { compile, read } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
+import { collectionInfo, structInfo } from '../engine/language/structures.js';
+import { get, put, copy, reCopy, equal, insert, remove } from '../engine/language/data.js';
 
 const evaluate = (source, trace = true, extra = {}) => compile(source, { ...bindings, ...extra }, forms, { trace }).run();
 

@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { arithmetic } from '../engine/arithmetic.js';
-import { assertType, vectorBindings } from '../engine/types.js';
-import { formatTrace } from '../engine/trace.js';
-import { dict } from '../engine/data.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { arithmetic } from '../engine/language/arithmetic.js';
+import { assertType, vectorBindings } from '../engine/language/types.js';
+import { formatTrace } from '../engine/language/trace.js';
+import { dict } from '../engine/language/data.js';
 
 test('num is the generic regular-code numeric type and number is not an alias', () => {
   assert.equal(assertType(42, 'num'), 42);

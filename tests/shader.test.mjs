@@ -1,4 +1,25 @@
 import { test } from 'node:test';
+test('sample defaults to texture UV and retains explicit coordinates', () => {
+  const wgsl = source => compile(source, {}, forms).shaders[0].wgsl;
+  const implicit = wgsl('(sh (image:texture2d) (let uv (vec2 99)) (let read (fn (texture:texture2d) (return (sample texture)))) (return (read image)))');
+  assert.match(implicit, /textureSampleLevel\(argument0, shaderSampler, \(xy \/ vec2f\(textureDimensions\(argument0, 0\)\)\), 0\.0f\)/);
+  const explicit = wgsl('(sh (image:texture2d) (return (sample image (vec2 0.5))))');
+  assert.match(explicit, /shaderSampler, vec2f\(0\.5f\), 0\.0f/);
+  for (const expression of ['(sample)', '(sample (vec4))', '(sample before 1)', '(sample before (vec2i))', '(sample before (vec2) (vec2))']) assert.throws(() => wgsl(`(sh () (return ${expression}))`), SyntaxError);
+});
+test('shader texture uv uses pixel coordinates and dimensions in direct access and helpers', () => {
+  const result = compile(`(sh (image:texture2d)
+    (let uv (vec2 99))
+    (let read (fn (texture:texture2d) (return (sample texture texture.uv))))
+    (let direct (sample image (get image "uv")))
+    (return (+ (read image) direct)))`, {}, forms).shaders[0];
+  assert.match(result.wgsl, /\(xy \/ vec2f\(textureDimensions\(argument0, 0\)\)\)/);
+  assert.match(result.wgsl, /shaderPixel: vec2f/);
+  const before = compile('(sh () (return (sample before before.uv)))', {}, forms).shaders[0];
+  assert.equal(before.resources[0].name, 'before');
+  assert.match(before.wgsl, /xy \/ vec2f\(textureDimensions\(before, 0\)\)/);
+});
+
 test('shader texture dimensions are float fields with dot and get access', () => {
   const result = compile('(sh (image:texture2d) (let sizes image.wh) (let width (get image "w")) (return (vec4 sizes width image.h)))', {}, forms).shaders[0];
   assert.match(result.wgsl, /vec2f\(textureDimensions\(/);
@@ -7,9 +28,9 @@ test('shader texture dimensions are float fields with dot and get access', () =>
   assert.equal(before.resources[0].name, 'before');
 });
 import assert from 'node:assert/strict';
-import { compile, read } from '../engine/compiler.js';
-import { compileShader } from '../engine/shader.js';
-import { forms } from '../engine/forms.js';
+import { compile, read } from '../engine/compiler/compiler.js';
+import { compileShader } from '../engine/compiler/shader.js';
+import { forms } from '../engine/compiler/forms.js';
 
 const shader = source => compileShader(read(source)[0], source);
 

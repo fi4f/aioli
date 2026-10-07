@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile, read } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { arithmetic } from '../engine/arithmetic.js';
-import { formatTrace } from '../engine/trace.js';
+import { compile, read } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { arithmetic } from '../engine/language/arithmetic.js';
+import { formatTrace } from '../engine/language/trace.js';
 
 const run = (source, bindings = {}) => compile(source, bindings, forms).run();
 

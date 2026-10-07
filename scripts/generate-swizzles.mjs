@@ -1,5 +1,5 @@
 import { writeFileSync, readFileSync } from 'node:fs';
-import { vectorTypes, vectorInfo } from '../engine/numeric-types.js';
+import { vectorTypes, vectorInfo } from '../engine/language/numeric-types.js';
 
 // Emit source, rather than building closures or decoding selectors at runtime.
 const lines = [
@@ -32,7 +32,7 @@ lines.push('});', '',
   'export const swizzleNames = new Set(Object.keys(swizzleAccessors.vec4f));',
   'export const writableSwizzleNames = new Set(Object.keys(swizzleAccessors.vec4f).filter(name => swizzleAccessors.vec4f[name].write));', '');
 const source = lines.join('\n');
-const destination = new URL('../engine/swizzles.generated.js', import.meta.url);
+const destination = new URL('../engine/language/swizzles.generated.js', import.meta.url);
 if (process.argv.includes('--check')) {
   if (readFileSync(destination, 'utf8').replace(/\r\n/g, '\n') !== source) {
     throw new Error('Generated swizzles are stale; run node scripts/generate-swizzles.mjs');

@@ -1,11 +1,169 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
-import { get } from '../engine/data.js';
-import { rasterizeText, createTextBuilder, textOperation, finishTextBuilder } from '../engine/text.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
+import { get } from '../engine/language/data.js';
+import { rasterizeText, createTextBuilder, textOperation, finishTextBuilder } from '../engine/language/text.js';
 const evaluate = (source, trace = true, extra = {}, options = {}) => compile(source, { ...bindings, ...extra }, forms, { trace, ...options }).run();
+
+test('wrap false clips long lines without reflow and preserves explicit blank lines', t => {
+  const painted = [];
+  const context = { measureText: text => ({ width: text.length * 10, fontBoundingBoxAscent: 8, fontBoundingBoxDescent: 2 }),
+    save() {}, restore() {}, beginPath() {}, rect() {}, clip() {}, fillText: (...args) => painted.push(args) };
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'OffscreenCanvas');
+  Object.defineProperty(globalThis, 'OffscreenCanvas', { configurable: true, value: class { getContext() { return context; } } });
+  t.after(() => previous ? Object.defineProperty(globalThis, 'OffscreenCanvas', previous) : delete globalThis.OffscreenCanvas);
+  for (const trace of [true, false]) {
+    let snapshot;
+    evaluate('(text (width 30) (height 80) (line-height 20) (wrap false) "ab cd ef\\n\\nz\\n")', trace, {},
+      { textRenderer: value => { snapshot = value; return null; } });
+    painted.length = 0;
+    const raster = rasterizeText(snapshot);
+    assert.equal(snapshot.wrap, false);
+    assert.equal(raster.width, 30);
+    assert.equal(raster.height, 80);
+    assert.equal(raster.lineCount, 4);
+    assert.deepEqual(painted.map(args => [args[0], args[2]]), [['ab cd ef', 8], ['z', 48]]);
+    evaluate('(text (width 30) "ab cd ef")', trace, {}, { textRenderer: value => { snapshot = value; return null; } });
+    assert.equal(snapshot.wrap, true);
+    assert.equal(rasterizeText(snapshot).lineCount, 3);
+    evaluate('(text (wrap false) (wrap true) "ok")', trace, {}, { textRenderer: value => { snapshot = value; return null; } });
+    assert.equal(snapshot.wrap, true);
+    for (const setting of ['(wrap)', '(wrap nil)', '(wrap 0)', '(wrap "false")', '(wrap false true)']) {
+      assert.throws(() => evaluate(`(text ${setting})`, trace), /wrap expects/);
+    }
+  }
+});
+
+test('text operation arity is rejected during compilation before a render callback can be installed', () => {
+  for (const trace of [true, false]) {
+    const source = '(on render (context) (let label (text (resolution) "hello")))';
+    assert.throws(() => compile(source, bindings, forms, { trace, scene: true }), error => {
+      assert.equal(error.name, 'SyntaxError');
+      assert.match(error.message, /resolution expects one argument/);
+      assert.equal(error.lisp.start, source.indexOf('(resolution)'));
+      return true;
+    });
+    for (const body of ['(resolution)', '(resolution 1 2)', '(size)', '(line 1)', '(fill)', '(italic true false)']) {
+      assert.throws(() => compile(`(text ${body})`, bindings, forms, { trace }), SyntaxError);
+    }
+    assert.doesNotThrow(() => compile('(text (resolution 2) (italic) (line) (fill 1) (stroke nil) "hello")', bindings, forms, { trace }));
+    assert.throws(() => textOperation(createTextBuilder(), 'resolution'), TypeError);
+  }
+});
+
+test('literal text settings validate before render while computed values retain runtime checks', () => {
+  for (const trace of [true, false]) {
+    for (const setting of ['(resolution 0)', '(resolution -1)', '(resolution nil)', '(resolution "bad")', '(size 0)', '(wrap 0)']) {
+      const source = `(on render (context) (let label (text ${setting} "hello")))`;
+      assert.throws(() => compile(source, bindings, forms, { trace, scene: true }), error => {
+        assert.equal(error.lisp.start, source.indexOf(setting));
+        return true;
+      });
+    }
+    const scene = compile('(let value 0) (on render (context) (text (resolution value) "hello"))', bindings, forms, { trace, scene: true }).run();
+    assert.throws(() => scene.render(bindings.dict()), /resolution expects a positive finite/);
+  }
+});
+
+test('offset snapshots per-span vectors and isolates nested builders', () => {
+  for (const trace of [true, false]) {
+    const offset = bindings.vec2(3,-5);
+    const result = evaluate('(text "H" (offset shift) "i" (set shift.x 99) (let inner (text "inner")) (offset (vec2 0)) "!")', trace, { shift: offset });
+    const runs = get(result, 'runs').values;
+    assert.deepEqual(runs.map(run => get(run, 'offset').values), [[0,0],[3,-5],[0,0]]);
+    for (const source of ['(offset)', '(offset 2)', '(offset nil)', '(offset (vec3))', '(offset (vec2i))', '(offset (vec2 bad))', '(offset (vec2) (vec2))']) assert.throws(() => evaluate(`(text ${source})`, trace, { bad: Infinity }), Error);
+  }
+});
+
+test('offset shifts painted spans and clipping, expands bounds and leaves advance and wrapping unchanged', t => {
+  const painted = [], clips = [];
+  const context = { measureText: text => ({ width: text.length*10, actualBoundingBoxRight: text.length*10, fontBoundingBoxAscent: 8, fontBoundingBoxDescent: 2 }),
+    save() {}, restore() {}, beginPath() {}, rect: (...args) => clips.push(args), clip() {}, fillText: (...args) => painted.push(args) };
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'OffscreenCanvas');
+  Object.defineProperty(globalThis, 'OffscreenCanvas', { configurable: true, value: class { getContext() { return context; } } });
+  t.after(() => previous ? Object.defineProperty(globalThis, 'OffscreenCanvas', previous) : delete globalThis.OffscreenCanvas);
+  let snapshot;
+  evaluate('(text "H" (offset (vec2 -20 -5)) "i" (offset (vec2 0)) "!")', true, {}, { textRenderer: value => { snapshot = value; return null; } });
+  const raster = rasterizeText(snapshot);
+  assert.equal(raster.width, 42); assert.equal(raster.height, 17); assert.equal(raster.baseline, 14);
+  assert.deepEqual(painted, [['Hi!',11,14],['Hi!',-9,9],['Hi!',11,14]]);
+  assert.equal(clips[1][0], 1);
+  evaluate('(text (width 40) "one " (offset (vec2 100 20)) "two")', true, {}, { textRenderer: value => { snapshot = value; return null; } });
+  assert.equal(rasterizeText(snapshot).lineCount, 2);
+});
+
+test('fixed text bounds align normal layout and clip offsets without shifting origin', t => {
+  const painted = [];
+  const context = { measureText: text => ({ width: text.length*10, actualBoundingBoxRight: text.length*10, fontBoundingBoxAscent: 8, fontBoundingBoxDescent: 2 }),
+    save() {}, restore() {}, beginPath() {}, rect() {}, clip() {}, fillText: (...args) => painted.push(args) };
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'OffscreenCanvas');
+  Object.defineProperty(globalThis, 'OffscreenCanvas', { configurable: true, value: class { getContext() { return context; } } });
+  t.after(() => previous ? Object.defineProperty(globalThis, 'OffscreenCanvas', previous) : delete globalThis.OffscreenCanvas);
+  const render = source => {
+    let snapshot; evaluate(source, true, {}, { textRenderer: value => { snapshot = value; return null; } });
+    painted.length = 0;
+    return rasterizeText(snapshot);
+  };
+  for (const [hAlign, x] of [['left',10],['center',40],['right',70]]) for (const [vAlign,y] of [['top',18],['center',28],['bottom',38]]) {
+    const raster = render(`(text (width 100) (height 50) (padding 10) (h-align ${hAlign}) (v-align "${vAlign}") "AB")`);
+    assert.equal(raster.width,100); assert.equal(raster.height,50); assert.deepEqual(painted[0], ['AB',x,y]);
+  }
+  const first = render('(text (width 100) (height 50) (padding (vec2 10)) (h-align center) (v-align center) (offset (vec2 0 -100)) "AB")');
+  assert.deepEqual([first.width,first.height,first.offsetX,first.offsetY], [100,50,10,20]);
+  assert.deepEqual(painted[0], ['AB',40,-72]);
+  const second = render('(text "AB" (width 100) (height 50) (h-align left) (h-align center) (v-align bottom) (v-align center) (padding 10) (offset (vec2 0 100)) "")');
+  assert.deepEqual([second.width,second.height,second.offsetX,second.offsetY], [100,50,10,20]);
+  render('(text (width 100) (height 60) (padding 10) (line-height 20) (h-align center) (v-align center) "AB" (line) "A")');
+  assert.deepEqual(painted, [['AB',40,23],['A',45,43]]);
+  const oversized = render('(text (width 10) (height 5) "AB")');
+  assert.equal(oversized.width,10); assert.equal(oversized.height,5); assert.equal(oversized.lineCount,1);
+});
+
+test('new block options snapshot final settings and reject invalid values and obsolete align', () => {
+  for (const trace of [true,false]) {
+    const snapshots = [];
+    evaluate('(text (height 50) (height 60) (padding (vec2 3 4)) (h-align right) (v-align bottom) "x")', trace, {}, { textRenderer: value => { snapshots.push(value); return null; } });
+    assert.equal(snapshots[0].height,60); assert.equal(snapshots[0].hAlign,'right'); assert.equal(snapshots[0].vAlign,'bottom');
+    assert.deepEqual(snapshots[0].padding,[3,4]);
+    for (const operation of ['(height 0)','(height -1)','(height nil)','(padding -1)','(padding (vec3))','(padding (vec2i))','(padding (vec2 bad))','(h-align "top")','(v-align "left")','(align "center")']) assert.throws(() => evaluate(`(text ${operation})`, trace, { bad: Infinity }), Error);
+  }
+});
+
+test('resolution changes raster resolution without changing layout or final texture size', t => {
+  for (const trace of [true,false]) for (const [name, expected] of [['half',0.5],['standard',1],['double',2]]) {
+    for (const option of [name, JSON.stringify(name)]) {
+      let snapshot;
+      evaluate(`(text (resolution ${option}) "A")`, trace, {}, { textRenderer: value => { snapshot=value;return null; } });
+      assert.equal(snapshot.resolution, expected);
+    }
+    assert.throws(() => evaluate('(text (resolution "unknown"))', trace), /resolution expects/);
+  }
+  const canvases = [], transforms = [], draws = [];
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'OffscreenCanvas');
+  Object.defineProperty(globalThis, 'OffscreenCanvas', { configurable: true, value: class {
+    constructor(w,h) { this.width=w;this.height=h;canvases.push(this); }
+    getContext() { return { measureText: text => ({ width: text.length*10, fontBoundingBoxAscent: 8, fontBoundingBoxDescent: 2 }),
+      save() {}, restore() {}, beginPath() {}, rect() {}, clip() {}, fillText() {},
+      setTransform: (...args) => transforms.push(args), drawImage: (...args) => draws.push(args),
+    }; }
+  } });
+  t.after(() => previous ? Object.defineProperty(globalThis, 'OffscreenCanvas', previous) : delete globalThis.OffscreenCanvas);
+  for (const scale of [2,4,0.5]) {
+    let snapshot;
+    evaluate(`(text (width 100) (height 40) (v-align center) (resolution ${scale}) "AB")`, true, {}, { textRenderer: value => { snapshot=value;return null; } });
+    const result = rasterizeText(snapshot);
+    assert.equal(result.width,100); assert.equal(result.height,40); assert.equal(result.baseline,23);
+    assert.equal(canvases.at(-2).width,100*scale); assert.equal(canvases.at(-2).height,40*scale);
+    assert.equal(result.canvas.width,100); assert.equal(result.canvas.height,40);
+    assert.deepEqual(transforms.at(-1),[scale,0,0,scale,0,0]);
+    assert.deepEqual(draws.at(-1).slice(1),[0,0,100*scale,40*scale,0,0,100,40]);
+  }
+  for (const trace of [true,false]) {
+    for (const value of ['0','-1','nil','"2"','Infinity','NaN']) assert.throws(() => evaluate(`(text (resolution ${value}))`,trace), Error);
+  }
+});
 
 test('text captures outer values, executes ordinary statements, and snapshots immediate style', () => {
   for (const trace of [true, false]) {
@@ -63,7 +221,7 @@ test('nested text isolates style, functions capture the builder, and rebuilding 
 });
 
 test('text rejects invalid operations, premature returns, and preserves source traces', () => {
-  for (const trace of [true, false]) for (const operation of ['(span 3)', '(span)', '(line 1)', '(fill (vec2 1))', '(fill (vec3 2))', '(font "")', '(size 0)', '(width -1)', '(align "bad")', '(line-height nil)']) {
+  for (const trace of [true, false]) for (const operation of ['(span 3)', '(span)', '(line 1)', '(fill (vec2 1))', '(fill (vec3 2))', '(font "")', '(size 0)', '(width -1)', '(h-align "bad")', '(line-height nil)']) {
     assert.throws(() => evaluate(`(text ${operation})`, trace), Error, operation);
   }
   assert.throws(() => evaluate('(span "outside")'), /Unknown symbol/);
@@ -72,10 +230,10 @@ test('text rejects invalid operations, premature returns, and preserves source t
   assert.throws(() => evaluate('(text (let inside 1)) inside'), /Unknown symbol/);
   assert.throws(() => evaluate('(text (let span 1))'), /Name already defined/);
   const snapshots = [];
-  evaluate('(text (width 100) (align "center") (line-height 20) (span "ok"))', true, {}, {
+  evaluate('(text (width 100) (h-align "center") (line-height 20) (span "ok"))', true, {}, {
     textRenderer: snapshot => { snapshots.push(snapshot); return null; },
   });
-  assert.equal(snapshots[0].width, 100); assert.equal(snapshots[0].align, 'center'); assert.equal(snapshots[0].lineHeight, 20);
+  assert.equal(snapshots[0].width, 100); assert.equal(snapshots[0].hAlign, 'center'); assert.equal(snapshots[0].lineHeight, 20);
 });
 
 test('fill and stroke accept scalar, vector and numeric channel overloads', () => {
@@ -97,7 +255,7 @@ test('text paint and line settings snapshot independently and accept named symbo
     assert.deepEqual(get(defaults, 'line-dash').values, []);
     const result = evaluate(`(let dash (list 3 2 1))
       (text (stroke (vec3 1 0 0)) (line-width 2) (line-join round)
-        (line-cap "square") (miter-limit 4) (line-dash dash) (align center)
+        (line-cap "square") (miter-limit 4) (line-dash dash) (h-align center)
         (fill nil) (span "outline") (put dash 0 99)
         (stroke nil) (fill (vec4 0 1 0 0.5)) (line-dash (list))
         (line-join "bevel") (line-cap butt) (span "fill"))`, trace);

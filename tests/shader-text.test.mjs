@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
-import { dict } from '../engine/data.js';
-import { registerTexture } from '../engine/types.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
+import { dict } from '../engine/language/data.js';
+import { registerTexture } from '../engine/language/types.js';
 
 function renderer(events) {
   return snapshot => {
@@ -13,6 +13,13 @@ function renderer(events) {
       'baseline', 15, 'lines', 1, 'origin', dict('x', 1, 'y', 1));
   };
 }
+
+test('sample defaults to text UV for hoisted text and inside helpers', () => {
+  const events = [];
+  const program = compile('(sh () (let label (text "M")) (let read (fn () (return (sample label)))) (return (blend (read))))', bindings, forms, { textRenderer: renderer(events) });
+  assert.match(program.shaders[0].wgsl, /shaderSampler, \(xy \/ bitcast<vec4f>\(frame\.values\[\d+\]\)\.xy\), 0\.0f/);
+  program.run([() => null]); assert.deepEqual(events, ['M']);
+});
 
 test('text uv uses current pixel coordinates and dimensions inside shaders and helpers', () => {
   for (const trace of [true, false]) {

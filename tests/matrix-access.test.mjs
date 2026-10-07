@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from '../engine/compiler.js';
-import { bindings } from '../engine/bindings.js';
-import { forms } from '../engine/forms.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { bindings } from '../engine/language/bindings.js';
+import { forms } from '../engine/compiler/forms.js';
 
 test('vector indices and column-first matrix chains read every component in both modes', () => {
   for (const trace of [true, false]) {

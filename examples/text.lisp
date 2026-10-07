@@ -1,25 +1,31 @@
-(let name "Ada")
-(let warning true)
-(let label (text
-  (font "sans-serif")
-  (size 32)
-  (line-height 42)
-  (span "Hello ")
-  (fill (vec3 0.3 0.8 1))
-  (span name)
-  (line)
-  (if warning {
-    (fill (vec3 1 0.5 0.2))
-    (span "Attention needed")
-  })
-  (line)
-  (fill (vec3 1))
-  (span "This is an ordinary Lisp body.")))
+;shader function for painting an image onto the context
+(let draw-image (sh (image:texture2d) {
+  (return (blend (sample image)))
+}))
 
-(let draw (sh (image:texture2d dimensions:vec2 position:vec2)
-  (let pixel (sample image (/ (- xy position) dimensions)))
-  (let background (vec3 0.04 0.05 0.08))
-  (return (blend pixel (vec4 background 1)))))
+; render callback
+(on render (context) {
+  (clear)
 
-(on render (context)
-  (draw context label.texture (vec2 label.w label.h) (vec2 24 24)))
+  (let n 10)
+  ; (text) produces a texture by using a tiny layout engine and drawing to a standard canvas
+  (let label (text 
+    (resolution double); use double pixel density for cleaner text
+
+    (height 160) ; use a fixed height to center the text vertically
+    (v-align center) ; center the text vertically
+
+    ; this is the cool part, emit layout tokens from inside of the for loop dynamically
+    (for i n..0 {
+      
+      (fill (/ i n) 0 0); set the fill color
+      (size (+ (* i 10) 1)); set the font size
+      (offset (vec2 0 (* 10 (sin (+ context.t i))))); offset the next span by this amount
+
+      "A"; naked strings are interpreted as a (span)
+
+    })
+  ))
+
+  (draw-image context label.texture)
+})

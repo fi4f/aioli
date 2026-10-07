@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
-import { collectionInfo } from '../engine/structures.js';
-import { get, put, insert, remove, copy, reCopy, equal, bool } from '../engine/data.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
+import { collectionInfo } from '../engine/language/structures.js';
+import { get, put, insert, remove, copy, reCopy, equal, bool } from '../engine/language/data.js';
 const evaluate = (source, trace = true) => compile(source, bindings, forms, { trace }).run();
 
 test('unbounded many grows while length tracks insertion and removal, retaining capacity', () => {

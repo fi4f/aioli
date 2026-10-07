@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from '../engine/compiler.js';
-import { forms } from '../engine/forms.js';
-import { bindings } from '../engine/bindings.js';
-import { assertType } from '../engine/types.js';
-import { typeAliases } from '../engine/numeric-types.js';
-import { serializeData, get } from '../engine/data.js';
-import { createArray, collectionInfo } from '../engine/structures.js';
+import { compile } from '../engine/compiler/compiler.js';
+import { forms } from '../engine/compiler/forms.js';
+import { bindings } from '../engine/language/bindings.js';
+import { assertType } from '../engine/language/types.js';
+import { typeAliases } from '../engine/language/numeric-types.js';
+import { serializeData, get } from '../engine/language/data.js';
+import { createArray, collectionInfo } from '../engine/language/structures.js';
 
 test('float vector and square matrix aliases share constructors and canonical value tags', () => {
   for (const trace of [true, false]) for (const [alias, type] of Object.entries(typeAliases)) {
