@@ -205,7 +205,7 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
       descriptors.push(constructor);
       const variable = scopes.at(-1).get(name);
       variable.definition = constructor; variable.mutable = false;
-      return `const ${variable.identifier} = $descriptors[${index}]; ${nameComment(name)}`;
+      return `${nameComment(name)}\nconst ${variable.identifier} = $descriptors[${index}];`;
     },
     setAccess(node, replacement) { return `$setAccess(${emit(node.target)}, ${JSON.stringify(node.key)}, ${emit(replacement)}, ${node.quoted})`; },
     condition(node) { return `$bool(${emit(node)})`; },
@@ -293,7 +293,7 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
             `Parameter ${name}`, parameter) + ';');
         }
       }
-      const identifiers = [...scope].map(([name, variable]) => `${variable.identifier} = null ${nameComment(name)}`);
+      const identifiers = [...scope].map(([name, variable]) => `${nameComment(name)} ${variable.identifier} = null`);
       functionDepth++;
       try {
         return `(function(${identifiers.join(', ')}) {\n${checks.join('\n')}\n${sequence(body, false, scope)}\nreturn null;\n})`;

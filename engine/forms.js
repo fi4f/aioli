@@ -37,7 +37,7 @@ export const forms = {
   let(args, emit, context) {
     if (args.length !== 2) throw new SyntaxError('let expects name and value');
     if (!context.inStatement) throw new SyntaxError('let requires statement position');
-    return { statement: `let ${context.declaration(args[0])} = ${emit(args[1])}; ${context.declarationComment(args[0])}` };
+    return { statement: `${context.declarationComment(args[0])}\nlet ${context.declaration(args[0])} = ${emit(args[1])};` };
   },
   set(args, emit, context) {
     if (args.length !== 2) throw new SyntaxError('set expects name and value');

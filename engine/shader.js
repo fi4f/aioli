@@ -596,7 +596,7 @@ return result;
         const local = { code: type === 'texture2d' ? `argument${index}` : `local${nextLocal++}`, type, mutable: type !== 'texture2d', owner: helper };
         scope.set(name.name, local);
         parametersCode.push(`argument${index}: ${typeName(type)}`);
-        if (type !== 'texture2d') copies.push(`var ${local.code}: ${typeName(type)} = argument${index}; ${nameComment(name.name)}`);
+        if (type !== 'texture2d') copies.push(`${nameComment(name.name)}\nvar ${local.code}: ${typeName(type)} = argument${index};`);
         return { name: name.name, type };
       });
       const compiled = statements(body, scope);
@@ -710,7 +710,7 @@ ${compiled.code}
           }
           if (value.type === 'texture2d' || value.type?.kind === 'storage') fail('Expected a shader value, not a resource', args[1]);
           Object.assign(local, { type: value.type, pending: false });
-          return `var ${local.code}: ${typeName(value.type)} = ${value.code}; ${nameComment(args[0].name)}`;
+          return `${nameComment(args[0].name)}\nvar ${local.code}: ${typeName(value.type)} = ${value.code};`;
         }
         if (head?.name === 'insert' || head?.name === 'remove') {
           const operation = head.name;
