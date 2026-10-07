@@ -1,0 +1,25 @@
+(let name "Ada")
+(let warning true)
+(let label (text
+  (font "sans-serif")
+  (size 32)
+  (line-height 42)
+  (span "Hello ")
+  (color (vec3 0.3 0.8 1))
+  (span name)
+  (line)
+  (if warning {
+    (color (vec3 1 0.5 0.2))
+    (span "Attention needed")
+  })
+  (line)
+  (color (vec3 1))
+  (span "This is an ordinary Lisp body.")))
+
+(let draw (sh (image:texture2d dimensions:vec2 position:vec2)
+  (let pixel (sample image (/ (- xy position) dimensions)))
+  (let background (vec3 0.04 0.05 0.08))
+  (return (blend pixel (vec4 background 1)))))
+
+(on render (context)
+  (draw context label.texture (vec2 label.w label.h) (vec2 24 24)))

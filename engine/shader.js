@@ -6,6 +6,7 @@ import { vectorInfo, scalarTypes, vectorTypes, convertComponent, matrixSize, mat
 import { parseConditional } from './conditionals.js';
 import { parseTransformPairs, transformWGSL } from './transforms.js';
 import { nameComment } from './codegen.js';
+import { blendWGSL } from './colors.js';
 
 export const vertexWGSL = `
 @vertex fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
@@ -13,17 +14,22 @@ export const vertexWGSL = `
   return vec4f(positions[index], 0, 1);
 }`;
 
-// A deliberately small, typed language. No scene bindings are captured.
-export function compileShader(node, source, { structDefinitions = new Map() } = {}) {
+// Shader expressions are typed; text bodies are lifted into regular Lisp.
+export function compileShader(node, source, { structDefinitions = new Map(), hoistText } = {}) {
   const fail = (message, at = node) => { throw locate(new SyntaxError(message), source, at.start, at.end); };
   const [, parameters, ...body] = node.items;
   if (parameters?.kind !== 'list') fail('sh expects a parameter list followed by body statements');
   const uniforms = [];
   let needsSampler = false;
-  const builtins = new Map(['t', 'dt', 'w', 'h'].map(name => [name, { code: name, type: 1 }]));
-  builtins.set('p', { code: 'p', type: 2 });
+  let needsBefore = false;
+  let needsBlend = false;
+  const builtins = new Map(['t', 'dt', 'x', 'y', 'u', 'v', 'w', 'h'].map(name => [name, { code: name, type: 1 }]));
+  for (const name of ['xy', 'uv', 'wh']) builtins.set(name, { code: name, type: 2 });
+  builtins.set('before', { code: 'before', type: 'texture2d' });
   const reserved = new Set(['if', 'let', 'set', 'return', 'fn', 'sample', 'copy', 'get', 'len', 'cap', 'array', 'many', 'insert', 'remove', 'bool', 'and', 'or', 'not', '+', '-', '*', '/', '%', 'mat2x2f', 'mat3x3f', 'mat4x4f']);
   reserved.add('2d'); reserved.add('3d');
+  reserved.add('text');
+  reserved.add('blend');
   for (const name of ['num', 'str', ...scalarTypes, ...vectorTypes, ...matrixTypes, ...Object.keys(typeAliases)]) { reserved.add(name); reserved.add(name + '?'); }
   const helperTypes = new Map([['bool', 'bool'], ['mat2x2f', 'mat2x2f'], ['mat3x3f', 'mat3x3f'], ['mat4x4f', 'mat4x4f'], ['texture2d', 'texture2d']]);
   helperTypes.set('f32', 1); helperTypes.set('i32', 'i32'); helperTypes.set('u32', 'u32');
@@ -98,6 +104,14 @@ export function compileShader(node, source, { structDefinitions = new Map() } = 
     }
   }
   let scopes = [builtins, argumentsScope];
+  const parameterCount = uniforms.length, liftedText = new Map();
+  function textField(value, key, at) {
+    if (key === 'texture') return { code: value.code, type: 'texture2d' };
+    if (key === 'origin') return { code: value.origin, type: 2 };
+    const index = ['w', 'h', 'baseline', 'lines'].indexOf(key);
+    if (index < 0) fail(`Unknown shader text field: ${key}`, at);
+    return { code: `${value.metrics}.${'xyzw'[index]}`, type: 1 };
+  }
   const helpers = [], helperCode = [];
   const transformHelpers = new Set();
   const generatedStructs = new Map(), collectionReaders = new Map(), arrayValues = new Map(), manyEditors = new Set();
@@ -111,6 +125,7 @@ export function compileShader(node, source, { structDefinitions = new Map() } = 
     for (let i = scopes.length - 1; i >= 0; i--) {
       const value = scopes[i].get(node.name);
       if (value) {
+        if (value === builtins.get('before')) needsBefore = true;
         if (value.pending) fail(`Shader variable ${node.name} used before initialization`, node);
         if (value.owner && value.owner !== owner) {
           fail(`Cannot capture shader local ${node.name}; pass it as a parameter`, node);
@@ -123,6 +138,7 @@ export function compileShader(node, source, { structDefinitions = new Map() } = 
   const expression = node => {
     if (node.kind === 'access') {
       const target = expression(node.target);
+      if (target.type?.kind === 'text') return textField(target, node.key, node);
       if (target.type?.kind === 'struct') return fieldAccess(target, node.key, node);
       if (target.type?.kind === 'storage' || target.type?.kind === 'array' || target.type?.kind === 'many') {
         if (node.quoted || !/^\d+$/.test(node.key) || !Number.isSafeInteger(Number(node.key))) fail('Array dot access requires an integer index', node);
@@ -161,6 +177,22 @@ export function compileShader(node, source, { structDefinitions = new Map() } = 
     }
     if (head?.kind !== 'symbol') fail('Expected a shader operation name', node);
     const name = canonicalType(head.name);
+    if (name === 'text') {
+      if (liftedText.has(node)) return liftedText.get(node);
+      if (!hoistText) fail('Shader text requires the regular Lisp compiler to hoist its body', node);
+      hoistText(node, new Set(scopes.flatMap(scope => [...scope.keys()])));
+      const index = liftedText.size, resource = { name: `$text${index}`, type: 'texture2d',
+        kind: 'texture', binding: resources.length + 1, code: `resource${resources.length}` };
+      resources.push(resource); uniforms.push(resource);
+      const slot = uniformCount;
+      uniforms.push({ name: `$text${index}.metrics`, type: 'vec4f', slot });
+      uniforms.push({ name: `$text${index}.origin`, type: 'vec2f', slot: slot + 1 });
+      uniformCount += 2;
+      const value = { type: { kind: 'text' }, code: resource.code,
+        metrics: `bitcast<vec4f>(frame.values[${slot}])`, origin: `bitcast<vec2f>(frame.values[${slot + 1}].xy)` };
+      liftedText.set(node, value);
+      return value;
+    }
     if (name === '2d' || name === '3d') {
       const size = name === '2d' ? 2 : 3;
       const entries = parseTransformPairs(args, key => key.kind === 'symbol' ? key.name : key.kind === 'literal' ? key.value : null, fail);
@@ -250,6 +282,7 @@ export function compileShader(node, source, { structDefinitions = new Map() } = 
     if (name === 'get') {
       if (args.length !== 2) fail('get expects a collection/struct and index/key', node);
       const target = expression(args[0]);
+      if (target.type?.kind === 'text' && args[1].kind === 'literal' && typeof args[1].value === 'string') return textField(target, args[1].value, node);
       if (target.type?.kind === 'struct' && args[1].kind === 'literal' && typeof args[1].value === 'string') return fieldAccess(target, args[1].value, node);
       if (target.type?.kind === 'storage' || target.type?.kind === 'array' || target.type?.kind === 'many') {
         const index = numericExpression(args[1]);
@@ -288,7 +321,7 @@ export function compileShader(node, source, { structDefinitions = new Map() } = 
       const candidate = expression(args[0]);
       if (candidate.type?.kind === 'storage' && candidate.type.collection === 'many') return { code: `(frame.values[${candidate.resource.slot}].x != 0u)`, type: 'bool' };
       const value = candidate;
-      if (value.type === 'texture2d' || value.type?.kind === 'storage') fail('Expected a shader value, not a resource', args[0]);
+      if (value.type === 'texture2d' || value.type?.kind === 'storage' || value.type?.kind === 'text') fail('Expected a shader value, not a resource', args[0]);
       return { code: boolCode(value.type, value.code), type: 'bool' };
     }
     if (name === 'not') {
@@ -320,7 +353,7 @@ var selected: ${typeName(type)} = ${values[0].code};
 ${body}
 return selected;
 }`);
-      return { code: `${callable}(p${parameters.map(value => `, ${value.code}`).join('')})`, type };
+      return { code: `${callable}(xy${parameters.map(value => `, ${value.code}`).join('')})`, type };
     }
     if (name === '%' && !args.some(arg => { const value = expression(arg); return shape(value.type)?.scalar !== 'f32' || shape(value.type)?.size !== 1; })) {
       if (args.length !== 2) fail('% expects exactly two scalar operands', node);
@@ -403,10 +436,19 @@ return selected;
       });
       return { code: `${typeName(type)}(${converted.join(', ')})`, type };
     }
+    if (name === 'blend') {
+      if (args.length < 1 || args.length > 2) fail('blend expects one or two vec4f colors', node);
+      const colors = args.map(expression);
+      if (colors.some(color => color.type !== 4)) fail('blend expects vec4f colors', node);
+      if (!needsBlend) { needsBlend = true; helperCode.push(blendWGSL); }
+      if (colors.length === 1) { needsBefore = true; needsSampler = true; }
+      const background = colors[1]?.code ?? 'textureSampleLevel(before, shaderSampler, uv, 0f)';
+      return { code: `blendColors(${colors[0].code}, ${background})`, type: 4 };
+    }
     if (name === 'sample') {
-      if (args.length !== 2) fail('sample expects a texture2d and vec2f UV coordinates', node);
+      if (args.length !== 2) fail('sample expects a texture2d or text and vec2f UV coordinates', node);
       const image = expression(args[0]), uv = numericExpression(args[1]);
-      if (image.type !== 'texture2d' || uv.type !== 2) fail('sample expects a texture2d and vec2f UV coordinates', node);
+      if (image.type !== 'texture2d' && image.type?.kind !== 'text' || uv.type !== 2) fail('sample expects a texture2d or text and vec2f UV coordinates', node);
       needsSampler = true;
       return { code: `textureSampleLevel(${image.code}, shaderSampler, ${uv.code}, 0.0f)`, type: 4 };
     }
@@ -419,7 +461,7 @@ return selected;
     for (let i = 0; i < values.length; i++) {
       if (values[i].type !== callable.parameters[i].type) fail(`Argument ${i + 1} to ${name} must be ${typeName(callable.parameters[i].type)}`, args[i]);
     }
-    return { code: `${callable.code}(p${values.length ? ', ' : ''}${values.map(value => value.code).join(', ')})`, type };
+    return { code: `${callable.code}(xy${values.length ? ', ' : ''}${values.map(value => value.code).join(', ')})`, type };
   };
   const numericExpression = node => {
     const value = expression(node);
@@ -428,7 +470,7 @@ return selected;
   };
   const valueExpression = node => {
     const value = expression(node);
-    if (value.type === 'texture2d' || value.type?.kind === 'storage') fail('Expected a shader value, not a resource', node);
+    if (value.type === 'texture2d' || value.type?.kind === 'storage' || value.type?.kind === 'text') fail('Expected a shader value, not a resource', node);
     return value;
   };
   const elementType = info => {
@@ -569,11 +611,18 @@ ${compiled.code}
       return helper.type;
     } finally { scopes = savedScopes; owner = savedOwner; }
   }
-  const builtinCode = pixel => `  let w = frame.data.x;
-  let h = frame.data.y;
-  let t = frame.data.z;
-  let dt = frame.data.w;
-  let p = ${pixel};`;
+  const builtinCode = pixel => `  // builtins
+  let xy = ${pixel};
+  let x  = xy.x;
+  let y  = xy.y;
+  let wh = frame.data.xy;
+  let w  = wh.x;
+  let h  = wh.y;
+  let uv = xy / wh;
+  let u  = uv.x;
+  let v  = uv.y;
+  let t  = frame.data.z;
+  let dt = frame.data.w;`;
   function writable(node) {
     if (node.kind === 'symbol') return lookup(node);
     if (node.kind !== 'access') fail('set expects a name or dot target', node);
@@ -637,7 +686,7 @@ ${compiled.code}
           const parsed = parseConditional(args, (message, at) => fail(message, at || statement));
           const compiled = parsed.branches.map(branch => {
             const condition = expression(branch.condition);
-            if (condition.type === 'texture2d' || condition.type?.kind === 'storage' && condition.type.collection !== 'many') fail('Expected a shader condition value', branch.condition);
+            if (condition.type === 'texture2d' || condition.type?.kind === 'text' || condition.type?.kind === 'storage' && condition.type.collection !== 'many') fail('Expected a shader condition value', branch.condition);
             const code = condition.type?.kind === 'storage' ? `(frame.values[${condition.resource.slot}].x != 0u)` : boolCode(condition.type, condition.code);
             const body = statements(branch.body);
             mergeReturn(body.returnType, statement);
@@ -654,7 +703,12 @@ ${compiled.code}
         if (head?.name === 'let') {
           const local = scope.get(args[0].name);
           if (local.helper) { local.pending = false; return ''; }
-          const value = valueExpression(args[1]);
+          const value = expression(args[1]);
+          if (value.type?.kind === 'text') {
+            Object.assign(local, value, { pending: false, mutable: false, owner: null });
+            return '';
+          }
+          if (value.type === 'texture2d' || value.type?.kind === 'storage') fail('Expected a shader value, not a resource', args[1]);
           Object.assign(local, { type: value.type, pending: false });
           return `var ${local.code}: ${typeName(value.type)} = ${value.code}; ${nameComment(args[0].name)}`;
         }
@@ -696,6 +750,11 @@ ${compiled.code}
   const compiled = statements(body);
   if (!compiled.returns) fail('Shader must explicitly return a vec4f RGBA color');
   for (let i = 0; i < helpers.length; i++) compileHelper(helpers[i]);
+  if (needsBefore) {
+    const resource = { name: 'before', type: 'texture2d', kind: 'texture', code: 'before',
+      binding: resources.length + 1, automatic: true };
+    uniforms.push(resource); resources.push(resource);
+  }
   const hasSampler = resources.some(resource => resource.kind === 'texture') || needsSampler;
   const resourceCode = resources.map(resource => resource.kind === 'storage'
     ? `@group(0) @binding(${resource.binding}) var<storage, read> ${resource.code}: array<${storedTypeName(elementType(resource.element))}${resource.capacity ? ', ' + resource.capacity : ''}>;`
@@ -711,5 +770,5 @@ ${helperCode.join('\n')}
 ${builtinCode('pixel.xy')}
 ${compiled.code}
 }`;
-  return { wgsl, uniforms, uniformCount, resources, hasSampler, source, start: node.start, end: node.end };
+  return { wgsl, uniforms, uniformCount, resources, hasSampler, parameterCount, source, start: node.start, end: node.end };
 }

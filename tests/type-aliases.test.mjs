@@ -32,9 +32,9 @@ test('aliases work in nested collection annotations, shader constructors, unifor
     const vector = alias.startsWith('vec');
     const n = Number(alias.at(-1));
     const args = vector ? "1" : Array.from({ length: n * n }, (_, i) => i % (n + 1) === 0 ? 1 : 0).join(" ");
-    const access = vector ? 'v.x' : 'v.0.0';
+    const access = vector ? 'input.x' : 'input.0.0';
     const source = `(struct S values:array<${alias},2> active:many<${alias},2>)
-      (sh (v:${alias} rows:array<${alias}> active:many<${alias},2>)
+      (sh (input:${alias} rows:array<${alias}> active:many<${alias},2>)
         (let local (${alias} ${args}))
         (let identity (fn (value:${alias}) (return value)))
         (let copied (identity local))

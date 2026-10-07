@@ -18,7 +18,7 @@ test('scalar modulo compiles to WGSL remainder with strict arity and types', () 
 
 test('square matrix uniforms, constructors, helpers, and products compile with numeric types', () => {
   for (const size of [2, 3, 4]) {
-    const source = `(sh (before:f32 transform:mat${size}x${size}f after:vec2f)
+    const source = `(sh (offset:f32 transform:mat${size}x${size}f after:vec2f)
       (let identity (mat${size}x${size}f ${Array.from({ length: size * size }, (_, i) => i % (size + 1) === 0 ? 1 : 0).join(" ")}))
       (let apply (fn (m:mat${size}x${size}f v:vec${size}f) (return (* m v))))
       (let combined (* transform identity))
@@ -49,15 +49,44 @@ test('square matrix uniforms, constructors, helpers, and products compile with n
 });
 
 test('gradient compiles to typed WGSL with built-in frame inputs', () => {
-  const result = shader('(sh () (let uv (/ p (vec2f w h))) (return (vec4f uv 0 1)))');
+  const result = shader('(sh () (let uv (/ xy (vec2f w h))) (return (vec4f uv 0 1)))');
   assert.deepEqual(result.uniforms, []);
-  assert.match(result.wgsl, /var local0: vec2f = \(p \/ vec2f\(w, h\)\)/);
+  assert.match(result.wgsl, /var local0: vec2f = \(xy \/ vec2f\(w, h\)\)/);
   assert.match(result.wgsl, /return vec4f\(local0, 0f, 1f\)/);
-  for (const name of ['p', 'w', 'h', 't', 'dt']) assert.match(result.wgsl, new RegExp(`let ${name} =`));
+  for (const name of ['xy', 'x', 'y', 'uv', 'u', 'v', 'wh', 'w', 'h', 't', 'dt']) assert.match(result.wgsl, new RegExp(`let ${name}\\s+=`));
+});
+
+test('coordinate builtins have the correct types, remain read-only, and replace p', () => {
+  const result = shader('(sh () (return (vec4 (+ xy uv wh) (+ x y u v w h) 1)))');
+  assert.deepEqual(result.uniforms, []);
+  assert.match(result.wgsl, /let uv = xy \/ wh/);
+  assert.match(result.wgsl, /let wh = frame.data.xy/);
+  assert.doesNotMatch(result.wgsl, /let p =/);
+  for (const name of ['xy', 'uv', 'wh', 'x', 'y', 'u', 'v', 'w', 'h']) {
+    const vector = ['xy', 'uv', 'wh'].includes(name);
+    assert.throws(() => shader(`(sh (${name}:${vector ? 'vec2' : 'f32'}) (return (vec4 1)))`), /Invalid or duplicate shader parameter/);
+    assert.throws(() => shader(`(sh () (set ${name} ${vector ? '(vec2)' : '0'}) (return (vec4 1)))`), /Cannot assign shader input/);
+  }
+  assert.throws(() => shader('(sh () (return (vec4 p 0 1)))'), /Unknown shader symbol: p/);
+  // The old name remains available as an ordinary user parameter.
+  assert.equal(shader('(sh (p:vec2) (return (vec4 p 0 1)))').uniforms[0].name, 'p');
+});
+
+test('before is an automatic texture input available in shader helpers', () => {
+  const result = shader('(sh (gain:f32) (let read (fn () (return (sample before uv)))) (return (* (read) gain)))');
+  assert.equal(result.parameterCount, 1);
+  assert.equal(result.uniformCount, 1);
+  assert.equal(result.resources.length, 1);
+  assert.equal(result.uniforms.at(-1).automatic, true);
+  assert.match(result.wgsl, /@binding\(1\) var before: texture_2d<f32>/);
+  assert.match(result.wgsl, /textureSampleLevel\(before, shaderSampler/);
+  assert.equal(shader('(sh () (return (vec4 1)))').resources.length, 0);
+  assert.throws(() => shader('(sh (before:texture2d) (return (sample before uv)))'), /Invalid or duplicate shader parameter/);
+  assert.throws(() => shader('(sh () (set before 0) (return (vec4 1)))'), /Cannot assign shader input/);
 });
 
 test('shader locals, assignment, scopes, scalar broadcasting, and swizzles', () => {
-  const result = shader('(sh () (let uv (/ p (vec2f w h))) { (let uv (vec2f 0)) (set uv (+ uv 1)) } (set uv (* uv 0.5)) (return (vec4f uv.x uv.y 0 1)))');
+  const result = shader('(sh () (let uv (/ xy (vec2f w h))) { (let uv (vec2f 0)) (set uv (+ uv 1)) } (set uv (* uv 0.5)) (return (vec4f uv.x uv.y 0 1)))');
   assert.match(result.wgsl, /var local1: vec2f/);
   assert.match(result.wgsl, /vec2f\(1f\)/);
   assert.match(result.wgsl, /local0 = \(local0 \* vec2f\(0.5f\)\)/);
@@ -71,7 +100,7 @@ test('typed scalar uniforms are declared separately from built-in inputs', () =>
 });
 
 test('shader vector uniforms and texture resources have distinct typed bindings', () => {
-  const result = shader('(sh (image:texture2d tint:vec4f gain:f32) (return (* (sample image (/ p (vec2f w h))) tint gain)))');
+  const result = shader('(sh (image:texture2d tint:vec4f gain:f32) (return (* (sample image (/ xy (vec2f w h))) tint gain)))');
   assert.equal(result.uniformCount, 2);
   assert.equal(result.resources.length, 1);
   assert.equal(result.resources[0].binding, 1);
@@ -84,15 +113,15 @@ test('shader vector uniforms and texture resources have distinct typed bindings'
 });
 
 test('helpers accept texture resources and shader assertions are checked statically', () => {
-  const result = shader('(sh (image:texture2d) (let read (fn (input:texture2d uv:vec2f) (return (sample input uv)))) (return (read image ((/ p (vec2f w h)) : vec2f))))');
+  const result = shader('(sh (image:texture2d) (let read (fn (input:texture2d uv:vec2f) (return (sample input uv)))) (return (read image ((/ xy (vec2f w h)) : vec2f))))');
   assert.match(result.wgsl, /argument0: texture_2d<f32>, argument1: vec2f/);
   assert.doesNotMatch(result.wgsl, /var local\d+: texture/);
-  assert.equal(shader('(sh () (let read (fn (input:texture2d) (return (sample input p)))) (return (vec4f 1)))').hasSampler, true);
+  assert.equal(shader('(sh () (let read (fn (input:texture2d) (return (sample input xy)))) (return (vec4f 1)))').hasSampler, true);
   for (const source of [
     '(sh (image:texture2d) (return (vec4f image)))',
     '(sh (image:texture2d) (return (+ image 1)))',
     '(sh (image:texture2d) (return (sample image 1)))',
-    '(sh () (return (vec4f (sample 1 p))))',
+    '(sh () (return (vec4f (sample 1 xy))))',
     '(sh () (return ((vec4f 1) : f32)))',
   ]) assert.throws(() => shader(source), SyntaxError);
 });
@@ -104,7 +133,7 @@ test('colon annotations accept whitespace, newlines, and comments on either side
     const result = shader(`(sh (gain${separator}f32)
       (let color (fn (uv${separator}vec2f amount${separator}f32)
         (return (vec4f (* uv amount) 0 1))))
-      (return (color (/ p (vec2f w h)) gain)))`);
+      (return (color (/ xy (vec2f w h)) gain)))`);
     expected ??= result.wgsl;
     assert.equal(result.wgsl, expected);
   }
@@ -143,25 +172,25 @@ test('inline shader values are stable across repeated callback execution', () =>
 });
 
 test('let-bound helpers lift to module scope with inferred return types', () => {
-  const result = shader('(sh () (let gradient (fn (uv:vec2f) (return (vec4f uv 0 1)))) (return (gradient (/ p (vec2f w h)))))');
+  const result = shader('(sh () (let gradient (fn (uv:vec2f) (return (vec4f uv 0 1)))) (return (gradient (/ xy (vec2f w h)))))');
   assert.match(result.wgsl, /fn helper0\(shaderPixel: vec2f, argument0: vec2f\) -> vec4f/);
   assert.ok(result.wgsl.indexOf('fn helper0') < result.wgsl.indexOf('@fragment'));
-  assert.match(result.wgsl, /return helper0\(p, \(p \/ vec2f\(w, h\)\)\)/);
+  assert.match(result.wgsl, /return helper0\(xy, \(xy \/ vec2f\(w, h\)\)\)/);
   assert.doesNotMatch(result.wgsl, /var \w+:.*fn/);
 });
 
 test('helper parameters are mutable and helpers can return scalars or vectors', () => {
-  const result = shader('(sh () (let double (fn (x:f32) (set x (* x 2)) (return x))) (let color (fn (uv:vec2f) (return (vec4f uv (double 0.25) 1)))) (return (color (/ p (vec2f w h)))))');
+  const result = shader('(sh () (let double (fn (x:f32) (set x (* x 2)) (return x))) (let color (fn (uv:vec2f) (return (vec4f uv (double 0.25) 1)))) (return (color (/ xy (vec2f w h)))))');
   assert.match(result.wgsl, /fn helper0\(shaderPixel: vec2f, argument0: f32\) -> f32/);
   assert.match(result.wgsl, /var local\d+: f32 = argument0/);
   assert.match(result.wgsl, /local\d+ = \(local\d+ \* 2f\)/);
-  assert.match(result.wgsl, /helper0\(p, 0.25f\)/);
+  assert.match(result.wgsl, /helper0\(xy, 0.25f\)/);
 });
 
 test('helpers receive built-in pixel inputs and access shader uniforms', () => {
-  const result = shader('(sh (gain:f32) (let pixel (fn () (return (* (/ p (vec2f w h)) gain)))) (return (vec4f (pixel) 0 1)))');
+  const result = shader('(sh (gain:f32) (let pixel (fn () (return (* (/ xy (vec2f w h)) gain)))) (return (vec4f (pixel) 0 1)))');
   assert.match(result.wgsl, /fn helper0\(shaderPixel: vec2f\) -> vec2f/);
-  assert.match(result.wgsl, /let p = shaderPixel/);
+  assert.match(result.wgsl, /let xy = shaderPixel/);
   assert.match(result.wgsl, /frame.values\[0\].x/);
 });
 
@@ -175,8 +204,8 @@ test('nested helpers and shadowed names generate distinct WGSL functions', () =>
       (return (color))
     })`);
   assert.equal((result.wgsl.match(/fn helper\d+/g) || []).length, 3);
-  assert.match(result.wgsl, /return helper1\(p\)/);
-  assert.match(result.wgsl, /helper2\(p\)/);
+  assert.match(result.wgsl, /return helper1\(xy\)/);
+  assert.match(result.wgsl, /helper2\(xy\)/);
 });
 
 test('invalid helper calls, captures, recursion, and function values fail with source spans', () => {
@@ -201,14 +230,14 @@ test('invalid helper calls, captures, recursion, and function values fail with s
 
 test('shader errors have Lisp spans and reject unsupported or mismatched types', () => {
   for (const source of [
-    '(sh)', '(sh (gain) (return (vec4f 1)))', '(sh (p:f32) (return (vec4f 1)))',
-    '(sh () (return "red"))', '(sh () (return p))', '(sh () (let x 1))',
+    '(sh)', '(sh (gain) (return (vec4f 1)))', '(sh (xy:f32) (return (vec4f 1)))',
+    '(sh () (return "red"))', '(sh () (return xy))', '(sh () (let x 1))',
     '(sh () (return (vec4f NaN)))', '(sh () (return (vec4f (print 1))))',
     '(sh () (let x "2") (return (vec4f 1)))', '(sh () (let x x) (return (vec4f 1)))',
     '(sh () (let x 1) (set x (vec2f 1)) (return (vec4f 1)))',
     '(sh () (set t 1) (return (vec4f 1)))', '(sh () (return (vec4f outside)))',
     '(sh () (return (vec4f (+ (vec2f 1) (vec3f 1)) 1)))',
-    '(sh () (return (vec4f p.z)))',
+    '(sh () (return (vec4f xy.z)))',
     '(sh () (return (vec4f 1)) (let x 2))',
   ]) {
     assert.throws(() => shader(source), error => error instanceof SyntaxError && Boolean(error.lisp), source);

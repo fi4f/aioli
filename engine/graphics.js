@@ -1,9 +1,10 @@
 import { vertexWGSL } from './shader.js';
 import { locate } from './trace.js';
 import { assertType, registerTexture } from './types.js';
-import { dict, dataKind } from './data.js';
+import { dict, dataKind, reCopy, get, put } from './data.js';
 import { collectionInfo, sameElement, packCollection } from './structures.js';
 import { scalarTypes, vectorInfo, matrixSize } from './numeric-types.js';
+import { rasterizeText } from './text.js';
 
 export async function createGraphics(canvas, reportError = console.error) {
   if (!navigator.gpu) throw new Error('WebGPU is required but unavailable in this browser.');
@@ -29,10 +30,16 @@ export async function createGraphics(canvas, reportError = console.error) {
 
   let destroyed = false, lost = false, activeFrame = null, completed = null;
   let width = 0, height = 0;
+  let blackTexture = null;
   const pools = [[], []], slots = [], cache = new WeakMap();
   const handles = new WeakMap();
+  const textCache = new Map(), persistentTextures = new Set();
+  const textureFinalizer = new FinalizationRegistry(texture => {
+    persistentTextures.delete(texture);
+    if (!destroyed) texture.destroy();
+  });
   const sampler = device.createSampler({ minFilter: 'linear', magFilter: 'linear' });
-  const stats = { shaderCompilations: 0 };
+  const stats = { shaderCompilations: 0, textRasterizations: 0 };
   device.lost.then(info => {
     lost = true;
     if (!destroyed) reportError(new Error(`WebGPU device lost: ${info.message || info.reason}`));
@@ -48,6 +55,7 @@ export async function createGraphics(canvas, reportError = console.error) {
       pool.length = 0;
     }
     completed = null;
+    blackTexture?.destroy(); blackTexture = null;
   };
   const resize = () => {
     if (width === canvas.width && height === canvas.height) return;
@@ -82,17 +90,33 @@ export async function createGraphics(canvas, reportError = console.error) {
     }) : null;
     pass(encoder, context.getCurrentTexture(), texture ? presentPipeline : null, group);
   };
+  const initialBefore = () => {
+    if (!blackTexture) {
+      blackTexture = device.createTexture({ size: [width, height], format,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+      const encoder = device.createCommandEncoder();
+      pass(encoder, blackTexture, null, null);
+      device.queue.submit([encoder.finish()]);
+    }
+    return blackTexture;
+  };
 
   const createShader = descriptor => {
     if (cache.has(descriptor)) return cache.get(descriptor);
     let pipeline = null, failure = null;
     const resources = descriptor.uniforms.filter(parameter => parameter.type === 'texture2d' || parameter.kind === 'storage');
     const numeric = descriptor.uniforms.filter(parameter => parameter.type !== 'texture2d');
+    const expected = descriptor.uniforms.filter(parameter => !parameter.automatic).length;
+    const hasAutomatic = descriptor.uniforms.some(parameter => parameter.automatic);
     const hasSampler = descriptor.hasSampler ?? resources.some(parameter => parameter.type === 'texture2d');
     const shader = (frameContext, ...values) => {
       available();
       if (!activeFrame || frameContext !== activeFrame.context) throw new Error('Shader calls require the current render context.');
-      if (values.length !== descriptor.uniforms.length) throw new TypeError(`Shader expects ${descriptor.uniforms.length} parameter arguments`);
+      if (values.length !== expected) throw new TypeError(`Shader expects ${expected} parameter arguments`);
+      if (hasAutomatic) {
+        let supplied = 0;
+        values = descriptor.uniforms.map(parameter => parameter.automatic ? get(frameContext, parameter.name) : values[supplied++]);
+      }
       const inputs = [];
       for (let i = 0; i < values.length; i++) {
         const parameter = descriptor.uniforms[i], value = values[i];
@@ -107,7 +131,7 @@ export async function createGraphics(canvas, reportError = console.error) {
         } else if (parameter.type === 'texture2d') {
           assertType(value, parameter.type, `Shader parameter ${parameter.name}`);
           const handle = handles.get(value);
-          if (!handle || handle.frame !== activeFrame) throw new TypeError(`Shader parameter ${parameter.name}: texture must come from this runtime's current frame`);
+          if (!handle || !handle.persistent && handle.frame !== activeFrame) throw new TypeError(`Shader parameter ${parameter.name}: texture must come from this runtime's current frame or its persistent resources`);
           inputs.push(handle.texture);
         } else {
           assertType(parameter.type === 'f32' && typeof value === 'number' ? Math.fround(value) : value, parameter.type, `Shader parameter ${parameter.name}`);
@@ -220,6 +244,9 @@ export async function createGraphics(canvas, reportError = console.error) {
     if (activeFrame) throw new Error('Cannot start a render frame inside another frame.');
     const frame = { context: dict('t', t, 'dt', dt, 'w', width, 'h', height), encoder: device.createCommandEncoder(),
       pool: completed ? 1 - completed.pool : 0, drawCount: 0, output: null, dt, t };
+    const before = registerTexture(Object.freeze({}));
+    handles.set(before, { texture: completed?.texture || initialBefore(), frame });
+    put(frame.context, 'before', before);
     activeFrame = frame;
     try {
       callback?.(frame.context);
@@ -251,12 +278,41 @@ export async function createGraphics(canvas, reportError = console.error) {
     if (activeFrame) return fill(activeFrame.context, ...color);
     render(frame => fill(frame, ...color));
   };
+  const createText = text => {
+    available();
+    const fontState = text.runs.map(run => globalThis.document?.fonts?.check(`${run.size}px ${run.font}`) ?? true);
+    const key = JSON.stringify([text, fontState]);
+    if (textCache.has(key)) {
+      const cached = textCache.get(key);
+      textCache.delete(key); textCache.set(key, cached);
+      return reCopy(dict(...cached));
+    }
+    const raster = rasterizeText(text, { maxSize: device.limits.maxTextureDimension2D });
+    const texture = device.createTexture({ size: [raster.width, raster.height], format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
+    try {
+      // Store straight alpha so ordinary shader color multiplication remains useful.
+      device.queue.copyExternalImageToTexture({ source: raster.canvas }, { texture, premultipliedAlpha: false }, [raster.width, raster.height]);
+    } catch (error) { texture.destroy(); throw error; }
+    const handle = registerTexture(Object.freeze({}));
+    handles.set(handle, { texture, persistent: true });
+    persistentTextures.add(texture); textureFinalizer.register(handle, texture);
+    stats.textRasterizations++;
+    const fields = ['texture', handle, 'w', raster.width, 'h', raster.height, 'baseline', raster.baseline,
+      'origin', dict('x', raster.offsetX, 'y', raster.offsetY), 'lines', raster.lineCount, 'content', text.runs.map(run => run.text).join('')];
+    textCache.set(key, fields);
+    if (textCache.size > 128) textCache.delete(textCache.keys().next().value);
+    return reCopy(dict(...fields));
+  };
   render(null);
-  return { bindings: { clear }, createShader, render, stats,
+  return { bindings: { clear }, createShader, createText, render, stats,
     resetScene() { for (const slot of slots) slot.groups.clear(); },
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      textCache.clear();
+      for (const texture of persistentTextures) texture.destroy();
+      persistentTextures.clear();
       resetTextures();
       for (const slot of slots) { slot.buffer.destroy(); for (const storage of slot.storage.values()) storage.buffer.destroy(); }
       context.unconfigure(); device.destroy();

@@ -5,7 +5,7 @@ Run executes source; output goes to the browser
 console. The second textarea shows the exact generated function body, whose
 arguments are `$bindings`, `$shaders` (cached shader values), `$assert` (strict
 type assertions), `$access` (collection and vector dot access), `$nil` (host no-value normalization),
-`$bool` (language conditions), and, in trace
+`$bool` (language conditions), `$text` (text builder operations), and, in trace
 mode, `$trace` (the trace helpers). A separate textarea shows generated WGSL.
 
 ## Graphics
@@ -30,6 +30,111 @@ submits a full-canvas triangle whose fragment shader returns that color.
 The shader language below builds on this per-pixel rendering path; ray tracing
 is not implemented yet. Scenes provide the animation loop. Browser services
 live in `graphics.js` and supply ordinary bindings to the compiler.
+
+## Text
+
+`text` evaluates an ordinary Lisp body with a fresh immediate-mode text builder.
+It captures outer variables directly. Statements, `print`, `if`/`elif`/`else`,
+mutation, and regular function calls work as usual. For example:
+
+```lisp
+(let name "Ada")
+(let label (text
+  (font "sans-serif")
+  (size 32)
+  (span "Hello ")
+  (color (vec3 1 0 0))
+  (span name)
+  (line)
+  (span "Welcome back.")))
+```
+
+`span` appends a string using the current style; use `str` for explicit conversions.
+`line` appends a newline. Embedded `\n` also breaks lines, and blank/trailing lines
+are preserved. `font` takes a CSS font family, `size` takes positive pixels, and
+`color` takes RGB `vec3f` or RGBA `vec4f` with channels between zero and one.
+Defaults are sans-serif, 16 pixels, and opaque white. Style changes affect all
+subsequent spans, including after a branch or brace block. Earlier spans retain
+their styles. Nested `text` bodies have independent builders. Functions defined
+inside a text body can append to its builder while that body is executing; using
+that builder after completion raises an error. Text operation names are reserved
+within text bodies. Direct `return` from a text body is rejected; regular nested
+functions can return normally.
+
+Block settings are `(width pixels)`, `(align "left"|"center"|"right")`, and
+`(line-height pixels)`. Their final values apply to the whole block. Without width,
+text uses its natural width. With width, it wraps at whitespace across span
+boundaries; oversized words stay intact and may extend past that width. Line
+height is the distance between baselines; the default uses font metrics with
+20% extra spacing. Color changes preserve shaping within contiguous spans sharing
+the same font and size. The initial layout supports left-to-right plain text and
+basic whitespace wrapping; paragraph bidirectionality, Unicode line breaking,
+rich font styles, and editing/caret behavior are not implemented.
+
+In the browser runtime, the result is a dictionary with `texture`, `w`, `h`,
+`baseline`, `origin`, `lines`, and `content`. Dimensions describe the actual raster
+texture, including padding for glyph overhang and filtering. `baseline` is the
+first baseline's y coordinate; `origin.x`/`origin.y` locate the layout origin
+within that texture. The texture has straight RGBA alpha and belongs to the
+runtime; it can be passed to `texture2d` parameters across frames and resizes.
+For example, compose it over an opaque background:
+
+```lisp
+(let draw (sh (image:texture2d dimensions:vec2 position:vec2)
+  (let pixel (sample image (/ (- xy position) dimensions)))
+  (let background (vec3 0.1))
+  (return (blend pixel (vec4 background 1)))))
+(on render (context)
+  (draw context label.texture (vec2 label.w label.h) (vec2 24 24)))
+```
+
+Text is a snapshot: outer mutations require evaluating `text` again. Equivalent
+text snapshots reuse cached textures; the cache retains the latest 128 entries.
+Eviction preserves textures still referenced by labels or handles. Resources are
+released on runtime destruction, and evicted unreferenced textures can be collected.
+For custom web fonts, load the font before creating text. Rebuilding after a font
+becomes available uses its new metrics. Raster text has a fixed resolution.
+`examples/text.lisp` is a complete scene.
+
+Compiler-only callers without the browser graphics runtime receive an inspectable
+dictionary with `content` and styled `runs`, with no GPU allocation. The compiler's
+`textRenderer` option supplies the snapshot-to-resource adapter; Aioli supplies
+its Canvas 2D rasterizer and persistent texture uploader automatically.
+Run text compiler and layout checks with `node --test tests/text.test.mjs`.
+
+### Text inside shaders
+
+`text` expressions inside `sh` are lifted into ordinary Lisp execution. Both named
+and inline expressions work, and `sample` accepts the lifted text directly:
+
+```lisp
+(let name "Ada")
+(let draw (sh ()
+  (let label (text (size 32) (span "Hello ") (span name)))
+  (let uv (/ (- xy (vec2 20 40)) (vec2 label.w label.h)))
+  (return (sample label uv))))
+(on render (context) (draw context))
+```
+
+`(sample (text (span "Inline")) uv)` also works. Named text exposes `.texture`,
+`.w`, `.h`, `.baseline`, `.lines`, and `.origin.x`/`.origin.y` in shaders; literal
+`get` access works too. These are read-only resource properties. Position and
+transforms remain ordinary sampling-coordinate calculations. The compiler adds
+hidden texture, measurement, and origin inputs automatically; shader call sites
+still pass only their explicit parameters. Text aliases and shader helper access
+to named text work without copying the resource.
+
+All text expressions are evaluated once, in source order, when the `sh` expression
+creates its callable value. This includes definitions in shader helpers and
+conditional branches, regardless of which branches later execute on the GPU.
+The text bodies capture regular Lisp values and retain ordinary text behavior,
+including debugging calls and nested builders. Shader parameters, shader locals,
+and per-pixel/frame builtins (`xy`, `x`, `y`, `uv`, `u`, `v`, `wh`, `w`, `h`, `t`, `dt`, `before`) are unavailable in hoisted
+text; using them produces a source-located compiler error. A local declared inside
+the text body may use one of those names. Outer mutations require recreating the
+shader value to rebuild its text; drawing that shader repeatedly does not rebuild
+the text. Existing persistent texture caching still applies to rebuilt definitions.
+The complete scene is `examples/shader-text.lisp`.
 
 ## Embedding
 
@@ -67,12 +172,13 @@ Only one runtime may own a canvas at a time.
 | `t` | Accumulated simulation time at the end of this fixed step | Elapsed frame time since scene activation |
 | `dt` | Fixed `1 / updateHz` seconds | Actual elapsed seconds since the previous frame |
 | `w`, `h` | Current canvas dimensions in pixels | Dimensions of this render frame |
+| `before` | Absent (`nil` on access) | Texture of the last completed frame; opaque black initially or after resize |
 
 The first render has t/dt = 0 and no update. A bounded catch-up can leave simulation
 time behind render time. Both clocks reset on scene replacement. Contexts are
 ordinary dictionaries: `get`, dot access, and `copy` work. Each invocation gets a
-new snapshot. Mutating fields does not change the scheduler, canvas, or shader
-built-in inputs. Copies, update contexts, and saved render contexts cannot
+new snapshot. Mutating timing/dimension fields does not change the scheduler,
+canvas, or numeric shader builtins. Copies, update contexts, and saved render contexts cannot
 authorize shader calls in another frame.
 Elapsed frame time accumulates, and every update receives
 exactly `1 / updateHz` seconds. Fractional time carries into subsequent frames.
@@ -97,22 +203,78 @@ Callbacks are synchronous. Run checks with
 `sh` enters a separate compiler that emits WGSL, not JavaScript. The first subset
 supports numeric literals, `let`, `set`, brace scopes, explicit `return`, arithmetic
 `+ - * / %`, boolean literals and `and`/`or`/`not`, `vec2f`, `vec3f`, `vec4f`, square `mat2x2f`, `mat3x3f`, `mat4x4f`, `copy`, and vector
-dot access such as `p.x`, `p.yx`, and `(vec4f 1).wwww`. A shader must return a
+dot access such as `xy.x`, `xy.yx`, and `(vec4f 1).wwww`. A shader must return a
 vec4f RGBA color. Locals are mutable and types are inferred from initializers;
 assignment must preserve their type. There are no implicit scene-variable captures.
 
 ```lisp
 (on render (context)
   ((sh ()
-    (let uv (/ p (vec2f w h)))
+    (let uv (/ xy (vec2f w h)))
     (return (vec4f uv 0 1))) context))
 ```
 
-Built-in inputs are available in every shader: `p` is a vec2f of pixel-center
-coordinates, with the origin at the top left; `w` and `h` are output dimensions
-in pixels; `t` is elapsed scene-render time; `dt` is time since the previous frame.
-Times are in seconds and start at zero. Dividing p by `(vec2f w h)` gives normalized
-UV coordinates. No dimensions or time values are baked into shader source.
+Built-in inputs are available in every shader and shader helper:
+
+| Input | Type | Value |
+| --- | --- | --- |
+| `xy` | vec2f | Pixel-center coordinates, origin at the top left |
+| `x`, `y` | f32 | Components of `xy` |
+| `uv` | vec2f | Normalized coordinates: `xy / wh` |
+| `u`, `v` | f32 | Components of `uv` |
+| `wh` | vec2f | Current output dimensions in pixels |
+| `w`, `h` | f32 | Components of `wh` |
+| `t`, `dt` | f32 | Elapsed scene-render time and time since the previous frame |
+| `before` | texture2d | The current render context's incoming image (`context.before`) |
+
+Times are in seconds and start at zero. Pixel centers start at `(0.5, 0.5)`;
+normalized coordinates use those centers and increase downward along v.
+Dimensions and time come from the current frame, including after resizing.
+The old `p` input has been removed. Builtins cannot be assigned or declared as
+shader input parameters; local bindings and helper parameters can shadow them.
+
+`before` is supplied automatically when a shader references it, including inside
+helpers. It is the last completed frame at the start of the render callback and
+stays the same across that callback's passes. The first frame and the first frame
+after a resize receive an opaque black texture of the current output dimensions.
+Frames with no draws retain the displayed image; synchronous render failures
+discard recorded passes and retain the last completed image. There is no extra
+shader argument to pass:
+
+```lisp
+(let fade (sh ()
+  (let image (sample before uv))
+  (return (vec4 (* image.xyz 0.98) 1))))
+(on render (context) (fade context))
+```
+
+Regular code can pass `context.before` to explicit `texture2d` parameters instead.
+It is a borrowed handle belonging to this runtime's current render frame; saving
+it and using it in a later frame is rejected. Earlier passes in the current
+callback remain available through the textures those shader calls return.
+
+`(blend foreground background)` composites two straight-alpha `vec4f` colors,
+placing the first over the second. It returns a fresh straight-alpha `vec4f`,
+including the combined alpha when the background is translucent. Two fully
+transparent colors produce `(vec4 0)`. Alpha is clamped to zero through one;
+RGB values are preserved without clamping. The two-color form works in regular
+Lisp and shaders; regular colors must have finite components.
+
+In shaders, `(blend foreground)` samples `before` at the current screen `uv`
+automatically. It works inside shader helpers and with hoisted text, without
+additional arguments or manual alpha calculations:
+
+```lisp
+(sh ()
+  (let label (text (size 72) (color (vec4 1 0 0 1)) (span "Hello World")))
+  (let text-uv (/ (- xy (vec2 20 20)) (vec2 label.w label.h)))
+  (return (blend (sample label text-uv))))
+```
+
+The default background always uses the screen UV, even if a local named `uv`
+holds custom texture coordinates. To choose a different background, pass a
+second color explicitly, such as `(blend color (vec4 0 0 0 1))`. Regular code
+requires that second color because it has no current pixel to sample.
 
 Numbers in shaders are f32, not the scene language's JavaScript numbers. Finite
 f32 literals are supported; explicit NaN/Infinity constants are not implemented
@@ -127,7 +289,7 @@ support `bool`, and resource parameters support `texture2d`:
 
 ```lisp
 (let tint (sh (gain:f32)
-  (let uv (/ p (vec2f w h)))
+  (let uv (/ xy (vec2f w h)))
   (return (vec4f (* uv gain) 0 1))))
 (on render (context) (tint context 0.8))
 ```
@@ -147,9 +309,9 @@ Pass an earlier shader output into a texture parameter to compose passes:
 
 ```lisp
 (let gradient (sh ()
-  (return (vec4f (/ p (vec2f w h)) 0.4 1))))
+  (return (vec4f (/ xy (vec2f w h)) 0.4 1))))
 (let tint (sh (image : texture2d color : vec4f)
-  (return (* (sample image (/ p (vec2f w h))) color))))
+  (return (* (sample image (/ xy (vec2f w h))) color))))
 (on render (context)
   (tint context (gradient context) (vec4f 0.5 1 0.25 1)))
 ```
@@ -168,7 +330,7 @@ Shader helpers use the same `let` and anonymous `fn` structure as scene code:
 (sh ()
   (let gradient (fn (uv:vec2f)
     (return (vec4f uv 0 1))))
-  (return (gradient (/ p (vec2f w h)))))
+  (return (gradient (/ xy (vec2f w h)))))
 ```
 
 The compiler recognizes a `let` initialized with `fn` and lifts the function to

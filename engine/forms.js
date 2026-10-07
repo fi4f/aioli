@@ -1,6 +1,7 @@
 import { parseConditional } from './conditionals.js';
 // Emitters return an expression string or { statement: JavaScript }.
 export const forms = {
+  text(args, emit, context) { return context.text(args); },
   struct(args, emit, context) {
     if (!context.inStatement) throw new SyntaxError('struct requires statement position');
     return { statement: context.struct(args) };

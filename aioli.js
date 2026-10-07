@@ -49,7 +49,7 @@ export class Aioli {
     if (this.destroyed) throw new Error('Aioli runtime has been destroyed.');
     if (!this.graphics) throw new Error('Attach a canvas before compiling a program.');
     if (typeof source !== 'string') throw new TypeError('Aioli source must be a string.');
-    const program = compile(source, this.bindings, forms, { trace, scene });
+    const program = compile(source, this.bindings, forms, { trace, scene, textRenderer: this.graphics.createText });
     const shaderValues = program.shaders.map(shader => this.graphics.createShader(shader));
     const execute = program.run;
     program.run = () => {

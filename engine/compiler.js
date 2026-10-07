@@ -6,6 +6,7 @@ import { normalizeNil, bool } from './data.js';
 import { scalarTypes, vectorTypes, canonicalType } from './numeric-types.js';
 import { isTransformConstructor } from './transforms.js';
 import { nameComment } from './codegen.js';
+import { textOperations, createTextBuilder, textOperation, finishTextBuilder, textDescription, bindTextShader } from './text.js';
 
 export function read(source) {
   let i = 0;
@@ -138,9 +139,11 @@ export function read(source) {
 }
 
 // Bindings are runtime values/functions; forms are trusted compile-time emitters.
-export function compile(source, bindings = {}, forms = {}, { trace = true, scene = false } = {}) {
+export function compile(source, bindings = {}, forms = {}, { trace = true, scene = false, textRenderer = textDescription } = {}) {
   let nextLocal = 0;
   let functionDepth = 0;
+  const textScopes = [];
+  let nextText = 0;
   const hosts = new Map(Object.keys(bindings).map((name, index) =>
     [name, { identifier: `$binding${index}`, mutable: false, namedArguments: isTransformConstructor(bindings[name]) }]));
   const scopes = [hosts];
@@ -150,7 +153,11 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
   const descriptors = [];
   const lookup = name => {
     for (let i = scopes.length - 1; i >= 0; i--) {
-      if (scopes[i].has(name)) return scopes[i].get(name);
+      if (scopes[i].has(name)) {
+        const variable = scopes[i].get(name);
+        if (variable.shaderOnly) throw new SyntaxError(`Hoisted text cannot depend on shader value ${name}; use a regular Lisp value outside sh`);
+        return variable;
+      }
     }
     throw new SyntaxError(`Unknown symbol: ${name}`);
   };
@@ -170,6 +177,12 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
     return type;
   };
   const context = {
+    text(nodes) {
+      const builder = `$text${nextText++}`;
+      textScopes.push({ builder, functionDepth });
+      try { return `(function() {\nconst ${builder} = $text.create();\n${sequence(nodes)}\nreturn $text.finish(${builder});\n})()`; }
+      finally { textScopes.pop(); }
+    },
     array(args, kind = "array") {
       const [spec, ...values] = args;
       if (spec?.kind !== 'list' || spec.items.length < 1 || spec.items.length > 2 || spec.items[0].kind !== 'symbol') throw new SyntaxError(`${kind} expects (Element [capacity]) followed by initial elements`);
@@ -214,13 +227,24 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
     },
     shader(node) {
       const index = shaders.length;
+      shaders.push(null); // Nested shaders in a hoisted text body need distinct indices.
       const visibleStructs = new Map();
       for (const scope of scopes) for (const [name, value] of scope) {
         if (value.definition) visibleStructs.set(name, value.definition);
         else visibleStructs.delete(name);
       }
-      shaders.push(compileShader(node, source, { structDefinitions: visibleStructs }));
-      return `$shaders[${index}]`;
+      const texts = [];
+      const descriptor = compileShader(node, source, { structDefinitions: visibleStructs,
+        hoistText(text, shaderNames) {
+          const blocked = new Map([...shaderNames].map(name => [name, { shaderOnly: true }]));
+          scopes.push(blocked);
+          try { texts.push({ start: text.start, code: emit(text), identifier: `$hoisted${texts.length}` }); } finally { scopes.pop(); }
+        },
+      });
+      shaders[index] = descriptor;
+      if (!texts.length) return `$shaders[${index}]`;
+      const declarations = [...texts].sort((a, b) => a.start - b.start).map(text => `const ${text.identifier} = ${text.code};`).join('\n');
+      return `(function() {\n${declarations}\nreturn $text.bind($shaders[${index}], [${texts.map(text => text.identifier).join(', ')}], ${descriptor.parameterCount});\n})()`;
     },
     callback(nameNode, parameters, body) {
       if (!scene) throw new SyntaxError('on requires scene compilation');
@@ -258,7 +282,7 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
       } });
       for (const parameter of parsed) {
         const name = parameter.name;
-        if (scope.has(name) || Object.hasOwn(forms, name)) {
+        if (scope.has(name) || Object.hasOwn(forms, name) || textScopes.length && textOperations.has(name)) {
           throw new SyntaxError(`Invalid or duplicate parameter: ${name}`);
         }
         scope.set(name, { identifier: `$local${nextLocal++}`, mutable: true });
@@ -313,6 +337,10 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
     }
     const [head, ...args] = node.items;
     if (!head) throw new SyntaxError('Empty list is not callable');
+    if (head.kind === 'symbol' && textScopes.length) {
+      if (head.name === 'return' && functionDepth === textScopes.at(-1).functionDepth) throw new SyntaxError('return cannot exit a text body; its result is the completed text');
+      if (textOperations.has(head.name)) return `$text.apply(${textScopes.at(-1).builder}, ${JSON.stringify(head.name)}${args.length ? ', ' + args.map(arg => emit(arg)).join(', ') : ''})`;
+    }
     if (node.items[1]?.kind === 'colon') {
       if (node.items.length !== 3) throw new SyntaxError('Type assertion expects (value : type)');
       return context.assertion(emit(head), node.items[2], 'Value', node);
@@ -341,7 +369,7 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
         if (!Object.hasOwn(forms, name) || !forms[name].declares) continue;
         try {
           const declaredName = symbolName(forms[name].declares(node.items.slice(1)));
-          if (scope.has(declaredName) || Object.hasOwn(forms, declaredName)) {
+          if (scope.has(declaredName) || Object.hasOwn(forms, declaredName) || textScopes.length && textOperations.has(declaredName)) {
             throw new SyntaxError(`Name already defined: ${declaredName}`);
           }
           scope.set(declaredName, { identifier: `$local${nextLocal++}`, mutable: true });
@@ -365,8 +393,9 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
     ...(scene ? ['return $scene;'] : ['return null;']),
   ].join('\n');
   const execute = trace
-    ? new Function('$bindings', '$shaders', '$assert', '$access', '$nil', '$bool', '$setAccess', '$descriptors', '$array', '$many', '$trace', javascript)
-    : new Function('$bindings', '$shaders', '$assert', '$access', '$nil', '$bool', '$setAccess', '$descriptors', '$array', '$many', javascript);
+    ? new Function('$bindings', '$shaders', '$assert', '$access', '$nil', '$bool', '$setAccess', '$descriptors', '$array', '$many', '$trace', '$text', javascript)
+    : new Function('$bindings', '$shaders', '$assert', '$access', '$nil', '$bool', '$setAccess', '$descriptors', '$array', '$many', '$text', javascript);
   const tracer = trace ? runtimeTrace(source, names) : undefined;
-  return { javascript, scene, shaders, run: (shaderValues = []) => execute(bindings, shaderValues, assertType, access, normalizeNil, bool, setAccess, descriptors, createArray, createMany, tracer) };
+  const textRuntime = { create: createTextBuilder, apply: textOperation, finish: builder => textRenderer(finishTextBuilder(builder)), bind: bindTextShader };
+  return { javascript, scene, shaders, run: (shaderValues = []) => execute(bindings, shaderValues, assertType, access, normalizeNil, bool, setAccess, descriptors, createArray, createMany, ...(trace ? [tracer] : []), textRuntime) };
 }

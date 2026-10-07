@@ -95,8 +95,8 @@ test('mixed struct and many packing preserves full-width integers and WGSL align
 
 test('new shader numeric types compile constructors, guards, casts, arithmetic, and typed uniforms', () => {
   const source = `(struct Item i:i32 u:u32 p:vec3u)
-    (sh (items:array<Item> i:i32 u:u32 v:vec2i)
-      (let item items.0) (let input v)
+    (sh (items:array<Item> i:i32 unsigned:u32 value:vec2i)
+      (let item items.0) (let input value)
       (let local (+ item.p (vec3u 1)))
       (set local.xy (vec2u 2 3))
       (let converted (vec3f local))
@@ -107,7 +107,7 @@ test('new shader numeric types compile constructors, guards, casts, arithmetic, 
   assert.match(program.wgsl, /bitcast<i32>/); assert.match(program.wgsl, /bitcast<vec2i>/);
   assert.match(program.wgsl, /fn wrapU32/); assert.match(program.wgsl, /vec3f\(local/);
   for (const type of vectorTypes) {
-    const shader = compile(`(sh (v:${type}) (let x (${type} v)) (return (vec4f (f32 x.x) 0 0 1)))`, bindings, forms).shaders[0];
+    const shader = compile(`(sh (value:${type}) (let x (${type} value)) (return (vec4f (f32 x.x) 0 0 1)))`, bindings, forms).shaders[0];
     assert.match(shader.wgsl, /fn fragment/);
   }
   for (const type of ['num', 'str']) assert.throws(() => compile(`(sh (x:${type}) (return (vec4f 1)))`, bindings, forms), SyntaxError);

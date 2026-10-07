@@ -5,6 +5,276 @@ const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 const { PNG } = require('pngjs');
 
+test('blend handles translucent backgrounds, transparent colors, and automatic before sampling with text', { timeout: 30000 }, async () => {
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.evaluate(async () => {
+      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const canvas = document.createElement('canvas'); canvas.id = 'blend-test'; canvas.width = 80; canvas.height = 40;
+      document.body.append(canvas);
+      const errors = [], runtime = new Aioli({ onError: error => errors.push(formatTrace(error)) });
+      await runtime.attach(canvas); globalThis.blendTest = { runtime, errors };
+      const draw = runtime.run('(sh () (return (blend (vec4 1 0 0 0.5))))');
+      runtime.graphics.render(context => draw(context));
+    });
+    const check = async expected => {
+      await page.waitForTimeout(90);
+      assert.deepEqual(await page.evaluate(() => blendTest.errors), []);
+      const image = PNG.sync.read(await page.locator('#blend-test').screenshot());
+      const pixel = [...image.data.subarray(0,4)];
+      expected.forEach((value, i) => assert.ok(Math.abs(pixel[i] - value) <= 1, `${pixel} != ${expected}`));
+    };
+    await check([128,0,0,255]);
+    await page.evaluate(() => {
+      blendTest.runtime.graphics.bindings.clear(0,0,1);
+      const draw = blendTest.runtime.run('(sh () (let apply (fn (color:vec4) (return (blend color)))) (return (apply (vec4 1 0 0 0.5))))');
+      blendTest.runtime.graphics.render(context => draw(context));
+    });
+    await check([128,0,128,255]);
+    await page.evaluate(() => {
+      const draw = blendTest.runtime.run('(sh () (let color (blend (vec4 1 0 0 0.5) (vec4 0 0 1 0.25))) (return (vec4 color.x color.z color.w 1)))');
+      blendTest.runtime.graphics.render(context => draw(context));
+    });
+    await check([204,51,159,255]);
+    await page.evaluate(() => {
+      const draw = blendTest.runtime.run('(sh () (let color (blend (vec4 1 0 0 0) (vec4 0 1 0 0))) (return (vec4 color.xyz 1)))');
+      blendTest.runtime.graphics.render(context => draw(context));
+    });
+    await check([0,0,0,255]);
+    await page.evaluate(() => {
+      blendTest.runtime.graphics.bindings.clear(0,0,1);
+      const draw = blendTest.runtime.run(`(sh ()
+        (let label (text (font "monospace") (size 24) (color (vec4 1 0 0 0.5)) (span "M")))
+        (let uv (/ xy (vec2 label.w label.h)))
+        (return (blend (sample label uv))))`);
+      blendTest.runtime.graphics.render(context => draw(context));
+    });
+    await page.waitForTimeout(90);
+    assert.deepEqual(await page.evaluate(() => blendTest.errors), []);
+    const image = PNG.sync.read(await page.locator('#blend-test').screenshot());
+    let blended = 0;
+    for (let i = 0; i < image.data.length; i += 4) {
+      const [r,g,b] = image.data.subarray(i,i+3);
+      assert.ok(g < 2 && r <= 130 && Math.abs(r+b-255) <= 2, `text blend ${r},${g},${b}`);
+      if (r > 100) blended++;
+    }
+    assert.ok(blended > 10);
+    await page.evaluate(() => blendTest.runtime.destroy());
+  } finally { await browser.close(); }
+});
+
+test('context before supplies stable last-frame feedback, black initialization, rollback, and resize reset', { timeout: 30000 }, async () => {
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.evaluate(async () => {
+      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const { get } = await import(new URL('/engine/data.js', location.href).href);
+      const canvas = document.createElement('canvas'); canvas.id = 'before-test'; canvas.width = 4; canvas.height = 3;
+      document.body.append(canvas);
+      const errors = [], runtime = new Aioli({ onError: error => errors.push(formatTrace(error)) });
+      await runtime.attach(canvas);
+      const draw = runtime.run(`(sh (gain:f32)
+        (let empty (text)) (let unused (sample empty uv))
+        (let read (fn () (return (sample before uv)))) (let image (read))
+        (return (vec4 (+ image.x gain) (+ image.y (* gain 2)) (+ (* image.w 0.2) unused.x) 1)))`);
+      const copy = runtime.run('(sh () (return (sample before uv)))');
+      const explicit = runtime.run('(sh (image:texture2d) (return (sample image uv)))');
+      globalThis.beforeTest = { runtime, errors, draw, copy, explicit, get, saved: null };
+      runtime.graphics.render(context => { beforeTest.saved = get(context, 'before'); draw(context, 0.2); });
+    });
+    const check = async expected => {
+      await page.waitForTimeout(80);
+      assert.deepEqual(await page.evaluate(() => beforeTest.errors), []);
+      const image = PNG.sync.read(await page.locator('#before-test').screenshot());
+      for (let i = 0; i < image.data.length; i += 4) expected.forEach((value, channel) =>
+        assert.ok(Math.abs(image.data[i + channel] - value) <= 2, `pixel ${[...image.data.subarray(i, i+4)]}, expected ${expected}`));
+    };
+    await check([51,102,51,255]);
+    await page.evaluate(() => beforeTest.runtime.graphics.render(context => beforeTest.draw(context, 0.2)));
+    await check([102,204,51,255]);
+    // Both the automatic input and context.before remain the incoming surface,
+    // even after another pass has drawn during this callback.
+    await page.evaluate(() => beforeTest.runtime.graphics.render(context => {
+      beforeTest.draw(context, 0.2); beforeTest.copy(context);
+      beforeTest.explicit(context, beforeTest.get(context, 'before'));
+    }));
+    await check([102,204,51,255]);
+    const rejected = await page.evaluate(() => {
+      let stale = false, failed = false;
+      try { beforeTest.runtime.graphics.render(context => beforeTest.explicit(context, beforeTest.saved)); }
+      catch (error) { stale = /current frame/.test(error.message); }
+      try { beforeTest.runtime.graphics.render(context => { beforeTest.draw(context, 0.2); throw new Error('rollback'); }); }
+      catch (error) { failed = error.message === 'rollback'; }
+      return { stale, failed };
+    });
+    assert.deepEqual(rejected, { stale: true, failed: true });
+    await check([102,204,51,255]);
+    await page.evaluate(() => beforeTest.runtime.graphics.render(context => beforeTest.draw(context, 0.2)));
+    await check([153,255,51,255]);
+    await page.evaluate(() => {
+      const canvas = document.getElementById('before-test'); canvas.width = 8; canvas.height = 6;
+      beforeTest.runtime.graphics.render(context => beforeTest.draw(context, 0.2));
+    });
+    await check([51,102,51,255]);
+    await page.evaluate(() => beforeTest.runtime.destroy());
+  } finally { await browser.close(); }
+});
+
+test('automatic pixel, UV, and dimension inputs work in helpers and selectors after resizing', { timeout: 30000 }, async () => {
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.evaluate(async () => {
+      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const canvas = document.createElement('canvas'); canvas.id = 'coordinates-test'; canvas.width = 4; canvas.height = 2;
+      document.body.append(canvas);
+      const errors = [], runtime = new Aioli({ onError: error => errors.push(formatTrace(error)) });
+      await runtime.attach(canvas);
+      runtime.setScene(`(let draw (sh ()
+        (let read (fn ()
+          (let selected (or (- x x) u))
+          (return (vec4 (/ (+ uv (vec2 selected v) (/ xy wh) (/ (vec2 x y) (vec2 w h))) 4)
+            (/ (+ wh.x wh.y) 16) 1))))
+        (return (read)))) (on render (context) (draw context))`);
+      globalThis.coordinatesTest = { runtime, errors };
+    });
+    for (const [width, height] of [[4, 2], [8, 4]]) {
+      await page.evaluate(({ width, height }) => {
+        const canvas = document.getElementById('coordinates-test'); canvas.width = width; canvas.height = height;
+      }, { width, height });
+      await page.waitForTimeout(120);
+      assert.deepEqual(await page.evaluate(() => coordinatesTest.errors), []);
+      const image = PNG.sync.read(await page.locator('#coordinates-test').screenshot());
+      assert.equal(image.width, width); assert.equal(image.height, height);
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        const pixel = [...image.data.subarray((y * width + x) * 4, (y * width + x + 1) * 4)];
+        const expected = [(x + 0.5) / width * 255, (y + 0.5) / height * 255, (width + height) / 16 * 255, 255];
+        expected.forEach((value, i) => assert.ok(Math.abs(pixel[i] - Math.round(value)) <= 1, `${width}x${height}, ${x},${y}: ${pixel}`));
+      }
+    }
+    assert.equal(await page.evaluate(() => coordinatesTest.runtime.graphics.stats.shaderCompilations), 1);
+    await page.evaluate(() => coordinatesTest.runtime.destroy());
+  } finally { await browser.close(); }
+});
+
+test('shader text hoists named and inline resources alongside explicit texture, storage, and numeric inputs', { timeout: 30000 }, async () => {
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    const metadata = await page.evaluate(async () => {
+      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const canvas = document.createElement('canvas'); canvas.id = 'shader-text'; canvas.width = 80; canvas.height = 48;
+      document.body.append(canvas);
+      const errors = [], builds = [];
+      const runtime = new Aioli({ bindings: { record: value => builds.push(value) }, onError: error => errors.push(formatTrace(error)) });
+      await runtime.attach(canvas);
+      const program = runtime.compileScene(`(let name "M") (let items (array (f32) 1))
+        (let background (sh () (return (vec4 0 0 0.1 1))))
+        (let draw (sh (image:texture2d items:array<f32> gain:f32)
+          (let label (text (font "monospace") (size 24) (color (vec3 1 0 0)) (record "named") (span name)))
+          (let alias label)
+          (let read (fn () (return (sample alias (/ (- xy (vec2 4 4)) (vec2 label.w label.h))))))
+          (let red (read))
+          (let green (sample (text (font "monospace") (size 24) (color (vec3 0 1 0)) (record "inline") (span "M"))
+            (/ (- xy (vec2 36 4)) (vec2 24 32))))
+          (let base (sample image (/ xy (vec2 w h))))
+          (return (vec4 (+ (* (+ (* red.xyz red.w) (* green.xyz green.w)) (* items.0 gain)) base.xyz) 1))))
+        (set name "Changed")
+        (on render (context) (draw context (background context) items 1))`);
+      runtime.activate(program);
+      globalThis.shaderTextTest = { runtime, errors, builds };
+      return { resources: program.shaders[1].resources.length, parameters: program.shaders[1].parameterCount,
+        rasterizations: runtime.graphics.stats.textRasterizations };
+    });
+    assert.deepEqual(metadata, { resources: 4, parameters: 3, rasterizations: 2 });
+    await page.waitForTimeout(180);
+    assert.deepEqual(await page.evaluate(() => shaderTextTest.errors), []);
+    assert.deepEqual(await page.evaluate(() => shaderTextTest.builds), ['named', 'inline']);
+    const image = PNG.sync.read(await page.locator('#shader-text').screenshot());
+    let red = 0, green = 0;
+    for (let i = 0; i < image.data.length; i += 4) {
+      const [r,g,b] = image.data.subarray(i, i + 3);
+      if (r > 150 && g < 20 && b < 40) red++;
+      if (g > 150 && r < 20 && b < 40) green++;
+    }
+    assert.ok(red > 10 && green > 10, `red=${red}, green=${green}`);
+    assert.equal(await page.evaluate(() => shaderTextTest.runtime.graphics.stats.textRasterizations), 2);
+    await page.evaluate(() => shaderTextTest.runtime.destroy());
+  } finally { await browser.close(); }
+});
+
+test('immediate text renders multicolor lines through persistent cached textures', { timeout: 30000 }, async () => {
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    const metrics = await page.evaluate(async () => {
+      const { Aioli, formatTrace } = await import(new URL('/aioli.js', location.href).href);
+      const { get, put } = await import(new URL('/engine/data.js', location.href).href);
+      const canvas = document.createElement('canvas'); canvas.id = 'text-test'; canvas.width = 100; canvas.height = 100;
+      document.body.append(canvas);
+      const errors = [], runtime = new Aioli({ onError: error => errors.push(formatTrace(error)) });
+      await runtime.attach(canvas);
+      const source = `(text (font "monospace") (size 24) (line-height 30)
+        (span "M") (if true { (color (vec3 1 0 0)) (span "M") })
+        (line) (color (vec3 0 1 0)) (span "M"))`;
+      const label = runtime.run(source), cached = runtime.run(source);
+      const sameTexture = get(label, 'texture') === get(cached, 'texture');
+      put(get(cached, 'origin'), 'x', 1000);
+      const freshOrigin = get(get(runtime.run(source), 'origin'), 'x');
+      const wrapped = runtime.run('(text (font "monospace") (size 16) (width 55) (span "hello world") (line) (line))');
+      const blank = runtime.run('(text)');
+      runtime.bindings.label = label;
+      runtime.setScene(`(let draw (sh (image:texture2d dimensions:vec2)
+        (let pixel (sample image (/ xy dimensions)))
+        (return (vec4 (* pixel.xyz pixel.w) 1))))
+        (on render (context) (draw context label.texture (vec2 label.w label.h)))`);
+      canvas.width = get(label, 'w'); canvas.height = get(label, 'h');
+      globalThis.textTest = { runtime, errors, label };
+      return { sameTexture, rasterizations: runtime.graphics.stats.textRasterizations, freshOrigin,
+        w: get(label, 'w'), h: get(label, 'h'), lines: get(label, 'lines'), wrappedLines: get(wrapped, 'lines'), blankW: get(blank, 'w') };
+    });
+    assert.equal(metrics.sameTexture, true); assert.equal(metrics.rasterizations, 3);
+    assert.equal(metrics.freshOrigin, 1); assert.equal(metrics.lines, 2); assert.equal(metrics.wrappedLines, 4);
+    assert.ok(metrics.w > 20 && metrics.h > 30 && metrics.blankW > 0);
+    await page.waitForTimeout(150);
+    assert.deepEqual(await page.evaluate(() => textTest.errors), []);
+    const image = PNG.sync.read(await page.locator('#text-test').screenshot());
+    let red = 0, green = 0, white = 0;
+    for (let i = 0; i < image.data.length; i += 4) {
+      const [r,g,b] = image.data.subarray(i, i + 3);
+      if (r > 150 && g < 20 && b < 20) red++;
+      if (g > 150 && r < 20 && b < 20) green++;
+      if (r > 150 && g > 150 && b > 150) white++;
+    }
+    assert.ok(red > 10 && green > 10 && white > 10, `red=${red}, green=${green}, white=${white}`);
+    const ownership = await page.evaluate(async () => {
+      const { Aioli } = await import(new URL('/aioli.js', location.href).href);
+      const { get } = await import(new URL('/engine/data.js', location.href).href);
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 10;
+      const other = new Aioli(); await other.attach(canvas);
+      const shader = other.run('(sh (image:texture2d) (return (sample image (vec2 0.5))))');
+      let rejected = false;
+      try { other.graphics.render(context => shader(context, get(textTest.label, 'texture'))); }
+      catch (error) { rejected = /this runtime/.test(error.message); }
+      finally { other.destroy(); }
+      // Cache eviction does not invalidate a texture still owned by a label.
+      for (let i = 0; i < 130; i++) textTest.runtime.run(`(text (span "${i}"))`);
+      return rejected;
+    });
+    assert.equal(ownership, true);
+    await page.waitForTimeout(100);
+    assert.deepEqual(await page.evaluate(() => textTest.errors), []);
+    await page.evaluate(() => textTest.runtime.destroy());
+  } finally { await browser.close(); }
+});
+
 test('2d and 3d transforms agree across CPU matrices, shader helpers, and skew array inputs', { timeout: 30000 }, async () => {
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
@@ -104,8 +374,8 @@ test('every f32, i32, and u32 vector dimension crosses uniforms with family-pres
         const type = suffix === "f" ? `vec${size}` : `vec${size}${suffix}`, scalar = suffix === 'i' ? 'i32' : 'u32';
         const value = suffix === 'f' ? 0.25 : suffix === 'i' ? 2147483647 : 4294967295;
         const color = suffix === 'f' ? '(* x.x 4)' : `(/ (f32 (% x.x (${scalar} 256))) 255)`;
-        allVectorTypes.runtime.setScene(`(let draw (sh (v:${type})
-          (let x (${type} v))
+        allVectorTypes.runtime.setScene(`(let draw (sh (value:${type})
+          (let x (${type} value))
           (return (vec4f ${color} (f32 (${type}? x)) (f32 (vec4${suffix}? x.xxxx)) 1))))
           (on render (context) (draw context (${type} ${value})))`);
       }, { size, suffix });
@@ -135,17 +405,17 @@ test('full-width signed and unsigned scalars, vectors, and mixed structs render 
         (let rows (many (Item) (Item n -2147483648 u 4294967295
           p (vec3u 16777217 4294967295 1) signed (vec4i -1 -2 -3 -4)
           matrix (mat3x3f 1 0 0 0 1 0 0 0 1) enabled true)))
-        (let draw (sh (rows:many<Item> u:u32 i:i32 v:vec4u s:vec3i f:f32)
+        (let draw (sh (rows:many<Item> unsigned:u32 i:i32 value:vec4u s:vec3i f:f32)
           (let row rows.0)
           (let converted (vec2i (vec2f -1.9 2.9)))
           (let wrapped (u32 (- f 2)))
           (let overflow (+ (vec2u 4294967295) (vec2u 1)))
           (let sum (+ (u32 4294967295) (u32 1)))
-          (let a (- row.u u))
+          (let a (- row.u unsigned))
           (let b (- row.n i))
           (let c (- row.p.x (u32 16777216)))
           (let d (+ row.signed.x converted.y))
-          (let red (+ (% v.x (u32 256)) a (u32 b)))
+          (let red (+ (% value.x (u32 256)) a (u32 b)))
           (let green (+ c (% wrapped (u32 256))))
           (let blue (+ d s.x))
           (return (vec4f (/ (f32 red) 255) (/ (f32 green) 256) (/ (f32 blue) 2) (* (f32 row.enabled) (f32 (not (bool overflow.x))) (f32 (not (bool sum))) (f32 (u32? (f32 1))) (f32 (not (f32? (u32 4294967295)))))))))
@@ -320,7 +590,7 @@ test('shader if elif else renders scoped branches, early returns, and optional f
           (if enabled (return 1) else (return 0.5))))
         (let color (vec4f 0 0 1 1))
         (if mode (set color (vec4f 1 0 0 1))
-          elif (% (- p.x 0.5) 2) (return (vec4f 0 1 0 1))
+          elif (% (- xy.x 0.5) 2) (return (vec4f 0 1 0 1))
           else { (let color (vec4f 0 0 1 1)) (return color) })
         (if false (return (vec4f 0)))
         (return (* color (gain true)))))
@@ -433,7 +703,7 @@ test('struct arrays render quoted fields, dot assignments, and per-call snapshot
           (set row."a string key".xy row."a string key".yx)
           (return (vec4f (* row."a string key" (get row "gain")) 0 1))))
         (let blend (sh (a:texture2d b:texture2d)
-          (let uv (/ p (vec2f w h)))
+          (let uv (/ xy (vec2f w h)))
           (return (/ (+ (sample a uv) (sample b uv)) 2))))
         (on render (context)
           (set points.0."a string key" (vec2f 0.2 0.6))
@@ -635,7 +905,7 @@ test('real WebGPU gradients, cached shaders, uniforms, and automatic presentatio
       const options = { onError: e => errors.push(formatTrace(e)), bindings: { print() {} } };
       const a = new Aioli(options), b = new Aioli(options);
       await a.attach(make('test-gradient')); await b.attach(make('test-uniform'));
-      a.setScene('(on render (context) ((sh () (let gradient (fn (uv:vec2f) (return (vec4f uv 0 1)))) (return (gradient (/ p (vec2f w h))))) context))');
+      a.setScene('(on render (context) ((sh () (let gradient (fn (uv:vec2f) (return (vec4f uv 0 1)))) (return (gradient (/ xy (vec2f w h))))) context))');
       const state = { a, b, errors, gain: 0.2 };
       b.bindings.level = () => state.gain;
       b.setScene('(let fill (sh (gain:f32) (let color (fn () (let red (fn (x:f32) (set x (* x 2)) (return x))) (return (vec4f (red (/ gain 2)) 0 0 1)))) (return (color)))) (on render (context) (fill context 0.1) (fill context (level)) (print "after"))', { trace: false });
@@ -697,10 +967,10 @@ test('typed texture/vector parameters compose GPU passes and reject stale or for
       state.b = new Aioli(options);
       await state.a.attach(make('test-composition')); await state.b.attach(make('test-foreign'));
       state.a.setScene(`
-        (let gradient (sh () (return (vec4f (/ p (vec2f w h)) 0.4 1))))
+        (let gradient (sh () (return (vec4f (/ xy (vec2f w h)) 0.4 1))))
         (let tint (sh (image:texture2d color:vec4f)
           (let apply (fn (input:texture2d shade:vec4f)
-            (return (* (sample input (/ p (vec2f w h))) shade))))
+            (return (* (sample input (/ xy (vec2f w h))) shade))))
           (return (apply image color))))
         (let composite (fn (context image:texture2d)
           (return (tint context image (vec4f 0.5 1 0.25 1)))))
@@ -723,7 +993,7 @@ test('typed texture/vector parameters compose GPU passes and reject stale or for
       const old = resourceTest.saved;
       resourceTest.a.bindings.previous = () => old;
       resourceTest.b.bindings.previous = () => old;
-      const source = '(let copy (sh (image:texture2d) (return (sample image (/ p (vec2f w h)))))) (on render (context) (copy context (previous)))';
+      const source = '(let copy (sh (image:texture2d) (return (sample image (/ xy (vec2f w h)))))) (on render (context) (copy context (previous)))';
       resourceTest.b.setScene(source);
       resourceTest.a.setScene(source);
     });

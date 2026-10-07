@@ -70,7 +70,7 @@ test('graphics snapshots mutable numeric data extracted from collections and rej
     assert.throws(() => graphics.render(frame => shader(frame, vectorBindings.vec4f(Infinity), 1)), /finite f32/);
   }
   for (const dimension of [2, 3, 4]) {
-    const shaderProgram = compile(`(sh (before:f32 transform:mat${dimension}x${dimension}f after:vec2f)
+    const shaderProgram = compile(`(sh (offset:f32 transform:mat${dimension}x${dimension}f after:vec2f)
       (return (vec4f 1)))`, {}, forms);
     const shader = graphics.createShader(shaderProgram.shaders[0]);
     const values = Array.from({ length: dimension * dimension }, (_, i) => i + 1);
