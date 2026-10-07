@@ -2,6 +2,8 @@ import { dataKind, registerData } from './data.js';
 import { scalarTypes, vectorInfo, scalarMatches, matrixSize, canonicalType } from './numeric-types.js';
 
 const structDefinitions = new WeakMap(), structInstances = new WeakMap(), collections = new WeakMap();
+const structFields = new WeakMap();
+export const structField = (definition, key) => structFields.get(definition)?.get(key);
 const checkedViews = new WeakSet();
 export function markCheckedView(value) { checkedViews.add(value); return value; }
 export const isCheckedView = value => checkedViews.has(value);
@@ -164,11 +166,13 @@ export function createStruct(name, declarations) {
   });
   if (!fields.length) throw new TypeError('A struct requires at least one field');
   const descriptor = Object.freeze({ name, fields: Object.freeze(fields), size: round(size, align), align });
+  const fieldsByKey = new Map(fields.map(field => [field.key, field]));
+  structFields.set(descriptor, fieldsByKey);
   const constructor = (...entries) => {
     if (entries.length !== fields.length * 2) throw new TypeError(`${name} requires all ${fields.length} fields exactly once`);
     const storage = new Float64Array(descriptor.size), supplied = new Set();
     for (let i = 0; i < entries.length; i += 2) {
-      const key = entries[i], field = fields.find(field => field.key === key);
+      const key = entries[i], field = fieldsByKey.get(key);
       if (!field || supplied.has(key)) throw new TypeError(`Unknown or duplicate ${name} field: ${key}`);
       supplied.add(key); write(field.info, storage, field.offset, entries[i + 1]);
     }
@@ -245,7 +249,7 @@ export function manyRemove(value, at) {
 export function structuredGet(value, key) {
   const definition = structDefinitionInfo(value);
   if (definition) {
-    const field = definition.fields.find(field => field.key === key);
+    const field = structField(definition, key);
     if (!field) throw new TypeError(`Unknown ${definition.name} field: ${key}`);
     return field.type;
   }

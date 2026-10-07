@@ -198,6 +198,23 @@ use latest-request-wins activation.
 Callbacks are synchronous. Run checks with
 `node --test tests/compiler.test.mjs tests/scenes.test.mjs tests/shader.test.mjs tests/types.test.mjs tests/data.test.mjs tests/graphics.test.mjs tests/swizzle.test.mjs tests/access.test.mjs tests/logical.test.mjs tests/nil.test.mjs tests/truthiness.test.mjs tests/selectors.test.mjs tests/conversions.test.mjs tests/structs.test.mjs tests/bool-structs.test.mjs tests/numeric-types.test.mjs tests/arrays.test.mjs tests/many.test.mjs tests/cap.test.mjs tests/matrix-access.test.mjs tests/matrix-names.test.mjs tests/type-aliases.test.mjs tests/constructors.test.mjs tests/transforms.test.mjs tests/shader-conditionals.test.mjs`.
 
+Swizzle reads and writes use checked-in generated accessors in
+`engine/swizzles.generated.js`. Regenerate them with
+`node scripts/generate-swizzles.mjs`; verify the file is current with
+`node scripts/generate-swizzles.mjs --check`. Generation covers every valid
+one-to-four component selector for all vector dimensions and numeric families.
+Writable selectors contain distinct components. Runtime access validates the
+target and replacement, then calls the accessor with explicit component indices;
+multi-component reads keep fresh storage and writes snapshot replacements first.
+
+Vector arithmetic also uses checked-in generated operations in
+`engine/arithmetic.generated.js`. Regenerate with
+`node scripts/generate-arithmetic.mjs`, or verify with `--check`. Operations cover
+all vector types and both scalar broadcast directions, with explicit component
+expressions after operand validation. Integer wrapping, zero-division errors,
+and float rounding between successive operations are preserved. Numeric type
+metadata and struct field indexes are prepared once and reused.
+
 ## Shader Lisp
 
 `sh` enters a separate compiler that emits WGSL, not JavaScript. The first subset

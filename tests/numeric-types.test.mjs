@@ -5,10 +5,25 @@ import { forms } from '../engine/forms.js';
 import { bindings } from '../engine/bindings.js';
 import { num, f32, i32, u32, str } from '../engine/conversions.js';
 import { assertType, vectorBindings } from '../engine/types.js';
-import { vectorTypes, vectorInfo } from '../engine/numeric-types.js';
+import { vectorTypes, vectorInfo, matrixSize } from '../engine/numeric-types.js';
 import { get, put, copy, serializeData, deserializeData } from '../engine/data.js';
 import { collectionInfo, packCollection } from '../engine/structures.js';
 const evaluate = (source, trace = true) => compile(source, bindings, forms, { trace }).run();
+
+test('numeric metadata is shared, immutable, and rejects unknown keys without coercion', () => {
+  for (const type of vectorTypes) {
+    const info = vectorInfo(type);
+    assert.equal(vectorInfo(type), info);
+    assert.equal(Object.isFrozen(info), true);
+    assert.throws(() => { info.size = 99; }, TypeError);
+    assert.equal(vectorBindings[type](1).values.length, info.size);
+  }
+  for (const size of [2, 3, 4]) assert.equal(matrixSize(`mat${size}x${size}f`), size);
+  for (const type of ['vec2', 'vec5f', 'vec2f\n', '__proto__', 'constructor', 'toString', 'mat2x3f', 'mat5x5f', null, undefined, 2, { toString() { throw new Error('coerced'); } }]) {
+    assert.equal(vectorInfo(type), null);
+    assert.equal(matrixSize(type), 0);
+  }
+});
 
 test('obsolete type names and constructor bindings are removed', () => {
   for (const name of ['float', 'string', 'boolean']) {

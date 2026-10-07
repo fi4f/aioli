@@ -6,6 +6,22 @@ import { bindings } from '../engine/bindings.js';
 import { createStruct, createZeroArray, collectionInfo } from '../engine/structures.js';
 import { get, put, copy, reCopy, equal } from '../engine/data.js';
 
+test('struct field indexes support special keys, reordered arguments, and definition identity', () => {
+  const declarations = [['__proto__', 'f32'], ['constructor', 'i32'], ['', 'u32'], ['a string key', 'bool']];
+  const Example = createStruct('Example', declarations);
+  const Other = createStruct('Example', [['__proto__', 'bool']]);
+  const value = Example('a string key', true, '', 4294967295, 'constructor', -7, '__proto__', 0.5);
+  for (const [key, type] of declarations) assert.equal(get(Example, key), type);
+  assert.equal(get(Other, '__proto__'), 'bool');
+  assert.equal(get(value, '__proto__'), 0.5);
+  assert.equal(get(value, 'constructor'), -7);
+  assert.equal(get(value, ''), 4294967295);
+  assert.equal(get(value, 'a string key'), true);
+  assert.throws(() => get(Example, 'toString'), /Unknown Example field/);
+  assert.throws(() => Example('__proto__', 1, '__proto__', 2, '', 3, 'a string key', true), /duplicate/);
+  assert.throws(() => Example('unknown', 1, 'constructor', 2, '', 3, 'a string key', true), /Unknown/);
+});
+
 test('struct declarations and construction support string keys, bare labels, and definition access', () => {
   for (const trace of [true, false]) {
     const output = [];

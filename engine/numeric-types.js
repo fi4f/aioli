@@ -5,14 +5,16 @@ export const typeAliases = Object.freeze(Object.fromEntries([2, 3, 4].flatMap(si
   [`vec${size}`, `vec${size}f`], [`mat${size}`, `mat${size}x${size}f`],
 ])));
 export const canonicalType = type => typeof type === 'string' ? type.replace(/\b(?:vec[234]|mat[234])\b/g, name => typeAliases[name]) : type;
-export const matrixSize = type => {
-  const match = typeof type === 'string' && type.match(/^mat([234])x\1f$/);
-  return match ? Number(match[1]) : 0;
-};
-export const vectorInfo = type => {
-  const match = typeof type === 'string' && type.match(/^vec([234])([fiu])$/);
-  return match ? { size: Number(match[1]), scalar: match[2] === 'i' ? 'i32' : match[2] === 'u' ? 'u32' : 'f32', suffix: match[2] } : null;
-};
+const matrixDimensions = Object.freeze(Object.assign(Object.create(null), {
+  mat2x2f: 2, mat3x3f: 3, mat4x4f: 4,
+}));
+const vectorMetadata = Object.create(null);
+for (const size of [2, 3, 4]) for (const [suffix, scalar] of [['f', 'f32'], ['i', 'i32'], ['u', 'u32']]) {
+  vectorMetadata[`vec${size}${suffix}`] = Object.freeze({ size, scalar, suffix });
+}
+Object.freeze(vectorMetadata);
+export const matrixSize = type => typeof type === 'string' ? matrixDimensions[type] || 0 : 0;
+export const vectorInfo = type => typeof type === 'string' ? vectorMetadata[type] || null : null;
 export function scalarMatches(value, type) {
   if (typeof value !== 'number') return false;
   if (type === 'num') return true;

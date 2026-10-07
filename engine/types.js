@@ -2,6 +2,7 @@ import { dataKind, vector, matrix, matrixColumn, registerOpaque, get } from './d
 import { put } from './data.js';
 import { structDefinitionInfo, isCheckedView } from './structures.js';
 import { scalarTypes, vectorTypes, vectorInfo, scalarMatches, matrixSize, matrixTypes, typeAliases, canonicalType } from './numeric-types.js';
+import { swizzleAccessors, swizzleNames, writableSwizzleNames } from './swizzles.generated.js';
 const textures = new WeakSet();
 
 export const typeNames = new Set(['nil', 'bool', 'function', 'list', 'dict', 'struct', 'array', 'many', 'mat2x2f', 'mat3x3f', 'mat4x4f', 'texture2d']);
@@ -56,7 +57,10 @@ export function parseParameters(nodes, { required = false, types = typeNames, fa
 }
 
 export const vectorBindings = {};
-for (const type of vectorTypes) vectorBindings[type] = (...values) => vector(vectorInfo(type).size, values, type);
+for (const type of vectorTypes) {
+  const size = vectorInfo(type).size;
+  vectorBindings[type] = (...values) => vector(size, values, type);
+}
 export const typeGuardBindings = Object.fromEntries(['num', 'str', 'list', 'dict', 'array', 'many', ...scalarTypes, ...vectorTypes, ...matrixTypes, ...Object.keys(typeAliases)].map(type => [`${type}?`, (...values) => {
   if (values.length !== 1) throw new TypeError(`${type}? expects exactly one value`);
   try { assertType(values[0], type); return true; } catch (error) { if (error instanceof TypeError) return false; throw error; }
@@ -67,14 +71,12 @@ for (const [alias, type] of Object.entries(typeAliases)) {
   constructors[alias] = constructors[type];
 }
 export function swizzle(value, name) {
-  if (!/^[xyzw]{1,4}$/.test(name)) throw new TypeError('Invalid vector swizzle');
+  if (!swizzleNames.has(name)) throw new TypeError('Invalid vector swizzle');
   const kind = dataKind(value);
-  const indices = [...name].map(component => 'xyzw'.indexOf(component));
-  const info = vectorInfo(kind);
-  if (!info || indices.some(i => i >= value.values.length)) throw new TypeError(`${name}: expected a vector with these components`);
+  const accessor = swizzleAccessors[kind]?.[name];
+  if (!accessor) throw new TypeError(`${name}: expected a vector with these components`);
   assertType(value, kind, 'Swizzle target');
-  const values = indices.map(i => value.values[i]);
-  return values.length === 1 ? values[0] : vector(values.length, values, `vec${values.length}${info.suffix}`);
+  return accessor.read(value);
 }
 
 export function access(value, key, quoted = false) {
@@ -107,13 +109,16 @@ export function setAccess(value, key, replacement, quoted = false) {
   }
   if (vectorInfo(kind)) {
     if (!quoted && /^-?\d+$/.test(key)) { put(value, Number(key), replacement); return replacement; }
-    if (quoted || !/^[xyzw]{1,4}$/.test(key) || new Set(key).size !== key.length) throw new TypeError('Writable vector swizzles require distinct components');
-    swizzle(value, key); // Validate all destination components first.
-    const info = vectorInfo(kind);
-    const values = key.length === 1 ? [info.scalar === 'f32' ? Math.fround(assertType(replacement, 'num')) : assertType(replacement, info.scalar)] : Array.from(assertType(replacement, `vec${key.length}${info.suffix}`).values);
+    const accessor = swizzleAccessors[kind][key];
+    if (quoted || !writableSwizzleNames.has(key)) throw new TypeError('Writable vector swizzles require distinct components');
+    if (!accessor) throw new TypeError(`${key}: expected a vector with these components`);
+    assertType(value, kind, 'Swizzle target');
+    const type = accessor.replacementType;
+    const values = key.length === 1 ? [type === 'f32' ? Math.fround(assertType(replacement, 'num')) : assertType(replacement, type)] : Array.from(assertType(replacement, type).values);
     // Buffer-backed numeric views validate the complete assignment before writing.
     if (isCheckedView(value) && values.some(v => !Number.isFinite(Math.fround(v)))) throw new TypeError('Struct/array components must be finite f32 numbers');
-    [...key].forEach((component, i) => put(value, 'xyzw'.indexOf(component), values[i]));
+    // Components are validated and snapshotted before any direct destination write.
+    accessor.write(value, values);
     return replacement;
   }
   if (/^mat([234])x\1f$/.test(kind || '')) {

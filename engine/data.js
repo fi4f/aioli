@@ -26,8 +26,7 @@ function languageValue(value) {
 function tagged(type, values) {
   // Metadata is fixed; the backing storage is mutable.
   if (vectorInfo(type) || /^mat([234])x\1f$/.test(type)) {
-    Object.seal(values);
-    Object.defineProperty(values, 'length', { writable: false });
+    return numericFromComponents(type, values);
   }
   const result = Object.freeze({ type, values });
   kinds.set(result, type);
@@ -56,6 +55,14 @@ export function vector(size, values, type = `vec${size}f`) {
   if (components.length === 1) components.push(...Array(size - 1).fill(components[0]));
   if (components.length !== size) throw new TypeError(`${type}: expected ${size} components or one scalar to splat`);
   return tagged(type, components.map(value => convertComponent(value, info.scalar)));
+}
+
+// Internal fixed-storage constructor for vectors/matrices. Generated swizzles
+// supply a fresh array from an already validated target in the same family.
+export function numericFromComponents(type, components) {
+  Object.seal(components);
+  Object.defineProperty(components, 'length', { writable: false });
+  return registerData(Object.freeze({ type, values: components }), type);
 }
 
 export function matrix(size, values) {

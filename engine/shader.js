@@ -1,7 +1,7 @@
 import { locate } from './trace.js';
 import { parseParameters } from './types.js';
 import { resultType, isMatrix, isVector, isScalar } from './numeric.js';
-import { structDefinitionInfo, elementInfo, arrayType, manyType } from './structures.js';
+import { structDefinitionInfo, structField, elementInfo, arrayType, manyType } from './structures.js';
 import { vectorInfo, scalarTypes, vectorTypes, convertComponent, matrixSize, matrixTypes, typeAliases, canonicalType } from './numeric-types.js';
 import { parseConditional } from './conditionals.js';
 import { parseTransformPairs, transformWGSL } from './transforms.js';
@@ -255,7 +255,7 @@ export function compileShader(node, source, { structDefinitions = new Map(), hoi
       if (args.length !== fields.length * 2) fail(`${name} requires all fields exactly once`, node);
       for (let i = 0; i < args.length; i += 2) {
         const key = args[i].kind === 'symbol' ? args[i].name : args[i].value;
-        const field = fields.find(field => field.key === key);
+        const field = structField(type.info, key);
         if (!field || entries.has(key)) fail(`Unknown or duplicate ${name} field: ${key}`, args[i]);
         const value = valueExpression(args[i + 1]);
         if (value.type !== elementType(field.info)) fail(`Wrong type for ${name} field ${key}`, args[i + 1]);
@@ -514,7 +514,7 @@ return selected;
   const encodeStored = (type, code) => type === 'bool' ? `select(0f, 1f, ${code})` : code;
   const decodeStored = (type, code) => type === 'bool' ? `(${code} != 0f)` : code;
   function fieldAccess(target, key, node, raw = false) {
-    const field = target.type.info.fields.find(field => field.key === key);
+    const field = structField(target.type.info, key);
     if (!field) fail(`Unknown struct field: ${key}`, node);
     const type = elementType(field.info), code = `(${target.code}).f${field.index}`;
     return { code: raw ? code : decodeStored(type, code), type, encodedBool: raw && type === 'bool' };

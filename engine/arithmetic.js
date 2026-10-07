@@ -2,6 +2,7 @@ import { assertType } from './types.js';
 import { copy, dataKind, vector, matrix } from './data.js';
 import { resultType, isMatrix, isVector, isScalar } from './numeric.js';
 import { vectorInfo, convertComponent, matrixSize } from './numeric-types.js';
+import { vectorArithmetic } from './arithmetic.generated.js';
 
 function numbers(name, values, minimum = 0, maximum = Infinity) {
   if (values.length < minimum || values.length > maximum) {
@@ -53,6 +54,10 @@ function binary(operator, left, right) {
   if (b === 'num' && vectorInfo(a)?.suffix) { b = vectorInfo(a).scalar; if (b === 'f32') right = Math.fround(right); assertType(right, b); }
   const type = resultType(operator, a, b);
   if (type === 'num') return scalarArithmetic[operator](left, right);
+  if (!isMatrix(a) && !isMatrix(b)) {
+    const mode = isScalar(a) ? 'sv' : isScalar(b) ? 'vs' : 'vv';
+    return vectorArithmetic[type][operator][mode](left, right);
+  }
   const n = vectorInfo(type)?.size || matrixSize(type);
   if (operator === '*' && !isScalar(a) && !isScalar(b) && (isMatrix(a) || isMatrix(b))) {
     const values = Array.from({ length: isMatrix(type) ? n * n : n }, (_, index) => {
@@ -88,10 +93,13 @@ function calculate(operator, values) {
     const value = values[0], type = typeOf(value);
     if (operator === '+' || operator === '*') return copy(value);
     if (operator === '/' && isMatrix(type)) throw new TypeError('Matrix division is not supported');
+    if (isVector(type)) return vectorArithmetic[type][operator === '-' ? 'negate' : 'reciprocal'](value);
     const operation = operator === '-' ? value => -value : value => 1 / value;
     return construct(type, value.values.map(operation));
   }
-  return values.slice(1).reduce((result, value) => binary(operator, result, value), values[0]);
+  let result = values[0];
+  for (let i = 1; i < values.length; i++) result = binary(operator, result, values[i]);
+  return result;
 }
 export const arithmetic = Object.fromEntries(Object.keys(scalarArithmetic).map(operator =>
   [operator, (...values) => calculate(operator, values)]));

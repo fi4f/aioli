@@ -4,7 +4,8 @@ import { compile, read } from '../engine/compiler.js';
 import { forms } from '../engine/forms.js';
 import { bindings } from '../engine/bindings.js';
 import { compileShader } from '../engine/shader.js';
-import { vectorBindings } from '../engine/types.js';
+import { vectorBindings, swizzle, setAccess } from '../engine/types.js';
+import { vectorTypes, vectorInfo } from '../engine/numeric-types.js';
 import { put } from '../engine/data.js';
 
 function swizzles(letters) {
@@ -16,6 +17,71 @@ function swizzles(letters) {
   }
   return result;
 }
+
+test('every generated read and writable permutation preserves its numeric family', () => {
+  for (const type of vectorTypes) {
+    const { size, suffix } = vectorInfo(type);
+    const components = Array.from({ length: size }, (_, i) => i + 1);
+    for (const name of swizzles('xyzw'.slice(0, size))) {
+      const target = vectorBindings[type](...components);
+      const indices = [...name].map(letter => 'xyzw'.indexOf(letter));
+      const expected = indices.map(index => components[index]);
+      const result = swizzle(target, name);
+      if (name.length === 1) assert.equal(result, expected[0]);
+      else {
+        assert.equal(result.type, `vec${name.length}${suffix}`);
+        assert.deepEqual(result.values, expected);
+        assert.notEqual(result.values, target.values);
+        assert.equal(Object.isSealed(result.values), true);
+        assert.equal(Object.getOwnPropertyDescriptor(result.values, 'length').writable, false);
+      }
+      const replacement = name.length === 1 ? 9 : vectorBindings[`vec${name.length}${suffix}`](...indices.map((_, i) => i + 5));
+      if (new Set(name).size !== name.length) {
+        assert.throws(() => setAccess(target, name, replacement), /distinct components/);
+        assert.deepEqual(target.values, components);
+      } else {
+        assert.equal(setAccess(target, name, replacement), replacement);
+        const written = [...components];
+        indices.forEach((index, i) => { written[index] = name.length === 1 ? replacement : replacement.values[i]; });
+        assert.deepEqual(target.values, written);
+      }
+    }
+    const target = vectorBindings[type](...components);
+    assert.equal(setAccess(target, 'xyzw'.slice(0, size).split('').reverse().join(''), target), target);
+    assert.deepEqual(target.values, [...components].reverse());
+  }
+});
+
+test('generated accessors reject invalid selectors and corrupted targets before writing', () => {
+  for (const type of vectorTypes) {
+    const target = vectorBindings[type](1);
+    for (const name of ['xxxxx', '', 'r', 'xzq', '__proto__', 'constructor', 'toString']) {
+      assert.throws(() => swizzle(target, name), /Invalid vector swizzle/);
+      assert.throws(() => setAccess(target, name, 2), /distinct components/);
+    }
+    if (target.values.length < 4) {
+      assert.throws(() => swizzle(target, 'w'), /expected a vector/);
+      assert.throws(() => setAccess(target, 'w', 2), /expected a vector/);
+    }
+    target.values[0] = 'corrupted';
+    assert.throws(() => swizzle(target, 'y'), /Swizzle target/);
+    assert.throws(() => setAccess(target, 'y', 2), /Swizzle target/);
+    assert.equal(target.values[1], 1);
+  }
+});
+
+test('generated writes validate all checked-view components before mutation', () => {
+  for (const trace of [true, false]) {
+    const source = '(struct Item v:vec2f) (let items (array (Item 1) (Item v (vec2f 1 2)))) items.0.v';
+    const target = compile(source, bindings, forms, { trace }).run();
+    assert.throws(() => setAccess(target, 'xy', vectorBindings.vec2f(3, Infinity)), /finite f32/);
+    assert.deepEqual(Array.from(target.values), [1, 2]);
+    setAccess(target, 'yx', target);
+    assert.deepEqual(Array.from(target.values), [2, 1]);
+    setAccess(target, 'x', 0.1);
+    assert.equal(target.values[0], Math.fround(0.1));
+  }
+});
 
 test('all valid one-to-four component swizzles work in both scene modes and shaders', () => {
   for (const dimension of [2, 3, 4]) {
