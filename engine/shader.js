@@ -106,11 +106,18 @@ export function compileShader(node, source, { structDefinitions = new Map(), hoi
   let scopes = [builtins, argumentsScope];
   const parameterCount = uniforms.length, liftedText = new Map();
   function textField(value, key, at) {
+    if (key === 'uv') return { code: `(xy / ${value.metrics}.xy)`, type: 2 };
+    if (key === 'wh') return { code: `${value.metrics}.xy`, type: 2 };
     if (key === 'texture') return { code: value.code, type: 'texture2d' };
     if (key === 'origin') return { code: value.origin, type: 2 };
     const index = ['w', 'h', 'baseline', 'lines'].indexOf(key);
     if (index < 0) fail(`Unknown shader text field: ${key}`, at);
     return { code: `${value.metrics}.${'xyzw'[index]}`, type: 1 };
+  }
+  function textureField(value, key, at) {
+    if (!['w', 'h', 'wh'].includes(key)) fail(`Unknown texture field: ${key}`, at);
+    const dimensions = `vec2f(textureDimensions(${value.code}, 0))`;
+    return { code: key === 'wh' ? dimensions : `(${dimensions}).${key === 'w' ? 'x' : 'y'}`, type: key === 'wh' ? 2 : 1 };
   }
   const helpers = [], helperCode = [];
   const transformHelpers = new Set();
@@ -138,6 +145,7 @@ export function compileShader(node, source, { structDefinitions = new Map(), hoi
   const expression = node => {
     if (node.kind === 'access') {
       const target = expression(node.target);
+      if (target.type === 'texture2d') return textureField(target, node.key, node);
       if (target.type?.kind === 'text') return textField(target, node.key, node);
       if (target.type?.kind === 'struct') return fieldAccess(target, node.key, node);
       if (target.type?.kind === 'storage' || target.type?.kind === 'array' || target.type?.kind === 'many') {
@@ -193,11 +201,26 @@ export function compileShader(node, source, { structDefinitions = new Map(), hoi
       liftedText.set(node, value);
       return value;
     }
+    if (['affine', 'project'].includes(name) && !scopes.some(scope => scope.has(name))) {
+      if (args.length !== 2) fail(`${name} expects exactly two operands: a matrix and a float vector`, node);
+      const transform = expression(args[0]), value = expression(args[1]);
+      const size = transform.type === 'mat3x3f' ? 2 : transform.type === 'mat4x4f' ? 3 : 0;
+      if (!size || value.type !== size) fail(`${name} expects mat3x3f and vec2f, or mat4x4f and vec3f`, node);
+      if (name === 'project') {
+        const helper = `project${nextSelector++}`;
+        helperCode.push(`fn ${helper}(transform: mat${size + 1}x${size + 1}f, point: vec${size}f) -> vec${size}f {
+let homogeneous = transform * vec${size + 1}f(point, 1f);
+return homogeneous.${size === 2 ? 'xy' : 'xyz'} / homogeneous.${size === 2 ? 'z' : 'w'};
+}`);
+        return { code: `${helper}(${transform.code}, ${value.code})`, type: size };
+      }
+      return { code: `(${transform.code} * vec${size + 1}f(${value.code}, 1f)).${size === 2 ? 'xy' : 'xyz'}`, type: size };
+    }
     if (name === '2d' || name === '3d') {
       const size = name === '2d' ? 2 : 3;
       const entries = parseTransformPairs(args, key => key.kind === 'symbol' ? key.name : key.kind === 'literal' ? key.value : null, fail);
-      const codes = { position: `vec${size}f(0f)`, scale: `vec${size}f(1f)`,
-        rotation: size === 2 ? '0f' : 'vec3f(0f)', skew: size === 2 ? 'vec2f(0f)' : 'array<f32, 6>()' };
+      const codes = { translate: `vec${size}f(0f)`, scale: `vec${size}f(1f)`,
+        rotate: size === 2 ? '0f' : 'vec3f(0f)', skew: size === 2 ? 'vec2f(0f)' : 'array<f32, 6>()' };
       for (const [key, at] of entries) {
         const value = expression(at);
         if (key === 'skew' && size === 3) {
@@ -207,14 +230,14 @@ export function compileShader(node, source, { structDefinitions = new Map(), hoi
             codes[key] = `array<f32, 6>(${Array.from({ length: 6 }, (_, i) => readCollection(value, { code: `${i}f`, type: 1 }, at).code).join(', ')})`;
           } else fail('3d skew expects an array of six f32 angles: xy, xz, yx, yz, zx, zy', at);
         } else {
-          const expected = key === 'rotation' && size === 2 ? 1 : size;
+          const expected = key === 'rotate' && size === 2 ? 1 : size;
           if (key === 'scale' && value.type === 1) codes[key] = `vec${size}f(${value.code})`;
           else if (value.type === expected) codes[key] = value.code;
           else fail(`${name} ${key} expects ${expected === 1 ? 'f32' : `vec${expected}f`}${key === 'scale' ? ' or f32' : ''}`, at);
         }
       }
       if (!transformHelpers.has(name)) { transformHelpers.add(name); helperCode.push(transformWGSL[name]); }
-      return { code: `transform${name}(${['position', 'scale', 'rotation', 'skew'].map(key => codes[key]).join(', ')})`, type: size === 2 ? 'mat3x3f' : 'mat4x4f' };
+      return { code: `transform${name}(${['translate', 'scale', 'rotate', 'skew'].map(key => codes[key]).join(', ')})`, type: size === 2 ? 'mat3x3f' : 'mat4x4f' };
     }
     if (name.endsWith('?') && ['num', 'str', ...scalarTypes, ...vectorTypes, ...matrixTypes].includes(name.slice(0, -1))) {
       if (args.length !== 1) fail(`${name} expects exactly one value`, node);
@@ -282,6 +305,7 @@ export function compileShader(node, source, { structDefinitions = new Map(), hoi
     if (name === 'get') {
       if (args.length !== 2) fail('get expects a collection/struct and index/key', node);
       const target = expression(args[0]);
+      if (target.type === 'texture2d' && args[1].kind === 'literal' && typeof args[1].value === 'string') return textureField(target, args[1].value, node);
       if (target.type?.kind === 'text' && args[1].kind === 'literal' && typeof args[1].value === 'string') return textField(target, args[1].value, node);
       if (target.type?.kind === 'struct' && args[1].kind === 'literal' && typeof args[1].value === 'string') return fieldAccess(target, args[1].value, node);
       if (target.type?.kind === 'storage' || target.type?.kind === 'array' || target.type?.kind === 'many') {
@@ -437,13 +461,19 @@ return selected;
       return { code: `${typeName(type)}(${converted.join(', ')})`, type };
     }
     if (name === 'blend') {
-      if (args.length < 1 || args.length > 2) fail('blend expects one or two vec4f colors', node);
+      if (args.length < 1 || args.length > 2) fail('blend expects one or two vec4f colors or textures', node);
       const colors = args.map(expression);
-      if (colors.some(color => color.type !== 4)) fail('blend expects vec4f colors', node);
+      if (colors.some(color => color.type !== 4 && color.type !== 'texture2d' && color.type?.kind !== 'text')) fail('blend expects vec4f colors or textures', node);
       if (!needsBlend) { needsBlend = true; helperCode.push(blendWGSL); }
-      if (colors.length === 1) { needsBefore = true; needsSampler = true; }
-      const background = colors[1]?.code ?? 'textureSampleLevel(before, shaderSampler, uv, 0f)';
-      return { code: `blendColors(${colors[0].code}, ${background})`, type: 4 };
+      const sampleColor = color => {
+        if (color.type === 4) return color.code;
+        needsSampler = true;
+        return `textureSampleLevel(${color.code}, shaderSampler, uv, 0f)`;
+      };
+      const foreground = sampleColor(colors[0]);
+      if (colors.length === 1) needsBefore = true;
+      const background = sampleColor(colors[1] ?? { code: 'before', type: 'texture2d' });
+      return { code: `blendColors(${foreground}, ${background})`, type: 4 };
     }
     if (name === 'sample') {
       if (args.length !== 2) fail('sample expects a texture2d or text and vec2f UV coordinates', node);

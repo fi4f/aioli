@@ -17,16 +17,23 @@ canvas with the browser's preferred format. Run is enabled once graphics is read
 Unavailable WebGPU, device loss, and GPU errors are shown in the page and console.
 Use localhost via `npx serve`, or HTTPS.
 
-The first graphics binding is `(clear red green blue)`, with three finite numeric
-channels between 0 and 1:
+The first graphics binding is `clear`, accepting a single numeric scalar (RGB
+splat), three RGB channels, four RGBA channels, or one `vec3f`/`vec4f`. RGB
+inputs default to alpha 1. All channels must be finite numbers between zero and one.
+With no arguments, `(clear)` clears to opaque black, equivalent to `(clear 0)`.
 
 ```lisp
 (clear 0.1 0.2 0.4)
+(clear 1) ; opaque white
+(clear 0.1 0.2 0.4 0.5)
+(clear (vec4 0.1 0.2 0.4 0.5))
 (print "Canvas cleared")
 ```
 
 The canvas is opaque and initially black. Clear updates a color uniform and
 submits a full-canvas triangle whose fragment shader returns that color.
+Alpha is preserved in the output texture and `context.before` for subsequent
+shader sampling, even though the displayed canvas is opaque.
 The shader language below builds on this per-pixel rendering path; ray tracing
 is not implemented yet. Scenes provide the animation loop. Browser services
 live in `graphics.js` and supply ordinary bindings to the compiler.
@@ -43,17 +50,27 @@ mutation, and regular function calls work as usual. For example:
   (font "sans-serif")
   (size 32)
   (span "Hello ")
-  (color (vec3 1 0 0))
+  (fill (vec3 1 0 0))
   (span name)
   (line)
   (span "Welcome back.")))
 ```
 
 `span` appends a string using the current style; use `str` for explicit conversions.
+Bare string statements in a `text` body are shorthand for `span`, including
+interpolated strings and strings in branches, brace blocks, or captured helper
+bodies. For example, `(text "Hello " (weight bold) f"{name}")` appends two spans.
+Strings used as arguments, assigned to variables, or returned from functions
+remain ordinary values. Use `(span value)` to append a variable or expression.
 `line` appends a newline. Embedded `\n` also breaks lines, and blank/trailing lines
 are preserved. `font` takes a CSS font family, `size` takes positive pixels, and
-`color` takes RGB `vec3f` or RGBA `vec4f` with channels between zero and one.
-Defaults are sans-serif, 16 pixels, and opaque white. Style changes affect all
+`fill` and `stroke` accept a numeric RGB splat, an RGB `vec3f`, an RGBA `vec4f`,
+three RGB channels, or four RGBA channels. RGB defaults to alpha 1; all channels
+must be finite numbers between zero and one. Use `nil` to disable that paint.
+For example, `(fill 1)` is opaque white and `(stroke 1 0 0 0.5)` is translucent red.
+`fill` replaces the former `color` operation.
+Defaults are sans-serif, 16 pixels, opaque white fill, and no stroke. When both
+are enabled, stroke is drawn before fill. Style changes affect all
 subsequent spans, including after a branch or brace block. Earlier spans retain
 their styles. Nested `text` bodies have independent builders. Functions defined
 inside a text body can append to its builder while that body is executing; using
@@ -66,13 +83,61 @@ Block settings are `(width pixels)`, `(align "left"|"center"|"right")`, and
 text uses its natural width. With width, it wraps at whitespace across span
 boundaries; oversized words stay intact and may extend past that width. Line
 height is the distance between baselines; the default uses font metrics with
-20% extra spacing. Color changes preserve shaping within contiguous spans sharing
-the same font and size. The initial layout supports left-to-right plain text and
+20% extra spacing. Paint changes preserve shaping within contiguous spans sharing
+the same font, size, weight, and italic setting. The initial layout supports left-to-right plain text and
 basic whitespace wrapping; paragraph bidirectionality, Unicode line breaking,
-rich font styles, and editing/caret behavior are not implemented.
+text decorations, and editing/caret behavior are not implemented.
+
+`(weight value)` accepts a finite numeric weight from `1` to `1000`, or a named
+weight as a symbol or string. Names are `thin` (100), `extralight` (200),
+`light` (300), `normal`/`regular` (400), `medium` (500), `semibold` (600),
+`bold` (700), `extrabold` (800), and `black` (900). The default is 400.
+`(italic)` or `(italic true)` enables italics; `(italic false)` restores upright text (the default).
+Both settings affect subsequent spans and participate in measurement and rendering.
+Available weights and italic faces depend on the selected font.
+
+```lisp
+(text (weight semibold) (italic true) (span "Heading")
+      (weight "normal") (italic false) (span " Body"))
+```
+
+Stroke settings mirror Canvas names and defaults:
+
+| Operation | Values | Default |
+| --- | --- | --- |
+| `line-width` | Positive finite width in pixels | `1` |
+| `line-join` | `round`, `bevel`, `miter` | `miter` |
+| `miter-limit` | Positive finite miter ratio | `10` |
+| `line-cap` | `butt`, `round`, `square` | `butt` |
+| `line-dash` | List or numeric array of finite nonnegative lengths | Empty (solid) |
+
+Named options accept symbols or strings, including for `align`. Odd-length dash
+patterns repeat twice, matching Canvas; `(line-dash (list))` restores a solid stroke.
+Invalid settings raise errors. Stroke settings affect subsequent spans and are
+preserved even when stroke is disabled. Text bounds include stroke padding.
+
+```lisp
+(text
+  (fill nil)
+  (stroke (vec3 1 0.5 0))
+  (line-width 2)
+  (line-join round)
+  (line-cap "round")
+  (line-dash (list 4 2))
+  (span "Outlined")
+  (fill (vec3 1))
+  (stroke nil)
+  (span " Filled"))
+```
 
 In the browser runtime, the result is a dictionary with `texture`, `w`, `h`,
-`baseline`, `origin`, `lines`, and `content`. Dimensions describe the actual raster
+`wh`, `baseline`, `origin`, `lines`, and `content`. `wh` is a `vec2f` containing
+the text texture's width and height, available as `label.wh` in shaders too.
+Inside shaders, `label.uv` is shorthand for `xy / label.wh`, using the current
+pixel coordinates, including inside shader helpers. `(get label "uv")` also
+works. For example, `(blend (sample label label.uv))` draws at the text texture's
+natural pixel size. This shader-only property does not subtract `label.origin`.
+Dimensions describe the actual raster
 texture, including padding for glyph overhang and filtering. `baseline` is the
 first baseline's y coordinate; `origin.x`/`origin.y` locate the layout origin
 within that texture. The texture has straight RGBA alpha and belongs to the
@@ -138,6 +203,71 @@ The complete scene is `examples/shader-text.lisp`.
 
 ## Embedding
 
+Scenes support keyboard, pointer (mouse, touch, pen), wheel, and gamepad input.
+Input callbacks use the same `(on name (event) ...)` syntax; the optional event
+parameter is a dictionary. State is updated before the callback runs. Queries
+return independent snapshots, so changing a returned value does not change input.
+
+```lisp
+(on keydown (event)
+  (if (not event.repeat) (print event.code)))
+(on pointerdown (event) (print event.xy))
+(on joydown (event) (print event.index event.button))
+(on update (context)
+  (if (key? "KeyW") (print "moving forward"))
+  (let cursor (pointer))
+  (let pad (joy 0))
+  (if pad (print pad.axes.0)))
+```
+
+| Callbacks | Event fields |
+| --- | --- |
+| `keydown`, `keyup` | `code` (physical key, e.g. `KeyW`), `key`, `repeat`, `alt`, `ctrl`, `shift`, `meta` |
+| `pointerdown`, `pointerup`, `pointermove`, `pointercancel`, `pointerenter`, `pointerleave` | `id`, `type` (`mouse`/`touch`/`pen`), `primary`, `x`, `y`, `xy`, `uv`, `button`, `buttons`, `pressure`, modifier booleans |
+| `wheel` | `dx`, `dy`, `dz`, `mode` (browser delta units), modifier booleans |
+| `joyconnected`, `joydisconnected` | Gamepad snapshot: `index`, `id`, `mapping`, `connected`, `timestamp`, `axes`, `buttons` |
+| `joydown`, `joyup` | `index`, `button`, `value`, `pressed` |
+| `joyaxis` | `index`, `axis`, `value` |
+
+`(key? "KeyW")` queries physical keyboard codes. Keyboard input is scoped
+to the focused canvas, which becomes focusable and receives focus on pointer down.
+Key releases are tracked outside the canvas too. While focused, the canvas
+prevents scrolling from Space, arrows, PageUp/PageDown, and Home/End on both
+key press and release, including repeats. Tab navigation and Ctrl/Meta/Alt
+shortcuts retain browser behavior. Use CSS `touch-action: none` when touch gestures should
+control the scene instead of scrolling or zooming.
+The canvas suppresses the browser context menu so right-click remains available
+for pointer input; destroying the runtime removes this handler.
+
+`(pointer? mask)` tests the primary pointer's button mask; `(pointer? mask id)`
+selects a pointer. Masks are left/contact 1, right 2, middle 4, back 8, and
+forward 16. Combined masks require all selected buttons: `(pointer? 3)` tests
+left and right together. Masks must be positive 32-bit integers.
+`(joy? button)` tests a button on gamepad index 0; `(joy? button index)`
+selects a gamepad. It uses the browser button's `pressed` flag. Missing devices
+and unavailable gamepad buttons return `false`. For example, `(joy? 0 2)`
+tests button 0 on gamepad 2. Both functions return booleans like `key?`.
+
+`(pointer)` returns the primary pointer, `(pointer id)` selects an id, and
+`(pointers)` lists tracked pointers. Missing pointers return `nil`. Positions use
+canvas backing pixels, accounting for CSS scaling; `uv` is `xy / canvas dimensions`.
+`buttons` is the browser button bitmask. Pointer down captures the pointer so
+drags continue outside the canvas. Finished touches, canceled pointers, and
+uncaptured pointers leaving the canvas are removed; mouse hover state remains
+while inside the canvas.
+
+`(joy index)` returns a connected device or `nil`; `(joys)` lists connected
+devices while preserving each browser index. Axes are numeric lists; buttons are
+lists of dictionaries containing `pressed`, `touched`, and `value`. Gamepads are
+polled before each animation frame's updates and render; callbacks report
+connections and state transitions. Browser support, secure-context requirements,
+and user interaction determine which devices are exposed. No dead zone is applied.
+
+Blur, hidden documents, and scene replacement reset tracked input; gamepads are
+rediscovered on the next visible frame. Runtime destruction removes listeners
+and releases pointer capture. Input callback failures stop animation and report
+through `onError`; activating a scene enables callbacks again.
+
 The editor is a consumer of the library, not part of the runtime. Import the
 ES module in an HTML script tag, create an instance, attach your canvas, and
 provide source text or load a source file:
@@ -172,7 +302,7 @@ Only one runtime may own a canvas at a time.
 | `t` | Accumulated simulation time at the end of this fixed step | Elapsed frame time since scene activation |
 | `dt` | Fixed `1 / updateHz` seconds | Actual elapsed seconds since the previous frame |
 | `w`, `h` | Current canvas dimensions in pixels | Dimensions of this render frame |
-| `before` | Absent (`nil` on access) | Texture of the last completed frame; opaque black initially or after resize |
+| `before` | Absent (`nil` on access) | Latest shader output in this callback; last completed frame before the first draw, or opaque black initially/after resize |
 
 The first render has t/dt = 0 and no update. A bounded catch-up can leave simulation
 time behind render time. Both clocks reset on scene replacement. Contexts are
@@ -242,7 +372,7 @@ Built-in inputs are available in every shader and shader helper:
 | `wh` | vec2f | Current output dimensions in pixels |
 | `w`, `h` | f32 | Components of `wh` |
 | `t`, `dt` | f32 | Elapsed scene-render time and time since the previous frame |
-| `before` | texture2d | The current render context's incoming image (`context.before`) |
+| `before` | texture2d | The image preceding this shader call (`context.before`) |
 
 Times are in seconds and start at zero. Pixel centers start at `(0.5, 0.5)`;
 normalized coordinates use those centers and increase downward along v.
@@ -251,8 +381,10 @@ The old `p` input has been removed. Builtins cannot be assigned or declared as
 shader input parameters; local bindings and helper parameters can shadow them.
 
 `before` is supplied automatically when a shader references it, including inside
-helpers. It is the last completed frame at the start of the render callback and
-stays the same across that callback's passes. The first frame and the first frame
+helpers. It starts as the last completed frame, then advances to each shader's
+returned texture after that call. `clear` also advances it to the cleared image.
+Shaders called in sequence therefore receive the preceding call's output.
+The first frame and the first frame
 after a resize receive an opaque black texture of the current output dimensions.
 Frames with no draws retain the displayed image; synchronous render failures
 discard recorded passes and retain the last completed image. There is no extra
@@ -266,32 +398,44 @@ shader argument to pass:
 ```
 
 Regular code can pass `context.before` to explicit `texture2d` parameters instead.
+Textures expose read-only `w` and `h` pixel dimensions and `wh` as a `vec2f`,
+in regular code and shaders: `image.w`, `image.h`, `image.wh`, or
+`(get image "wh")`. This includes shader outputs, `context.before`, and text
+textures such as `label.texture.wh`. Each regular-code `wh` read returns a fresh vector.
 It is a borrowed handle belonging to this runtime's current render frame; saving
 it and using it in a later frame is rejected. Earlier passes in the current
 callback remain available through the textures those shader calls return.
+Save the initial `context.before` in a local variable before drawing if you need
+to sample the previous frame throughout the callback.
 
-`(blend foreground background)` composites two straight-alpha `vec4f` colors,
+`(blend foreground background)` composites straight-alpha colors,
 placing the first over the second. It returns a fresh straight-alpha `vec4f`,
 including the combined alpha when the background is translucent. Two fully
 transparent colors produce `(vec4 0)`. Alpha is clamped to zero through one;
 RGB values are preserved without clamping. The two-color form works in regular
-Lisp and shaders; regular colors must have finite components.
+Lisp and shaders; regular colors must have finite components. In shaders, with
+one argument the background defaults to `before`: the output of the preceding
+shader or `clear`, or the last completed frame before the first draw.
+In regular code, which has no render context, the one-color form defaults to
+opaque black `(vec4 0 0 0 1)`.
 
-In shaders, `(blend foreground)` samples `before` at the current screen `uv`
-automatically. It works inside shader helpers and with hoisted text, without
-additional arguments or manual alpha calculations:
+In shaders, either argument can be a `vec4f` color, `texture2d`, or hoisted text.
+Textures and text are sampled at the current screen UV, including inside helpers;
+a local variable named `uv` does not override those coordinates. To use custom
+coordinates, pass an explicit `sample` result. Regular code accepts colors only,
+since it has no current pixel coordinates for texture sampling:
 
 ```lisp
 (sh ()
-  (let label (text (size 72) (color (vec4 1 0 0 1)) (span "Hello World")))
+  (let label (text (size 72) (fill (vec4 1 0 0 1)) (span "Hello World")))
   (let text-uv (/ (- xy (vec2 20 20)) (vec2 label.w label.h)))
   (return (blend (sample label text-uv))))
 ```
 
-The default background always uses the screen UV, even if a local named `uv`
-holds custom texture coordinates. To choose a different background, pass a
-second color explicitly, such as `(blend color (vec4 0 0 0 1))`. Regular code
-requires that second color because it has no current pixel to sample.
+Pass a second argument to choose the background, for example `(blend color image)`
+or `(blend foreground-texture background-texture)`. Use `(blend color before)`
+explicitly for compositing over the current incoming image, including the output
+of an earlier shader or `clear` in the same callback.
 
 Numbers in shaders are f32, not the scene language's JavaScript numbers. Finite
 f32 literals are supported; explicit NaN/Infinity constants are not implemented
@@ -724,14 +868,14 @@ dimensions. Unary `+` and `*` also produce independent numeric storage.
 Both work in regular code and shaders and accept optional named pairs in any order:
 
 ```lisp
-(2d position (vec2 10 20) scale (vec2 2 3) rotation 0.5 skew (vec2 0.1 0))
-(3d rotation (vec3 0.1 0.2 0.3) scale 2 position (vec3 10 20 30)
+(2d translate (vec2 10 20) scale (vec2 2 3) rotate 0.5 skew (vec2 0.1 0))
+(3d rotate (vec3 0.1 0.2 0.3) scale 2 translate (vec3 10 20 30)
     skew (array (f32) 0.1 0 0 0 0 0))
-(* (2d position (vec2 10 20)) (vec3 1 2 1)) ; (vec3 11 22 1)
+(* (2d translate (vec2 10 20)) (vec3 1 2 1)) ; (vec3 11 22 1)
 ```
 
-`position` defaults to zero and takes a `vec2f`/`vec3f`. `scale` defaults to one
-and accepts a scalar for uniform scaling or a matching float vector. `rotation`
+`translate` defaults to zero and takes a `vec2f`/`vec3f`. `scale` defaults to one
+and accepts a scalar for uniform scaling or a matching float vector. `rotate`
 defaults to zero and takes a scalar in 2D or a `vec3f` of Euler angles in 3D.
 All angles, including skew angles, use radians. `skew` defaults to zero; in 2D
 its `vec2f` components are xy and yx. In 3D it is an array of six f32 angles
@@ -746,6 +890,17 @@ parameter names work in direct calls; calls through local aliases use quoted
 names. Unknown or repeated parameters are rejected. Regular constructors require
 finite f32 components and reject overflow. Each result owns fresh mutable matrix
 storage; constructor inputs are preserved.
+
+`(affine matrix vector)` transforms a point with an implicit final component of
+one and discards the final component of the result, without perspective division.
+It accepts `mat3x3f` with `vec2f`, or `mat4x4f` with `vec3f`, in regular code
+and shaders. For example, `(affine (2d translate (vec2 10 20)) (vec2 1 2))`
+returns `(vec2 11 22)`. Use `*` with an explicit homogeneous vector for directions.
+
+`(project matrix vector)` accepts the same operands, but divides the remaining
+coordinates by the final homogeneous coordinate. For a final coordinate of zero,
+regular code follows floating-point division semantics (infinity or NaN).
+Use `*` with an explicit homogeneous vector to retain the full result.
 
 Use dot notation for vector components and swizzles in regular code and shaders:
 

@@ -5,15 +5,15 @@
   (size 32)
   (line-height 42)
   (span "Hello ")
-  (color (vec3 0.3 0.8 1))
+  (fill (vec3 0.3 0.8 1))
   (span name)
   (line)
   (if warning {
-    (color (vec3 1 0.5 0.2))
+    (fill (vec3 1 0.5 0.2))
     (span "Attention needed")
   })
   (line)
-  (color (vec3 1))
+  (fill (vec3 1))
   (span "This is an ordinary Lisp body.")))
 
 (let draw (sh (image:texture2d dimensions:vec2 position:vec2)

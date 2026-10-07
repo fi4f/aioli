@@ -5,7 +5,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 const { PNG } = require('pngjs');
 
-test('blend handles translucent backgrounds, transparent colors, and automatic before sampling with text', { timeout: 30000 }, async () => {
+test('blend handles colors and textures in either position with before as the default', { timeout: 30000 }, async () => {
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
@@ -30,7 +30,29 @@ test('blend handles translucent backgrounds, transparent colors, and automatic b
     await page.evaluate(() => {
       blendTest.runtime.graphics.bindings.clear(0,0,1);
       const draw = blendTest.runtime.run('(sh () (let apply (fn (color:vec4) (return (blend color)))) (return (apply (vec4 1 0 0 0.5))))');
-      blendTest.runtime.graphics.render(context => draw(context));
+      blendTest.runtime.graphics.render(context => {
+        blendTest.runtime.graphics.bindings.clear(0,0,1);
+        draw(context);
+      });
+    });
+    await check([128,0,128,255]);
+    await page.evaluate(() => {
+      const foreground = blendTest.runtime.run('(sh () (return (vec4 1 0 0 0.5)))');
+      const background = blendTest.runtime.run('(sh () (return (vec4 0 0 1 1)))');
+      const draw = blendTest.runtime.run('(sh (a:texture2d b:texture2d) (let uv (vec2 0)) (return (blend a b)))');
+      blendTest.runtime.graphics.render(context => draw(context, foreground(context), background(context)));
+    });
+    await check([128,0,128,255]);
+    await page.evaluate(() => {
+      const background = blendTest.runtime.run('(sh () (return (vec4 0 0 1 1)))');
+      const draw = blendTest.runtime.run('(sh (image:texture2d) (return (blend (vec4 1 0 0 0.5) image)))');
+      blendTest.runtime.graphics.render(context => draw(context, background(context)));
+    });
+    await check([128,0,128,255]);
+    await page.evaluate(() => {
+      const foreground = blendTest.runtime.run('(sh () (return (vec4 1 0 0 0.5)))');
+      const draw = blendTest.runtime.run('(sh (image:texture2d) (return (blend image (vec4 0 0 1 1))))');
+      blendTest.runtime.graphics.render(context => draw(context, foreground(context)));
     });
     await check([128,0,128,255]);
     await page.evaluate(() => {
@@ -46,9 +68,9 @@ test('blend handles translucent backgrounds, transparent colors, and automatic b
     await page.evaluate(() => {
       blendTest.runtime.graphics.bindings.clear(0,0,1);
       const draw = blendTest.runtime.run(`(sh ()
-        (let label (text (font "monospace") (size 24) (color (vec4 1 0 0 0.5)) (span "M")))
+        (let label (text (font "monospace") (size 24) (fill (vec4 1 0 0 0.5)) (span "M")))
         (let uv (/ xy (vec2 label.w label.h)))
-        (return (blend (sample label uv))))`);
+        (return (blend (sample label uv) before)))`);
       blendTest.runtime.graphics.render(context => draw(context));
     });
     await page.waitForTimeout(90);
@@ -65,7 +87,7 @@ test('blend handles translucent backgrounds, transparent colors, and automatic b
   } finally { await browser.close(); }
 });
 
-test('context before supplies stable last-frame feedback, black initialization, rollback, and resize reset', { timeout: 30000 }, async () => {
+test('context before advances through shader and clear calls with rollback and resize reset', { timeout: 30000 }, async () => {
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
@@ -96,13 +118,12 @@ test('context before supplies stable last-frame feedback, black initialization, 
     await check([51,102,51,255]);
     await page.evaluate(() => beforeTest.runtime.graphics.render(context => beforeTest.draw(context, 0.2)));
     await check([102,204,51,255]);
-    // Both the automatic input and context.before remain the incoming surface,
-    // even after another pass has drawn during this callback.
+    // Automatic and explicit before inputs both see the preceding pass output.
     await page.evaluate(() => beforeTest.runtime.graphics.render(context => {
       beforeTest.draw(context, 0.2); beforeTest.copy(context);
       beforeTest.explicit(context, beforeTest.get(context, 'before'));
     }));
-    await check([102,204,51,255]);
+    await check([153,255,51,255]);
     const rejected = await page.evaluate(() => {
       let stale = false, failed = false;
       try { beforeTest.runtime.graphics.render(context => beforeTest.explicit(context, beforeTest.saved)); }
@@ -112,14 +133,31 @@ test('context before supplies stable last-frame feedback, black initialization, 
       return { stale, failed };
     });
     assert.deepEqual(rejected, { stale: true, failed: true });
-    await check([102,204,51,255]);
-    await page.evaluate(() => beforeTest.runtime.graphics.render(context => beforeTest.draw(context, 0.2)));
     await check([153,255,51,255]);
+    await page.evaluate(() => beforeTest.runtime.graphics.render(context => beforeTest.draw(context, 0.2)));
+    await check([204,255,51,255]);
     await page.evaluate(() => {
       const canvas = document.getElementById('before-test'); canvas.width = 8; canvas.height = 6;
       beforeTest.runtime.graphics.render(context => beforeTest.draw(context, 0.2));
     });
     await check([51,102,51,255]);
+    await page.evaluate(() => beforeTest.runtime.graphics.render(context => {
+      beforeTest.runtime.graphics.bindings.clear(0,0,1);
+      beforeTest.copy(context);
+    }));
+    await check([0,0,255,255]);
+    await page.evaluate(() => beforeTest.runtime.graphics.render(context => {
+      const initial = beforeTest.get(context, 'before');
+      beforeTest.draw(context, 0.2);
+      beforeTest.explicit(context, initial);
+    }));
+    await check([0,0,255,255]);
+    await page.evaluate(() => beforeTest.runtime.graphics.render(context => {
+      beforeTest.runtime.graphics.bindings.clear(0,0,1,0.25);
+      const alpha = beforeTest.runtime.run('(sh () (return (vec4 (vec3 (sample before uv).w) 1)))');
+      alpha(context);
+    }));
+    await check([64,64,64,255]);
     await page.evaluate(() => beforeTest.runtime.destroy());
   } finally { await browser.close(); }
 });
@@ -177,11 +215,11 @@ test('shader text hoists named and inline resources alongside explicit texture, 
       const program = runtime.compileScene(`(let name "M") (let items (array (f32) 1))
         (let background (sh () (return (vec4 0 0 0.1 1))))
         (let draw (sh (image:texture2d items:array<f32> gain:f32)
-          (let label (text (font "monospace") (size 24) (color (vec3 1 0 0)) (record "named") (span name)))
+          (let label (text (font "monospace") (size 24) (fill (vec3 1 0 0)) (record "named") (span name)))
           (let alias label)
           (let read (fn () (return (sample alias (/ (- xy (vec2 4 4)) (vec2 label.w label.h))))))
           (let red (read))
-          (let green (sample (text (font "monospace") (size 24) (color (vec3 0 1 0)) (record "inline") (span "M"))
+          (let green (sample (text (font "monospace") (size 24) (fill (vec3 0 1 0)) (record "inline") (span "M"))
             (/ (- xy (vec2 36 4)) (vec2 24 32))))
           (let base (sample image (/ xy (vec2 w h))))
           (return (vec4 (+ (* (+ (* red.xyz red.w) (* green.xyz green.w)) (* items.0 gain)) base.xyz) 1))))
@@ -222,8 +260,8 @@ test('immediate text renders multicolor lines through persistent cached textures
       const errors = [], runtime = new Aioli({ onError: error => errors.push(formatTrace(error)) });
       await runtime.attach(canvas);
       const source = `(text (font "monospace") (size 24) (line-height 30)
-        (span "M") (if true { (color (vec3 1 0 0)) (span "M") })
-        (line) (color (vec3 0 1 0)) (span "M"))`;
+        (span "M") (if true { (fill (vec3 1 0 0)) (span "M") })
+        (line) (fill (vec3 0 1 0)) (span "M"))`;
       const label = runtime.run(source), cached = runtime.run(source);
       const sameTexture = get(label, 'texture') === get(cached, 'texture');
       put(get(cached, 'origin'), 'x', 1000);

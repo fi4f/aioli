@@ -1,7 +1,7 @@
 import { vertexWGSL } from './shader.js';
 import { locate } from './trace.js';
 import { assertType, registerTexture } from './types.js';
-import { dict, dataKind, reCopy, get, put } from './data.js';
+import { dict, dataKind, reCopy, get, put, vector } from './data.js';
 import { collectionInfo, sameElement, packCollection } from './structures.js';
 import { scalarTypes, vectorInfo, matrixSize } from './numeric-types.js';
 import { rasterizeText } from './text.js';
@@ -231,8 +231,9 @@ export async function createGraphics(canvas, reportError = console.error) {
       const texture = target(frame.pool, index);
       pass(frame.encoder, texture, pipeline, cached.group);
       frame.output = texture;
-      const handle = registerTexture(Object.freeze({}));
+      const handle = registerTexture(Object.freeze({}), width, height);
       handles.set(handle, { texture, frame });
+      put(frame.context, 'before', handle);
       return handle;
     };
     cache.set(descriptor, shader);
@@ -244,7 +245,7 @@ export async function createGraphics(canvas, reportError = console.error) {
     if (activeFrame) throw new Error('Cannot start a render frame inside another frame.');
     const frame = { context: dict('t', t, 'dt', dt, 'w', width, 'h', height), encoder: device.createCommandEncoder(),
       pool: completed ? 1 - completed.pool : 0, drawCount: 0, output: null, dt, t };
-    const before = registerTexture(Object.freeze({}));
+    const before = registerTexture(Object.freeze({}), width, height);
     handles.set(before, { texture: completed?.texture || initialBefore(), frame });
     put(frame.context, 'before', before);
     activeFrame = frame;
@@ -261,15 +262,23 @@ export async function createGraphics(canvas, reportError = console.error) {
       throw error;
     } finally { activeFrame = null; }
   };
-  const fill = createShader({ uniforms: ['red', 'green', 'blue'].map(name => ({ name, type: 'f32' })),
+  const fill = createShader({ uniforms: ['red', 'green', 'blue', 'alpha'].map(name => ({ name, type: 'f32' })),
     wgsl: `${vertexWGSL}
-      struct Frame { data: vec4f, values: array<vec4f, 3>, }
+      struct Frame { data: vec4f, values: array<vec4f, 4>, }
       @group(0) @binding(0) var<uniform> frame: Frame;
       @fragment fn fragment() -> @location(0) vec4f {
-        return vec4f(frame.values[0].x, frame.values[1].x, frame.values[2].x, 1);
+        return vec4f(frame.values[0].x, frame.values[1].x, frame.values[2].x, frame.values[3].x);
       }`, source: '', start: 0, end: 0 });
   const clear = (...color) => {
-    if (color.length !== 3) throw new TypeError('clear expects red, green, blue');
+    if (color.length === 0) color = [0, 0, 0];
+    if (color.length === 1) {
+      const value = color[0];
+      if (typeof value === 'number') color = [value, value, value];
+      else if (['vec3f', 'vec4f'].includes(dataKind(value))) color = [...value.values];
+      else throw new TypeError('clear expects a numeric scalar, vec3f, vec4f, or three or four numeric channels');
+    }
+    if (color.length !== 3 && color.length !== 4) throw new TypeError('clear expects a numeric scalar, vec3f, vec4f, or three or four numeric channels');
+    if (color.length === 3) color.push(1);
     for (let i = 0; i < color.length; i++) {
       if (typeof color[i] !== 'number' || !Number.isFinite(color[i]) || color[i] < 0 || color[i] > 1) {
         throw new TypeError(`clear: channel ${i + 1} must be a finite number between 0 and 1`);
@@ -294,11 +303,11 @@ export async function createGraphics(canvas, reportError = console.error) {
       // Store straight alpha so ordinary shader color multiplication remains useful.
       device.queue.copyExternalImageToTexture({ source: raster.canvas }, { texture, premultipliedAlpha: false }, [raster.width, raster.height]);
     } catch (error) { texture.destroy(); throw error; }
-    const handle = registerTexture(Object.freeze({}));
+    const handle = registerTexture(Object.freeze({}), raster.width, raster.height);
     handles.set(handle, { texture, persistent: true });
     persistentTextures.add(texture); textureFinalizer.register(handle, texture);
     stats.textRasterizations++;
-    const fields = ['texture', handle, 'w', raster.width, 'h', raster.height, 'baseline', raster.baseline,
+    const fields = ['texture', handle, 'w', raster.width, 'h', raster.height, 'wh', vector(2, [raster.width, raster.height]), 'baseline', raster.baseline,
       'origin', dict('x', raster.offsetX, 'y', raster.offsetY), 'lines', raster.lineCount, 'content', text.runs.map(run => run.text).join('')];
     textCache.set(key, fields);
     if (textCache.size > 128) textCache.delete(textCache.keys().next().value);

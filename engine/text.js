@@ -1,4 +1,5 @@
 import { dataKind, dict, list, get, vector } from './data.js';
+import { collectionInfo } from './structures.js';
 
 export function bindTextShader(shader, labels, parameterCount) {
   const hidden = labels.flatMap(label => {
@@ -13,23 +14,53 @@ export function bindTextShader(shader, labels, parameterCount) {
   };
 }
 
-export const textOperations = new Set(['span', 'line', 'font', 'size', 'color', 'line-height', 'width', 'align']);
+const fontWeights = { thin: 100, extralight: 200, light: 300, normal: 400, regular: 400, medium: 500, semibold: 600, bold: 700, extrabold: 800, black: 900 };
+export const textNamedOptions = { weight: Object.keys(fontWeights), align: ['left', 'center', 'right'], 'line-join': ['round', 'bevel', 'miter'], 'line-cap': ['butt', 'round', 'square'] };
+export const textOperations = new Set(['span', 'line', 'font', 'size', 'weight', 'italic', 'fill', 'stroke', 'line-width', 'line-join', 'miter-limit', 'line-cap', 'line-dash', 'line-height', 'width', 'align']);
+const copyStyle = style => ({ ...style, fill: style.fill && [...style.fill], stroke: style.stroke && [...style.stroke], lineDash: [...style.lineDash] });
 export function createTextBuilder() {
-  return { runs: [], style: { font: 'sans-serif', size: 16, color: [1, 1, 1, 1] },
+  return { runs: [], style: { font: 'sans-serif', size: 16, weight: 400, italic: false, fill: [1, 1, 1, 1], stroke: null,
+    lineWidth: 1, lineJoin: 'miter', miterLimit: 10, lineCap: 'butt', lineDash: [] },
     width: null, align: 'left', lineHeight: null, closed: false };
 }
 export function textOperation(builder, operation, ...args) {
   if (builder.closed) throw new Error('Text builder has already finished');
-  if (args.length !== (operation === 'line' ? 0 : 1)) throw new TypeError(`${operation} expects ${operation === 'line' ? 'no arguments' : 'one argument'}`);
-  const value = args[0];
+  if (operation === 'fill' || operation === 'stroke') {
+    if (![1, 3, 4].includes(args.length)) throw new TypeError(`${operation} expects a scalar, vec3f, vec4f, three or four channels, or nil`);
+    let channels = args;
+    if (args.length === 1) {
+      const value = args[0];
+      if (value === null) { builder.style[operation] = null; return null; }
+      if (typeof value === 'number') channels = [value, value, value];
+      else if (['vec3f', 'vec4f'].includes(dataKind(value))) channels = [...value.values];
+      else throw new TypeError(`${operation} expects a scalar, vec3f, vec4f, three or four channels, or nil`);
+    }
+    if (channels.some(channel => typeof channel !== 'number' || !Number.isFinite(channel) || channel < 0 || channel > 1)) throw new TypeError(`${operation} channels must be finite numbers between 0 and 1`);
+    builder.style[operation] = channels.length === 3 ? [...channels, 1] : [...channels];
+    return null;
+  }
+  if (operation === 'italic' ? args.length > 1 : args.length !== (operation === 'line' ? 0 : 1)) throw new TypeError(`${operation} expects ${operation === 'italic' ? 'zero or one argument' : operation === 'line' ? 'no arguments' : 'one argument'}`);
+  const value = operation === 'italic' && args.length === 0 ? true : args[0];
   if (operation === 'span' || operation === 'line') {
     if (operation === 'span' && typeof value !== 'string') throw new TypeError('span expects str; use str to convert other values');
     builder.runs.push({ text: operation === 'line' ? '\n' : value.replace(/\r\n?/g, '\n'),
-      ...builder.style, color: [...builder.style.color] });
-  } else if (operation === 'color') {
-    if (!['vec3f', 'vec4f'].includes(dataKind(value)) || value.values.some(channel => !Number.isFinite(channel) || channel < 0 || channel > 1)) throw new TypeError('color expects vec3f RGB or vec4f RGBA channels between 0 and 1');
-    builder.style.color = [...value.values];
-    if (builder.style.color.length === 3) builder.style.color.push(1);
+      ...copyStyle(builder.style) });
+  } else if (operation === 'weight') {
+    const weight = typeof value === 'string' && Object.hasOwn(fontWeights, value) ? fontWeights[value] : value;
+    if (typeof weight !== 'number' || !Number.isFinite(weight) || weight < 1 || weight > 1000) throw new TypeError('weight expects a number from 1 to 1000 or a named font weight');
+    builder.style.weight = weight;
+  } else if (operation === 'italic') {
+    if (typeof value !== 'boolean') throw new TypeError('italic expects bool');
+    builder.style.italic = value;
+  } else if (operation === 'line-join' || operation === 'line-cap') {
+    if (!textNamedOptions[operation].includes(value)) throw new TypeError(`${operation} expects ${textNamedOptions[operation].join(', ')}`);
+    builder.style[operation === 'line-join' ? 'lineJoin' : 'lineCap'] = value;
+  } else if (operation === 'line-dash') {
+    const kind = dataKind(value), info = collectionInfo(value);
+    if (kind !== 'list' && kind !== 'array') throw new TypeError('line-dash expects a list or numeric array');
+    const dash = kind === 'list' ? [...value.values] : Array.from({ length: info.length }, (_, i) => get(value, i));
+    if (dash.some(segment => typeof segment !== 'number' || !Number.isFinite(segment) || segment < 0)) throw new TypeError('line-dash expects finite nonnegative lengths');
+    builder.style.lineDash = dash.length % 2 ? [...dash, ...dash] : dash;
   } else if (operation === 'font') {
     if (typeof value !== 'string' || !value.trim()) throw new TypeError('font expects a nonempty CSS font family string');
     builder.style.font = value;
@@ -41,30 +72,35 @@ export function textOperation(builder, operation, ...args) {
     if (operation === 'size') builder.style.size = value;
     else if (operation === 'width') builder.width = value;
     else if (operation === 'line-height') builder.lineHeight = value;
+    else if (operation === 'line-width') builder.style.lineWidth = value;
+    else if (operation === 'miter-limit') builder.style.miterLimit = value;
     else throw new TypeError(`Unknown text operation: ${operation}`);
   }
   return null;
 }
 export function finishTextBuilder(builder) {
   builder.closed = true;
-  return { runs: builder.runs.map(run => ({ ...run, color: [...run.color] })),
+  return { runs: builder.runs.map(copyStyle),
     width: builder.width, align: builder.align, lineHeight: builder.lineHeight,
-    defaultStyle: { ...builder.style, color: [...builder.style.color] } };
+    defaultStyle: copyStyle(builder.style) };
 }
 // Compiler-only execution can inspect text without requiring a canvas or a GPU.
 export function textDescription(text) {
   return dict('content', text.runs.map(run => run.text).join(''), 'runs', list(...text.runs.map(run =>
-    dict('text', run.text, 'font', run.font, 'size', run.size, 'color', list(...run.color)))));
+    dict('text', run.text, 'font', run.font, 'size', run.size, 'weight', run.weight, 'italic', run.italic,
+      'fill', run.fill && list(...run.fill), 'stroke', run.stroke && list(...run.stroke),
+      'line-width', run.lineWidth, 'line-join', run.lineJoin, 'miter-limit', run.miterLimit,
+      'line-cap', run.lineCap, 'line-dash', list(...run.lineDash)))));
 }
 
-const fontKey = run => `${run.size}px ${run.font}`;
+const fontKey = run => `${run.italic ? 'italic' : 'normal'} ${run.weight} ${run.size}px ${run.font}`;
 function groups(runs) {
   const result = [];
   for (const run of runs) {
     if (!run.text) continue;
     let group = result.at(-1);
     if (!group || group.font !== fontKey(run)) { group = { font: fontKey(run), size: run.size, text: '', spans: [] }; result.push(group); }
-    group.spans.push({ start: group.text.length, end: group.text.length + run.text.length, color: run.color });
+    group.spans.push({ start: group.text.length, end: group.text.length + run.text.length, ...copyStyle(run) });
     group.text += run.text;
   }
   return result;
@@ -130,7 +166,8 @@ export function rasterizeText(text, { maxSize = 8192 } = {}) {
     minY = Math.min(minY, line.baseline - line.ascent);
     previous = line;
   }
-  const padding = 1, offsetX = padding - Math.floor(minX);
+  const strokeExtent = Math.max(0, ...text.runs.map(run => run.stroke ? run.lineWidth / 2 * Math.max(run.lineJoin === 'miter' ? run.miterLimit : 1, run.lineCap === 'square' ? Math.SQRT2 : 1) : 0));
+  const padding = 1 + Math.ceil(strokeExtent), offsetX = padding - Math.floor(minX);
   const offsetY = padding - Math.floor(minY);
   const width = Math.max(1, Math.ceil(maxX - Math.floor(minX)) + padding * 2), height = Math.max(1, Math.ceil(maxY - Math.floor(minY)) + padding * 2);
   if (width > maxSize || height > maxSize) throw new RangeError('Text exceeds GPU texture dimension limit');
@@ -139,15 +176,21 @@ export function rasterizeText(text, { maxSize = 8192 } = {}) {
   for (const line of lines) for (const group of line.groups) {
     context.font = group.font;
     const x = offsetX + line.x + group.x, y = offsetY + line.baseline;
-    // Shape the whole same-font run, even when its color changes mid-word.
+    // Shape the whole same-font run, even when its paint changes mid-word.
     for (let i = 0; i < group.spans.length; i++) {
       const span = group.spans[i];
       const left = i === 0 ? -width : context.measureText(group.text.slice(0, span.start)).width;
       const right = i === group.spans.length - 1 ? width * 2 : context.measureText(group.text.slice(0, span.end)).width;
-      const [r, g, b, a] = span.color;
       context.save(); context.beginPath(); context.rect(x + left, 0, right - left, height); context.clip();
-      context.fillStyle = `rgba(${r * 255}, ${g * 255}, ${b * 255}, ${a})`;
-      context.fillText(group.text, x, y); context.restore();
+      const paint = color => `rgba(${color[0] * 255}, ${color[1] * 255}, ${color[2] * 255}, ${color[3]})`;
+      if (span.stroke) {
+        context.strokeStyle = paint(span.stroke); context.lineWidth = span.lineWidth;
+        context.lineJoin = span.lineJoin; context.miterLimit = span.miterLimit; context.lineCap = span.lineCap;
+        context.setLineDash(span.lineDash);
+        context.strokeText(group.text, x, y);
+      }
+      if (span.fill) { context.fillStyle = paint(span.fill); context.fillText(group.text, x, y); }
+      context.restore();
     }
   }
   return { canvas, width, height, baseline: offsetY + lines[0].baseline, offsetX, offsetY, lineCount: lines.length };

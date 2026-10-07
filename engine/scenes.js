@@ -45,6 +45,7 @@ export class ScenePlayer {
     const previous = this.scene;
     this.scene = null;
     previous?.detach?.();
+    this.input?.reset();
     this.lastTime = null;
     this.accumulator = 0;
     this.elapsed = 0;
@@ -73,7 +74,10 @@ export class ScenePlayer {
 
   frame(time) {
     const scene = this.scene;
+    const generation = this.generation;
     if (!scene) return;
+    this.input?.poll();
+    if (this.scene !== scene || this.generation !== generation) return;
     const frameDt = this.lastTime === null ? 0 : Math.max(0, (time - this.lastTime) / 1000);
     this.accumulator += frameDt;
     this.elapsed += frameDt;
@@ -84,7 +88,7 @@ export class ScenePlayer {
       this.updateElapsed += this.dt;
       scene.update?.(this.context(this.updateElapsed, this.dt));
       updates++;
-      if (this.scene !== scene) return;
+      if (this.scene !== scene || this.generation !== generation) return;
     }
     this.render(scene.render, frameDt, this.elapsed);
   }

@@ -14,12 +14,64 @@ function renderer(events) {
   };
 }
 
+test('text uv uses current pixel coordinates and dimensions inside shaders and helpers', () => {
+  for (const trace of [true, false]) {
+    const events = [];
+    const program = compile(`(sh ()
+      (let label (text "Hello World"))
+      (let uv (vec2 99))
+      (let paint (fn () (return (sample label label.uv))))
+      (let direct (sample label (get label "uv")))
+      (return (blend (paint) direct)))`, bindings, forms, { trace, textRenderer: renderer(events) });
+    assert.match(program.shaders[0].wgsl, /\(xy \/ bitcast<vec4f>\(frame\.values\[\d+\]\)\.xy\)/);
+    assert.match(program.shaders[0].wgsl, /shaderPixel: vec2f/);
+    assert.match(program.shaders[0].wgsl, /let xy = shaderPixel/);
+    program.run([() => null]);
+    assert.deepEqual(events, ['Hello World']);
+  }
+});
+
+test('text wh works in a render callback with bare strings and implicit blend', () => {
+  for (const trace of [true, false]) {
+    const events = [], draws = [];
+    const source = `(on render (context) {
+      (clear)
+      ((sh () {
+        (let label (text "Hello World"))
+        (return (blend (sample label (/ xy label.wh))))
+      }) context)
+    })`;
+    const program = compile(source, { ...bindings, clear: () => events.push('clear') }, forms, { scene: true, trace, textRenderer: renderer(events) });
+    const scene = program.run([(...args) => draws.push(args)]);
+    scene.render(null);
+    assert.deepEqual(events, ['clear', 'Hello World']);
+    assert.equal(draws.length, 1);
+    assert.match(program.shaders[0].wgsl, /\.xy/);
+    assert.equal(program.shaders[0].resources.some(resource => resource.name === 'before'), true);
+    assert.doesNotThrow(() => compile('(sh () (let label (text "M")) (return (vec4 (get label "wh") 0 1)))', bindings, forms, { textRenderer: renderer([]) }));
+  }
+});
+
+test('blend samples hoisted text in either position at screen UV', () => {
+  for (const operands of ['label', 'label (vec4 1)', '(vec4 1) label', 'label label.texture']) {
+    const events = [];
+    const program = compile(`(sh () (let label (text "M")) (return (blend ${operands})))`, bindings, forms, { textRenderer: renderer(events) });
+    const descriptor = program.shaders[0];
+    assert.equal(descriptor.hasSampler, true);
+    assert.equal(descriptor.resources.some(resource => resource.name === 'before'), operands === 'label');
+    assert.match(descriptor.wgsl, /textureSampleLevel\([^,]+, shaderSampler, uv, 0f\)/);
+    assert.equal((descriptor.wgsl.match(/textureSampleLevel\(/g) || []).length, ['label', 'label label.texture'].includes(operands) ? 2 : 1);
+    program.run([() => null]);
+    assert.deepEqual(events, ['M']);
+  }
+});
+
 test('named and inline text are hoisted once at shader creation with hidden textures and bounds', () => {
   for (const trace of [true, false]) {
     const builds = [], calls = [];
     const program = compile(`(let name "Ada")
       (let draw (sh (gain:f32)
-        (let label (text (span "Hello ") (color (vec3 1 0 0)) (span name)))
+        (let label (text "Hello " (fill (vec3 1 0 0)) f"{name}"))
         (let uv (/ (- xy label.origin) (vec2 label.w label.h)))
         (let a (sample label uv)) (let b (sample label.texture uv))
         (let c (sample (text (span "Inline")) uv))

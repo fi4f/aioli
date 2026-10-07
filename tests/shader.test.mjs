@@ -1,4 +1,11 @@
 import { test } from 'node:test';
+test('shader texture dimensions are float fields with dot and get access', () => {
+  const result = compile('(sh (image:texture2d) (let sizes image.wh) (let width (get image "w")) (return (vec4 sizes width image.h)))', {}, forms).shaders[0];
+  assert.match(result.wgsl, /vec2f\(textureDimensions\(/);
+  assert.throws(() => compile('(sh (image:texture2d) (return (vec4 image.unknown)))', {}, forms), /Unknown texture field/);
+  const before = compile('(sh () (return (vec4 before.wh before.w before.h)))', {}, forms).shaders[0];
+  assert.equal(before.resources[0].name, 'before');
+});
 import assert from 'node:assert/strict';
 import { compile, read } from '../engine/compiler.js';
 import { compileShader } from '../engine/shader.js';

@@ -9,8 +9,11 @@ import { vectorBindings, matrixBindings } from '../engine/types.js';
 import { createZeroArray, createMany } from '../engine/structures.js';
 
 test('graphics snapshots mutable numeric data extracted from collections and rejects lists', async t => {
-  const writes = [];
-  const texture = () => ({ createView: () => ({}), destroy() {} });
+  const writes = [], groups = [];
+  const texture = () => {
+    const result = { createView: () => ({ texture: result }), destroy() {} };
+    return result;
+  };
   const pipeline = { getBindGroupLayout: () => ({}) };
   const device = {
     lost: new Promise(() => {}), addEventListener() {}, destroy() {},
@@ -18,7 +21,7 @@ test('graphics snapshots mutable numeric data extracted from collections and rej
     createShaderModule: () => ({}), createRenderPipelineAsync: async () => pipeline,
     createRenderPipeline: () => pipeline, createSampler: () => ({}),
     createBindGroupLayout: () => ({}), createPipelineLayout: () => ({}),
-    createBindGroup: () => ({}), createBuffer: () => ({ destroy() {} }),
+    createBindGroup: descriptor => { groups.push(descriptor); return {}; }, createBuffer: () => ({ destroy() {} }),
     createTexture: texture, pushErrorScope() {}, popErrorScope: async () => null,
     createCommandEncoder: () => ({
       beginRenderPass: () => ({ setPipeline() {}, setBindGroup() {}, draw() {}, end() {} }), finish: () => ({}),
@@ -126,4 +129,69 @@ test('graphics snapshots mutable numeric data extracted from collections and rej
   assert.deepEqual(writes.at(-1).slice(4, 6), [3, 4]);
   assert.throws(() => graphics.render(frame => manyShader(frame, data)), /collection kind/);
   assert.throws(() => graphics.render(frame => bufferShader(frame, many)), /collection kind/);
+  const makeShader = source => graphics.createShader(compile(source, bindings, forms).shaders[0]);
+  const automatic = makeShader('(sh () (return (sample before uv)))');
+  const explicit = makeShader('(sh (image:texture2d) (return (sample image uv)))');
+  const inputOfLastDraw = () => groups.at(-1).entries.find(entry => entry.binding === 1).resource.texture;
+  let precedingTexture;
+  graphics.render(frame => {
+    const initial = get(frame, 'before');
+    assert.equal(get(initial, 'w'), 32); assert.equal(get(initial, 'h'), 24);
+    assert.deepEqual(get(initial, 'wh').values, [32,24]);
+    const first = automatic(frame);
+    precedingTexture = inputOfLastDraw();
+    assert.equal(get(frame, 'before'), first); assert.notEqual(first, initial);
+    for (const trace of [true, false]) {
+      assert.deepEqual(compile('(list image.w image.h image.wh)', { ...bindings, image: first }, forms, { trace }).run().values.slice(0,2), [32,24]);
+      assert.deepEqual(get(first, 'wh').values, [32,24]);
+      const dimensions = get(first, 'wh'); put(dimensions, 0, 99);
+      assert.deepEqual(get(first, 'wh').values, [32,24]);
+      assert.throws(() => compile('(set image.w 99)', { ...bindings, image: first }, forms, { trace }).run(), /Dot assignment/);
+      assert.throws(() => compile('image.unknown', { ...bindings, image: first }, forms, { trace }).run(), /Unknown texture field/);
+    }
+    const second = automatic(frame);
+    const firstTexture = inputOfLastDraw();
+    assert.notEqual(firstTexture, precedingTexture);
+    assert.equal(get(frame, 'before'), second);
+    explicit(frame, first);
+    assert.equal(inputOfLastDraw(), firstTexture);
+    graphics.bindings.clear(0, 0, 1);
+    const cleared = get(frame, 'before');
+    assert.notEqual(cleared, second);
+    assert.deepEqual(writes.at(-1).slice(4), [0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,0]);
+    automatic(frame);
+    const clearTexture = inputOfLastDraw();
+    assert.notEqual(clearTexture, firstTexture);
+    assert.throws(() => explicit(frame, list()), /expected texture2d/);
+    const after = get(frame, 'before');
+    assert.throws(() => explicit(frame, list()), /expected texture2d/);
+    assert.equal(get(frame, 'before'), after);
+  });
+  for (const trace of [true, false]) {
+    for (const [source, color] of [
+      ['(clear)', [0,0,0,1]],
+      ['(clear 1)', [1,1,1,1]], ['(clear 0.25)', [0.25,0.25,0.25,1]],
+      ['(clear 0.25 0.5 0.75)', [0.25,0.5,0.75,1]],
+      ['(clear 0.25 0.5 0.75 0.5)', [0.25,0.5,0.75,0.5]],
+      ['(clear (vec3 0.25 0.5 0.75))', [0.25,0.5,0.75,1]],
+      ['(clear (vec4 0.25 0.5 0.75 0))', [0.25,0.5,0.75,0]],
+    ]) {
+      const program = compile(source, { ...bindings, ...graphics.bindings }, forms, { trace });
+      program.run();
+      assert.deepEqual(writes.at(-1).slice(4), color.flatMap(channel => [channel,0,0,0]));
+      graphics.render(frame => {
+        const previous = get(frame, 'before');
+        const result = program.run();
+        assert.equal(get(frame, 'before'), result); assert.notEqual(result, previous);
+        assert.deepEqual(writes.at(-1).slice(4), color.flatMap(channel => [channel,0,0,0]));
+      });
+    }
+    for (const source of ['(clear 0 1)', '(clear 0 0 0 1 1)', '(clear nil)', '(clear (vec2))', '(clear (vec3i))', '(clear (list 0 0 0))', '(clear -1)', '(clear 0 0 0 2)', '(clear (vec4 0 0 0 -1))', '(clear bad)', '(clear 0 0 0 bad)']) {
+      graphics.render(frame => {
+        const previous = get(frame, 'before'), count = writes.length;
+        assert.throws(() => compile(source, { ...bindings, ...graphics.bindings, bad: Infinity }, forms, { trace }).run(), TypeError, source);
+        assert.equal(get(frame, 'before'), previous); assert.equal(writes.length, count);
+      });
+    }
+  }
 });

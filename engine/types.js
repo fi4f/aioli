@@ -1,5 +1,5 @@
 import { dataKind, vector, matrix, matrixColumn, registerOpaque, get } from './data.js';
-import { put } from './data.js';
+import { put, registerTextureSize } from './data.js';
 import { structDefinitionInfo, isCheckedView } from './structures.js';
 import { scalarTypes, vectorTypes, vectorInfo, scalarMatches, matrixSize, matrixTypes, typeAliases, canonicalType } from './numeric-types.js';
 import { swizzleAccessors, swizzleNames, writableSwizzleNames } from './swizzles.generated.js';
@@ -8,7 +8,11 @@ const textures = new WeakSet();
 export const typeNames = new Set(['nil', 'bool', 'function', 'list', 'dict', 'struct', 'array', 'many', 'mat2x2f', 'mat3x3f', 'mat4x4f', 'texture2d']);
 for (const type of ['num', 'str', ...scalarTypes, ...vectorTypes, ...Object.keys(typeAliases)]) typeNames.add(type);
 
-export function registerTexture(handle) { textures.add(handle); return registerOpaque(handle); }
+export function registerTexture(handle, width, height) {
+  textures.add(handle);
+  if (width !== undefined && height !== undefined) registerTextureSize(handle, width, height);
+  return registerOpaque(handle);
+}
 
 export function assertType(value, type, label = 'Value') {
   type = canonicalType(type);
@@ -80,6 +84,7 @@ export function swizzle(value, name) {
 }
 
 export function access(value, key, quoted = false) {
+  if (textures.has(value)) return get(value, key);
   const kind = dataKind(value);
   if (kind === 'dict' || kind === 'struct' || structDefinitionInfo(value)) return get(value, key);
   if (kind === 'list' || kind === 'array' || kind === 'many') {

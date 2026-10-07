@@ -7,6 +7,8 @@ const evaluate = (source, trace = true, extra = {}) => compile(source, { ...bind
 
 test('blend composites straight-alpha foreground over background and returns fresh vec4f', () => {
   for (const trace of [true, false]) {
+    assert.deepEqual(evaluate('(blend (vec4 1 0 0 0.5))', trace).values, [0.5,0,0,1]);
+    assert.deepEqual(evaluate('(blend (vec4 1 0 0 0))', trace).values, [0,0,0,1]);
     assert.deepEqual(evaluate('(blend (vec4 1 0 0 0.5) (vec4 0 0 1 1))', trace).values, [0.5,0,0.5,1]);
     assert.deepEqual(evaluate('(blend (vec4 1 0 0 0.5) (vec4 0 0 1 0.25))', trace).values,
       [Math.fround(0.8),0,Math.fround(0.2),0.625]);
@@ -20,10 +22,10 @@ test('blend composites straight-alpha foreground over background and returns fre
     result.values[0] = 0;
     assert.deepEqual(a.values, [1,0,0,0.5]); assert.deepEqual(b.values, [0,0,1,1]);
   }
-  for (const source of ['(blend)', '(blend (vec4))', '(blend (vec4) (vec4) (vec4))', '(blend (vec3) (vec4))', '(blend (vec4i) (vec4))', '(blend (vec4 Infinity) (vec4))']) assert.throws(() => evaluate(source), TypeError);
+  for (const source of ['(blend)', '(blend (vec4) (vec4) (vec4))', '(blend (vec3) (vec4))', '(blend (vec4i) (vec4))', '(blend (vec4 Infinity) (vec4))']) assert.throws(() => evaluate(source), TypeError);
 });
 
-test('shader blend defaults to the current frame UV and before only for its one-color overload', () => {
+test('shader blend defaults to before at screen UV including in helpers', () => {
   const shader = source => compile(source, bindings, forms).shaders[0];
   const explicit = shader('(sh () (return (blend (vec4 1 0 0 0.5) (vec4 0 0 1 0.25))))');
   assert.equal(explicit.resources.length, 0); assert.equal(explicit.hasSampler, false);
@@ -32,7 +34,23 @@ test('shader blend defaults to the current frame UV and before only for its one-
     (return (blend (apply (vec4 1 0 0 0.5)) (vec4 1))))`);
   assert.equal(implicit.parameterCount, 0); assert.equal(implicit.resources.length, 1);
   assert.equal(implicit.resources[0].name, 'before'); assert.equal(implicit.resources[0].automatic, true);
+  assert.equal(implicit.hasSampler, true);
   assert.match(implicit.wgsl, /textureSampleLevel\(before, shaderSampler, uv, 0f\)/);
   assert.equal((implicit.wgsl.match(/fn blendColors\(/g) || []).length, 1);
   for (const expression of ['(blend)', '(blend (vec3))', '(blend (vec4i))', '(blend (vec4) 1)', '(blend (vec4) (vec4) (vec4))']) assert.throws(() => shader(`(sh () (return ${expression}))`), SyntaxError);
+});
+
+test('shader blend samples colors, textures and text in either position at screen UV', () => {
+  const shader = source => compile(source, bindings, forms).shaders[0];
+  for (const operands of ['a b', 'a (vec4 1)', '(vec4 1) b', 'a']) {
+    const result = shader(`(sh (a:texture2d b:texture2d) (let uv (vec2 0)) (return (blend ${operands})))`);
+    assert.equal(result.hasSampler, true);
+    assert.equal(result.resources.some(resource => resource.automatic), operands === 'a');
+    assert.equal((result.wgsl.match(/textureSampleLevel\(/g) || []).length, ['a b', 'a'].includes(operands) ? 2 : 1);
+    assert.match(result.wgsl, /textureSampleLevel\([^,]+, shaderSampler, uv, 0f\)/);
+  }
+  const previous = shader('(sh () (return (blend (vec4 1 0 0 0.5) before)))');
+  assert.equal(previous.resources[0].name, 'before'); assert.equal(previous.resources[0].automatic, true);
+  const helper = shader('(sh (image:texture2d) (let paint (fn (a:texture2d) (return (blend a (vec4 1))))) (return (paint image)))');
+  assert.match(helper.wgsl, /textureSampleLevel\(argument0, shaderSampler, uv, 0f\)/);
 });

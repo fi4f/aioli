@@ -3,6 +3,7 @@ import { bindings as defaults } from './engine/bindings.js';
 import { forms } from './engine/forms.js';
 import { createGraphics } from './engine/graphics.js';
 import { ScenePlayer } from './engine/scenes.js';
+import { createInput } from './engine/input.js';
 export { formatTrace } from './engine/trace.js';
 
 const owners = new WeakMap();
@@ -35,8 +36,15 @@ export class Aioli {
         throw new Error('Aioli runtime was destroyed during initialization.');
       }
       this.graphics = graphics;
+      this.input = createInput(canvas, { emit: (name, event) => {
+        if (this.inputFailed) return;
+        try { this.player.scene?.[name]?.(event); }
+        catch (error) { this.inputFailed = true; this.player.stop(); this.onError(error); }
+      } });
+      this.player.input = this.input;
       this.player.render = (callback, dt, t) => graphics.render(callback, dt, t);
       Object.assign(this.bindings, graphics.bindings);
+      Object.assign(this.bindings, this.input.bindings);
       return this;
     } catch (error) {
       if (owners.get(canvas) === this) owners.delete(canvas);
@@ -67,6 +75,7 @@ export class Aioli {
     if (this.destroyed) throw new Error('Aioli runtime has been destroyed.');
     if (!program?.scene) throw new TypeError('activate requires a compiled scene');
     const scene = program.run();
+    this.inputFailed = false;
     this.loadGeneration++;
     this.graphics.resetScene();
     this.player.replace(scene);
@@ -87,6 +96,7 @@ export class Aioli {
   destroy() {
     this.destroyed = true;
     this.loadGeneration++;
+    this.input?.destroy();
     try { this.player.replace(null); }
     catch (error) { this.onError(error); }
     const wasAttached = Boolean(this.graphics);

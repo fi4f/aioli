@@ -5,8 +5,9 @@ import { createStruct, createArray, createMany, arrayType, manyType } from './st
 import { normalizeNil, bool } from './data.js';
 import { scalarTypes, vectorTypes, canonicalType } from './numeric-types.js';
 import { isTransformConstructor } from './transforms.js';
+import { inputCallbacks } from './input.js';
 import { nameComment } from './codegen.js';
-import { textOperations, createTextBuilder, textOperation, finishTextBuilder, textDescription, bindTextShader } from './text.js';
+import { textOperations, textNamedOptions, createTextBuilder, textOperation, finishTextBuilder, textDescription, bindTextShader } from './text.js';
 
 export function read(source) {
   let i = 0;
@@ -250,9 +251,9 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
       if (!scene) throw new SyntaxError('on requires scene compilation');
       if (scopes.length !== 2 || functionDepth) throw new SyntaxError('on must be declared at scene top level');
       const name = symbolName(nameNode);
-      if (!['attach', 'detach', 'update', 'render'].includes(name)) throw new SyntaxError(`Unknown callback: ${name}`);
+      if (!['attach', 'detach', 'update', 'render', ...inputCallbacks].includes(name)) throw new SyntaxError(`Unknown callback: ${name}`);
       if (callbacks.has(name)) throw new SyntaxError(`Duplicate callback: ${name}`);
-      const receivesTime = name === 'update' || name === 'render';
+      const receivesTime = name === 'update' || name === 'render' || inputCallbacks.includes(name);
       const parsed = parseParameters(parameters, { fail: (message, node) => {
         throw locate(new SyntaxError(message), source, node.start, node.end);
       } });
@@ -313,6 +314,9 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
     } catch (error) { throw locate(error, source, node.start, node.end); }
   };
   const emitRaw = (node, statement = false) => {
+    if (statement && textScopes.length && (node.kind === 'template' || node.kind === 'literal' && typeof node.value === 'string')) {
+      return `$text.apply(${textScopes.at(-1).builder}, "span", ${emit(node)})`;
+    }
     if (node.kind === 'colon') throw new SyntaxError('Colon annotations require a parameter or (value : type) expression');
     if (node.kind === 'template') {
       const content = node.parts.map(part => part.kind === 'interpolation'
@@ -339,7 +343,7 @@ export function compile(source, bindings = {}, forms = {}, { trace = true, scene
     if (!head) throw new SyntaxError('Empty list is not callable');
     if (head.kind === 'symbol' && textScopes.length) {
       if (head.name === 'return' && functionDepth === textScopes.at(-1).functionDepth) throw new SyntaxError('return cannot exit a text body; its result is the completed text');
-      if (textOperations.has(head.name)) return `$text.apply(${textScopes.at(-1).builder}, ${JSON.stringify(head.name)}${args.length ? ', ' + args.map(arg => emit(arg)).join(', ') : ''})`;
+      if (textOperations.has(head.name)) return `$text.apply(${textScopes.at(-1).builder}, ${JSON.stringify(head.name)}${args.length ? ', ' + args.map(arg => arg.kind === 'symbol' && textNamedOptions[head.name]?.includes(arg.name) ? JSON.stringify(arg.name) : emit(arg)).join(', ') : ''})`;
     }
     if (node.items[1]?.kind === 'colon') {
       if (node.items.length !== 3) throw new SyntaxError('Type assertion expects (value : type)');

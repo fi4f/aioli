@@ -4,6 +4,8 @@ import { vectorInfo, convertComponent, scalarMatches, matrixSize } from './numer
 const kinds = new WeakMap();
 export function registerData(value, kind) { kinds.set(value, kind); return value; }
 const opaque = new WeakSet();
+const textureSizes = new WeakMap();
+export function registerTextureSize(handle, width, height) { textureSizes.set(handle, [width, height]); }
 export const normalizeNil = value => value === undefined ? null : value;
 export function bool(value) {
   if (arguments.length !== 1) throw new TypeError('bool expects exactly one value');
@@ -124,6 +126,13 @@ function index(key, size) {
   if (!Number.isInteger(key) || key < 0 || key >= size) throw new RangeError('Index must be an integer within bounds');
 }
 export function get(value, key) {
+  if (textureSizes.has(value)) {
+    const [width, height] = textureSizes.get(value);
+    if (key === 'w') return width;
+    if (key === 'h') return height;
+    if (key === 'wh') return vector(2, [width, height]);
+    throw new TypeError(`Unknown texture field: ${key}`);
+  }
   if (structDefinitionInfo(value) || structInfo(value) || collectionInfo(value)) return structuredGet(value, key);
   if (collection(value) !== 'dict') { index(key, value.values.length); return normalizeNil(value.values[key]); }
   if (typeof key !== 'string') throw new TypeError('dict keys must be strings');
