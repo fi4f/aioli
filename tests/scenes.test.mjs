@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile } from './compiler.js';
-import { forms } from './forms.js';
-import { arithmetic } from './arithmetic.js';
-import { ScenePlayer } from './scenes.js';
+import { compile } from '../engine/compiler.js';
+import { forms } from '../engine/forms.js';
+import { arithmetic } from '../engine/arithmetic.js';
+import { ScenePlayer } from '../engine/scenes.js';
+import { dict, get } from '../engine/data.js';
 
 function harness(options = {}) {
   let nextId = 0;
@@ -20,18 +21,47 @@ function harness(options = {}) {
   return { player, tick, frames, errors };
 }
 
+test('update and render receive fresh dictionaries with independent clocks and current dimensions', () => {
+  const dimensions = { w: 320, h: 200 };
+  const { player, tick } = harness({ updateHz: 10, maxUpdatesPerFrame: 2, dimensions: () => dimensions });
+  const updated = [], rendered = [];
+  player.replace({ update: context => updated.push(context), render: context => rendered.push(context) });
+  tick(0); tick(350);
+  assert.equal(get(rendered[0], 't'), 0);
+  assert.equal(get(rendered[0], 'dt'), 0);
+  assert.equal(get(updated[0], 'dt'), 0.1);
+  assert.equal(get(updated[0], 't'), 0.1);
+  assert.equal(get(updated[1], 't'), 0.2);
+  assert.equal(get(rendered[1], 't'), 0.35);
+  assert.equal(get(rendered[1], 'dt'), 0.35);
+  assert.equal(get(updated[0], 'w'), 320);
+  assert.equal(get(updated[0], 'h'), 200);
+  dimensions.w = 640; dimensions.h = 480;
+  tick(450);
+  assert.equal(get(updated.at(-1), 't'), 0.4);
+  assert.equal(get(updated.at(-1), 'w'), 640);
+  assert.equal(get(rendered.at(-1), 'h'), 480);
+  assert.equal(get(updated[0], 'w'), 320);
+  assert.notEqual(updated[0], updated[1]);
+  assert.notEqual(rendered[0], rendered[1]);
+  player.replace({ update: context => updated.push(context), render: context => rendered.push(context) });
+  tick(9999); tick(10099);
+  assert.equal(get(updated.at(-1), 't'), 0.1);
+  assert.equal(get(rendered.at(-2), 't'), 0);
+});
+
 test('callbacks share scene data, fresh per execution in both modes', () => {
-  for (const debug of [true, false]) {
+  for (const trace of [true, false]) {
     const output = [];
     const program = compile(`
       (let time 0)
       (on attach () (print "attach"))
-      (on update (dt) (set time (+ time dt)))
+      (on update (context) (set time (+ time context.dt)))
       (on render () (print time))
       (on detach () (print "detach"))
-    `, { ...arithmetic, print: v => output.push(v) }, forms, { scene: true, debug });
+    `, { ...arithmetic, print: v => output.push(v) }, forms, { scene: true, trace });
     const a = program.run(), b = program.run();
-    a.attach(); a.update(0.5); a.render(); b.render(); a.detach();
+    a.attach(); a.update(dict('dt', 0.5)); a.render(); b.render(); a.detach();
     assert.deepEqual(output, ['attach', 0.5, 0, 'detach']);
   }
 });
@@ -49,7 +79,7 @@ test('fixed steps accumulate across frames; rendering follows updates', () => {
   const { player, tick } = harness({ updateHz: 120 });
   const events = [], intervals = [];
   player.replace({ attach: () => events.push('attach'),
-    update: dt => { events.push('update'); intervals.push(dt); }, render: () => events.push('render') });
+    update: context => { events.push('update'); intervals.push(get(context, 'dt')); }, render: () => events.push('render') });
   tick(0); tick(4); tick(20); tick(25);
   assert.deepEqual(events, ['attach', 'render', 'render', 'update', 'update', 'render', 'update', 'render']);
   assert.deepEqual(intervals, [1 / 120, 1 / 120, 1 / 120]);
@@ -58,7 +88,7 @@ test('fixed steps accumulate across frames; rendering follows updates', () => {
 test('render receives variable frame dt independently of fixed updates', () => {
   const { player, tick } = harness({ updateHz: 120, maxUpdatesPerFrame: 1 });
   const rendered = [], updated = [];
-  const scene = compile('(on update (dt) (update-time dt)) (on render (dt) (render-time dt))', {
+  const scene = compile('(on update (context) (update-time context.dt)) (on render (context) (render-time context.dt))', {
     'update-time': dt => updated.push(dt), 'render-time': dt => rendered.push(dt),
   }, forms, { scene: true }).run();
   player.replace(scene);

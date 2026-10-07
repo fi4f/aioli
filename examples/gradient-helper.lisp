@@ -1,5 +1,0 @@
-(on render (context)
-  ((sh ()
-    (let gradient (fn (uv:vec2)
-      (return (vec4 uv 0 1))))
-    (return (gradient (/ p (vec2 w h))))) context))

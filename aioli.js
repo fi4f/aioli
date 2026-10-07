@@ -1,22 +1,23 @@
-import { compile } from './compiler.js';
-import { bindings as defaults } from './bindings.js';
-import { forms } from './forms.js';
-import { createGraphics } from './graphics.js';
-import { ScenePlayer } from './scenes.js';
-export { formatDiagnostic } from './diagnostics.js';
+import { compile } from './engine/compiler.js';
+import { bindings as defaults } from './engine/bindings.js';
+import { forms } from './engine/forms.js';
+import { createGraphics } from './engine/graphics.js';
+import { ScenePlayer } from './engine/scenes.js';
+export { formatTrace } from './engine/trace.js';
 
 const owners = new WeakMap();
 
 export class Aioli {
-  constructor({ bindings = {}, debug = true, onError = console.error, updateHz = 60,
+  constructor({ bindings = {}, trace = true, onError = console.error, updateHz = 60,
     maxUpdatesPerFrame = 8 } = {}) {
-    this.debug = debug;
+    this.trace = trace;
     this.onError = onError;
     this.bindings = { ...defaults, ...bindings };
     this.canvas = null;
     this.graphics = null;
     this.destroyed = false;
-    this.player = new ScenePlayer({ updateHz, maxUpdatesPerFrame, onError });
+    this.player = new ScenePlayer({ updateHz, maxUpdatesPerFrame, onError,
+      dimensions: () => ({ w: this.canvas?.width ?? 0, h: this.canvas?.height ?? 0 }) });
     this.loadGeneration = 0;
   }
 
@@ -44,11 +45,11 @@ export class Aioli {
     }
   }
 
-  compile(source, { debug = this.debug, scene = false } = {}) {
+  compile(source, { trace = this.trace, scene = false } = {}) {
     if (this.destroyed) throw new Error('Aioli runtime has been destroyed.');
     if (!this.graphics) throw new Error('Attach a canvas before compiling a program.');
     if (typeof source !== 'string') throw new TypeError('Aioli source must be a string.');
-    const program = compile(source, this.bindings, forms, { debug, scene });
+    const program = compile(source, this.bindings, forms, { trace, scene });
     const shaderValues = program.shaders.map(shader => this.graphics.createShader(shader));
     const execute = program.run;
     program.run = () => {

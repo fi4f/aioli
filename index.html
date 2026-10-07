@@ -4,10 +4,10 @@
   <title>Aioli</title>
   <textarea id="source" rows="12" cols="80" aria-label="Lisp source" spellcheck="false">(on render (context)
   ((sh ()
-    (let uv (/ p (vec2 w h)))
-    (return (vec4 uv 0 1))) context))</textarea>
+    (let uv (/ p (vec2f w h)))
+    (return (vec4f uv 0 1))) context))</textarea>
   <button id="run" type="button">Run</button>
-  <label><input id="debug" type="checkbox" checked> Lisp diagnostics</label>
+  <label><input id="trace" type="checkbox" checked> Lisp trace</label>
   <pre id="error" role="alert"></pre>
   <p>WebGPU canvas</p>
   <canvas id="canvas" width="640" height="480" aria-label="Graphics output"></canvas>
@@ -16,10 +16,10 @@
   <p><label for="wgsl">Generated WGSL</label></p>
   <textarea id="wgsl" rows="16" cols="80" readonly spellcheck="false"></textarea>
   <script type="module">
-    import { Aioli, formatDiagnostic } from './aioli.js';
+    import { Aioli, formatTrace } from './aioli.js';
 
     const showError = error => {
-      const message = formatDiagnostic(error);
+      const message = formatTrace(error);
       document.getElementById('error').textContent = message;
       console.error(message);
     };
@@ -37,8 +37,8 @@
       generated.value = program.javascript;
       wgsl.value = program.shaders.map(shader => shader.wgsl).join('\n\n');
     };
-    const debug = document.getElementById('debug');
-    const build = () => runtime.compileScene(document.getElementById('source').value, { debug: debug.checked });
+    const trace = document.getElementById('trace');
+    const build = () => runtime.compileScene(document.getElementById('source').value, { trace: trace.checked });
     if (!run.disabled) showProgram(build());
 
     document.getElementById('run').onclick = () => {
@@ -53,13 +53,13 @@
         showError(error);
       }
     };
-    debug.onchange = () => {
+    trace.onchange = () => {
       generated.value = '';
       wgsl.value = '';
       document.getElementById('error').textContent = '';
       try { showProgram(build()); }
       catch (error) {
-        document.getElementById('error').textContent = formatDiagnostic(error);
+        document.getElementById('error').textContent = formatTrace(error);
       }
     };
   </script>

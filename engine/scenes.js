@@ -1,9 +1,11 @@
+import { dict } from './data.js';
 // Fixed-step simulation; rendering follows the browser's animation frames.
 export class ScenePlayer {
   constructor({ updateHz = 60, maxUpdatesPerFrame = 8, onError = console.error,
     requestFrame = callback => globalThis.requestAnimationFrame(callback),
     cancelFrame = id => globalThis.cancelAnimationFrame(id),
-    render = (callback, dt) => callback?.(dt),
+    render,
+    dimensions = () => ({ w: 0, h: 0 }),
   } = {}) {
     if (typeof updateHz !== 'number' || !Number.isFinite(updateHz) || updateHz <= 0) {
       throw new TypeError('updateHz must be a positive finite number');
@@ -16,13 +18,20 @@ export class ScenePlayer {
     this.onError = onError;
     this.requestFrame = requestFrame;
     this.cancelFrame = cancelFrame;
-    this.render = render;
+    this.dimensions = dimensions;
+    this.render = render || ((callback, dt, t) => callback?.(this.context(t, dt)));
     this.scene = null;
     this.frameId = null;
     this.generation = 0;
     this.lastTime = null;
     this.accumulator = 0;
     this.elapsed = 0;
+    this.updateElapsed = 0;
+  }
+
+  context(t, dt) {
+    const { w, h } = this.dimensions();
+    return dict('t', t, 'dt', dt, 'w', w, 'h', h);
   }
 
   stop() {
@@ -39,6 +48,7 @@ export class ScenePlayer {
     this.lastTime = null;
     this.accumulator = 0;
     this.elapsed = 0;
+    this.updateElapsed = 0;
     if (!scene) return;
     this.scene = scene;
     try { scene.attach?.(); }
@@ -71,7 +81,8 @@ export class ScenePlayer {
     let updates = 0;
     while (this.accumulator + this.dt * 1e-9 >= this.dt && updates < this.maxUpdatesPerFrame) {
       this.accumulator = Math.max(0, this.accumulator - this.dt);
-      scene.update?.(this.dt);
+      this.updateElapsed += this.dt;
+      scene.update?.(this.context(this.updateElapsed, this.dt));
       updates++;
       if (this.scene !== scene) return;
     }

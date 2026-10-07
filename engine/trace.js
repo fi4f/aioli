@@ -4,7 +4,7 @@ export function locate(error, source, start, end = start + 1) {
   return error;
 }
 
-export function formatDiagnostic(error) {
+export function formatTrace(error) {
   if (!error.lisp) return `${error.name || 'Error'}: ${error.message || String(error)}`;
   const { source, start, end, calls } = error.lisp;
   const excerpt = (offset, finish) => {
@@ -22,7 +22,7 @@ export function formatDiagnostic(error) {
     calls.map(call => `\nCalled from ${excerpt(call.start, call.end)}`).join('');
 }
 
-export function runtimeDiagnostics(source, names) {
+export function runtimeTrace(source, names) {
   const annotate = (error, start, end) => {
     error = locate(error, source, start, end);
     if (error instanceof ReferenceError) {
@@ -37,7 +37,7 @@ export function runtimeDiagnostics(source, names) {
     },
     call(start, end, fn, args) {
       if (typeof fn !== 'function') {
-        const type = fn === null ? 'null' : typeof fn;
+        const type = fn === null ? 'nil' : typeof fn;
         const value = type === 'string' ? ` ${JSON.stringify(fn)}` : '';
         throw annotate(new TypeError(`Cannot call ${source.slice(start, end)}: expected a function, received ${type}${value}`), start, end);
       }

@@ -1,39 +1,127 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compile, read } from './compiler.js';
-import { forms } from './forms.js';
-import { arithmetic } from './arithmetic.js';
-import { formatDiagnostic } from './diagnostics.js';
+import { compile, read } from '../engine/compiler.js';
+import { forms } from '../engine/forms.js';
+import { arithmetic } from '../engine/arithmetic.js';
+import { formatTrace } from '../engine/trace.js';
 
 const run = (source, bindings = {}) => compile(source, bindings, forms).run();
 
-test('fast compilation emits direct calls without diagnostic machinery', () => {
-  const program = compile('(let x 2) (let twice (fn (n) (return (* n 2)))) (twice x)', arithmetic, forms, { debug: false });
+test('conditional branches independently accept single statements or brace blocks', () => {
+  for (const trace of [true, false]) {
+    for (let mask = 0; mask < 16; mask++) {
+      for (let match = 0; match < 4; match++) {
+        const output = [], checks = [];
+        const branch = n => mask & (1 << n) ? `{ (record ${n}) (record "after") }` : `(record ${n})`;
+        compile(`(if (check 0) ${branch(0)} elif (check 1) ${branch(1)}
+          elif (check 2) ${branch(2)} else ${branch(3)})`, {
+          check: n => { checks.push(n); return n === match; }, record: n => output.push(n),
+        }, forms, { trace }).run();
+        assert.deepEqual(checks, Array.from({ length: Math.min(match + 1, 3) }, (_, n) => n));
+        assert.deepEqual(output, mask & (1 << match) ? [match, 'after'] : [match]);
+      }
+    }
+    const evaluate = source => compile(source, {}, forms, { trace }).run();
+    assert.equal(evaluate('(let x 0) (if true (let x 1) else (let x 2)) x'), 0);
+    assert.equal(evaluate('((fn () (if false (return 1) elif true (return 2) else (return 3))))'), 2);
+    assert.equal(evaluate('(if false 1 elif false 2)'), null);
+    assert.throws(() => evaluate('(if true (let x 1)) x'), SyntaxError);
+  }
+});
+
+test('if permits an omitted else in statement and expression positions', () => {
+  for (const trace of [true, false]) {
+    const output = [];
+    const bindings = { print: value => output.push(value) };
+    const evaluate = source => compile(source, bindings, forms, { trace }).run();
+    evaluate('(if false { (print "skip") }) (if true { (print "yes") })');
+    assert.deepEqual(output, ['yes']);
+    assert.equal(evaluate('((fn () (return (if false 42))))'), null);
+    assert.equal(evaluate('((fn () (return (if true 42))))'), 42);
+    assert.equal(evaluate('((fn () (return (if false 42 7))))'), 7);
+  }
+});
+
+test('bare elif and optional else evaluate conditions once and short circuit', () => {
+  for (const trace of [true, false]) {
+    for (const match of [0, 1, 2, 3]) {
+      for (const fallback of ['', 'else { (record "fallback") }']) {
+        const events = [];
+        compile(`(if (check 0) { (record 0) }
+          elif (check 1) { (record 1) }
+          elif (check 2) { (record 2) } ${fallback})`, {
+          check: n => { events.push(`check ${n}`); return n === match; },
+          record: n => events.push(n),
+        }, forms, { trace }).run();
+        const expected = Array.from({ length: Math.min(match + 1, 3) }, (_, n) => `check ${n}`);
+        if (match < 3) expected.push(match);
+        else if (fallback) expected.push('fallback');
+        assert.deepEqual(events, expected);
+      }
+    }
+  }
+});
+
+test('conditional blocks scope declarations and preserve early returns and outer mutations', () => {
+  for (const trace of [true, false]) {
+    const evaluate = source => compile(source, {}, forms, { trace }).run();
+    assert.equal(evaluate(`(let x 1)
+      (if false { (let x 2) } elif true { (set x 3) } else { (set x 4) }) x`), 3);
+    assert.equal(evaluate(`((fn ()
+      (if false { (return 1) } elif true { (let x 2) (return x) } else { (return 3) })
+      (return 4)))`), 2);
+    assert.equal(evaluate(`(let x 1)
+      (if true { (let x 2) } else { (let x 3) }) x`), 1);
+    assert.equal(evaluate(`(let x 0)
+      (if true { (if false {} elif true { (set x 5) }) }) x`), 5);
+    assert.throws(() => evaluate('(if true { (let x 1) } else {}) x'), SyntaxError);
+    assert.throws(() => evaluate('(if true { (let x x) } else {})'), ReferenceError);
+  }
+});
+
+test('malformed conditional chains fail compilation with source traces', () => {
+  const sources = [
+    '(if)', '(if true)', '(if true {} elif)', '(if true {} elif true)',
+    '(if true {} elif true else {})', '(if true {} else)', '(if true {} else elif true {})',
+    '(if true {} else {} elif true {})', '(if true {} else {} else {})',
+    '(if true 1 elif false)', '(if true {} unknown false {})',
+    '(if true {} elif else {})', '(print (if true {} else {}))',
+  ];
+  for (const trace of [true, false]) {
+    for (const source of sources) {
+      assert.throws(() => compile(source, { print() {} }, forms, { trace }),
+        error => error instanceof SyntaxError && Boolean(error.lisp), source);
+    }
+  }
+});
+
+test('fast compilation emits direct calls without trace machinery', () => {
+  const program = compile('(let x 2) (let twice (fn (n) (return (* n 2)))) (twice x)', arithmetic, forms, { trace: false });
   assert.equal(program.run(), 4);
-  assert.doesNotMatch(program.javascript, /\$debug|\.at\(|\.call\(|=>/);
+  assert.doesNotMatch(program.javascript, /\$trace|\.at\(|\.call\(|=>/);
   assert.match(program.javascript, /function\(/);
   assert.match(program.javascript, /let \$local\d+ = 2;/);
 });
 
-test('debug and fast modes preserve results, side effects, and strict arithmetic', () => {
+test('trace and fast modes preserve results, side effects, and strict arithmetic', () => {
   const source = '(let x 1) (let step (fn (n) (set x (+ x n)) (return x))) {(let x 99) (print x)} (print f"total {(step 2)}") (step 3)';
-  for (const debug of [true, false]) {
+  for (const trace of [true, false]) {
     const output = [];
-    const program = compile(source, { ...arithmetic, print: value => output.push(value) }, forms, { debug });
+    const program = compile(source, { ...arithmetic, print: value => output.push(value) }, forms, { trace });
     assert.equal(program.run(), 6);
     assert.deepEqual(output, [99, 'total 3']);
     assert.equal(program.run(), 6);
-    assert.throws(() => compile('(+ 1 "2")', arithmetic, forms, { debug }).run(), TypeError);
-    assert.throws(() => compile('(let x x)', {}, forms, { debug }).run(), ReferenceError);
-    assert.throws(() => compile('(let name "Shawn") (name)', {}, forms, { debug }).run(), TypeError);
-    assert.throws(() => compile('missing', {}, forms, { debug }), error => error instanceof SyntaxError && Boolean(error.lisp));
+    assert.throws(() => compile('(+ 1 "2")', arithmetic, forms, { trace }).run(), TypeError);
+    assert.throws(() => compile('(let x x)', {}, forms, { trace }).run(), ReferenceError);
+    assert.throws(() => compile('(let name "Shawn") (name)', {}, forms, { trace }).run(), TypeError);
+    assert.throws(() => compile('missing', {}, forms, { trace }), error => error instanceof SyntaxError && Boolean(error.lisp));
   }
 });
 
 test('invalid calls inside f-strings report Lisp names and exact spans', () => {
   const source = '(let name "Shawn")\n(print f"Hello {(name)}")';
   assert.throws(() => run(source, { print() {} }), error => {
-    const message = formatDiagnostic(error);
+    const message = formatTrace(error);
     assert.match(message, /Cannot call \(name\).*string "Shawn"/);
     assert.match(message, /source:2:17/);
     assert.equal(source.slice(error.lisp.start, error.lisp.end), '(name)');
@@ -46,9 +134,9 @@ test('nested function errors preserve their cause and show Lisp call sites', () 
   const source = '(let fail (fn () (return (+ 1 "2"))))\n(fail)';
   assert.throws(() => run(source, arithmetic), error => {
     assert.ok(error instanceof TypeError);
-    assert.match(formatDiagnostic(error), /operand 2: expected number/);
+    assert.match(formatTrace(error), /operand 2: expected num/);
     assert.equal(source.slice(error.lisp.start, error.lisp.end), '(+ 1 "2")');
-    assert.match(formatDiagnostic(error), /Called from source:2:1/);
+    assert.match(formatTrace(error), /Called from source:2:1/);
     return true;
   });
   assert.throws(() => run('(broken)', { broken() { throw new Error('original failure'); } }),
@@ -59,19 +147,19 @@ test('compile errors and TDZ errors report source instead of generated names', (
   for (const source of ['(print missing)', '(let x 1) (let x 2)', '(fn (x x))', '(print']) {
     assert.throws(() => compile(source, { print() {} }, forms), error => {
       assert.ok(error.lisp);
-      assert.match(formatDiagnostic(error), /source:1:/);
+      assert.match(formatTrace(error), /source:1:/);
       return true;
     });
   }
   assert.throws(() => run('(let x x)'), error => {
     assert.ok(error instanceof ReferenceError);
-    assert.doesNotMatch(formatDiagnostic(error), /\$local/);
-    assert.match(formatDiagnostic(error), /x/);
+    assert.doesNotMatch(formatTrace(error), /\$local/);
+    assert.match(formatTrace(error), /x/);
     return true;
   });
 });
 
-test('diagnostic instrumentation evaluates callee and arguments once in order', () => {
+test('trace instrumentation evaluates callee and arguments once in order', () => {
   const events = [];
   assert.equal(run('((get-call) (next) (next))', {
     'get-call': () => { events.push('callee'); return (a, b) => a + b; },
@@ -154,9 +242,9 @@ test('arithmetic rejects coercion and invalid arity', () => {
 test('functions are callable values with explicit returns', () => {
   assert.equal(run('(let identity (fn (value) (return value))) (identity 42)'), 42);
   assert.equal(run('((fn (value) (return value)) 7)'), 7);
-  assert.equal(run('((fn ()))'), undefined);
-  assert.equal(run('((fn () 42))'), undefined);
-  assert.equal(run('((fn () (return)))'), undefined);
+  assert.equal(run('((fn ()))'), null);
+  assert.equal(run('((fn () 42))'), null);
+  assert.equal(run('((fn () (return)))'), null);
   assert.equal(run('((fn (x) (set x 7) (return x)) 1)'), 7);
 });
 

@@ -1,6 +1,11 @@
-import { locate, runtimeDiagnostics } from './diagnostics.js';
+import { locate, runtimeTrace } from './trace.js';
 import { compileShader } from './shader.js';
-import { assertType, parseParameters, typeNames } from './types.js';
+import { assertType, parseParameters, typeNames, access, setAccess } from './types.js';
+import { createStruct, createArray, createMany, arrayType, manyType } from './structures.js';
+import { normalizeNil, bool } from './data.js';
+import { scalarTypes, vectorTypes, canonicalType } from './numeric-types.js';
+import { isTransformConstructor } from './transforms.js';
+import { nameComment } from './codegen.js';
 
 export function read(source) {
   let i = 0;
@@ -17,8 +22,22 @@ export function read(source) {
     skip();
     const start = i;
     try {
-      const node = readExpression();
-      return { ...node, start, end: i };
+      let node = { ...readExpression(), start, end: i };
+      while (source[i] === '.') {
+        const fieldStart = i++;
+        let key, quoted = false;
+        if (source[i] === '"') {
+          quoted = true;
+          key = readExpression().value;
+        } else {
+          const keyStart = i;
+          while (i < source.length && !/[\s(){};":.]/.test(source[i])) i++;
+          key = source.slice(keyStart, i);
+          if (!key) throw locate(new SyntaxError('Expected a key, index, or swizzle after dot'), source, fieldStart, i);
+        }
+        node = { kind: 'access', target: node, key, quoted, start, end: i, fieldStart };
+      }
+      return node;
     } catch (error) { throw locate(error, source, start, i); }
   };
   const readExpression = () => {
@@ -81,8 +100,25 @@ export function read(source) {
         return { kind: 'literal', value: JSON.parse(source.slice(start, i)) };
       } catch { fail('Invalid string'); }
     }
-    while (i < source.length && !/[\s(){};":]/.test(source[i])) i++;
-    const token = source.slice(start, i);
+    const numeric = source.slice(start).match(/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?(?=$|[\s(){};":.])/);
+    if (numeric) {
+      i = start + numeric[0].length;
+      const value = Number(numeric[0]);
+      if (!Number.isFinite(value)) fail('Number must be finite');
+      return { kind: 'literal', value };
+    }
+    if (character === '.') fail('Expected an expression before dot access');
+    let depth = 0;
+    while (i < source.length) {
+      if (source[i] === '<') depth++;
+      else if (source[i] === '>') depth--;
+      if (depth < 0) fail('Unexpected closing angle bracket');
+      if (depth === 0 && /[\s(){};":.]/.test(source[i])) break;
+      if (depth > 0 && /[(){};":]/.test(source[i])) fail('Malformed array type annotation');
+      i++;
+    }
+    if (depth !== 0) fail('Missing closing angle bracket');
+    const token = source.slice(start, i).replace(/\s/g, '');
     if (token === 'NaN' || token === 'Infinity' || token === '-Infinity') {
       return { kind: 'literal', value: Number(token) };
     }
@@ -92,6 +128,7 @@ export function read(source) {
       return { kind: 'literal', value };
     }
     if (token === 'true' || token === 'false') return { kind: 'literal', value: token === 'true' };
+    if (token === 'nil') return { kind: 'literal', value: null };
     return { kind: 'symbol', name: token };
   };
   const expressions = [];
@@ -101,15 +138,16 @@ export function read(source) {
 }
 
 // Bindings are runtime values/functions; forms are trusted compile-time emitters.
-export function compile(source, bindings = {}, forms = {}, { debug = true, scene = false } = {}) {
+export function compile(source, bindings = {}, forms = {}, { trace = true, scene = false } = {}) {
   let nextLocal = 0;
   let functionDepth = 0;
   const hosts = new Map(Object.keys(bindings).map((name, index) =>
-    [name, { identifier: `$binding${index}`, mutable: false }]));
+    [name, { identifier: `$binding${index}`, mutable: false, namedArguments: isTransformConstructor(bindings[name]) }]));
   const scopes = [hosts];
   const names = new Map([...hosts].map(([name, variable]) => [variable.identifier, name]));
   const callbacks = new Set();
   const shaders = [];
+  const descriptors = [];
   const lookup = name => {
     for (let i = scopes.length - 1; i >= 0; i--) {
       if (scopes[i].has(name)) return scopes[i].get(name);
@@ -120,17 +158,68 @@ export function compile(source, bindings = {}, forms = {}, { debug = true, scene
     if (node?.kind !== 'symbol') throw new SyntaxError('Variable name must be a symbol');
     return node.name;
   };
+  const resolveElement = name => {
+    name = canonicalType(name);
+    const array = name.match(/^(array|many)<(.+),(\d+)>$/);
+    if (array) return (array[1] === "many" ? manyType : arrayType)(resolveElement(array[2]), Number(array[3]));
+    if (name.startsWith('array<') || name.startsWith('many<')) throw new SyntaxError('Struct collection fields require array<Element,Capacity> or many<Element,Capacity>');
+    if (name === 'bool') return 'bool';
+    if ([...scalarTypes, ...vectorTypes, 'mat2x2f', 'mat3x3f', 'mat4x4f'].includes(name)) return name;
+    const type = lookup(name).definition;
+    if (!type) throw new SyntaxError(`Unknown struct field type: ${name}`);
+    return type;
+  };
   const context = {
+    array(args, kind = "array") {
+      const [spec, ...values] = args;
+      if (spec?.kind !== 'list' || spec.items.length < 1 || spec.items.length > 2 || spec.items[0].kind !== 'symbol') throw new SyntaxError(`${kind} expects (Element [capacity]) followed by initial elements`);
+      const name = spec.items[0].name, type = resolveElement(name);
+      const capacity = spec.items[1] ? emit(spec.items[1]) : 'undefined';
+      const element = typeof type === 'string' ? JSON.stringify(type) : ['array', 'many'].includes(type.type) ? (() => { const index = descriptors.length; descriptors.push(type); return `$descriptors[${index}]`; })() : emit(spec.items[0]);
+      return `${kind === "many" ? "$many" : "$array"}(${element}, ${capacity}${values.length ? ', ' + values.map(value => emit(value)).join(', ') : ''})`;
+    },
+    struct(args) {
+      const name = symbolName(args[0]), fields = [];
+      if (typeNames.has(name)) throw new SyntaxError(`Struct name conflicts with a built-in type: ${name}`);
+      for (let i = 1; i < args.length; i += 3) {
+        const key = args[i], colon = args[i + 1], type = args[i + 2];
+        if (!(key?.kind === 'symbol' || key?.kind === 'literal' && typeof key.value === 'string') || colon?.kind !== 'colon' || type?.kind !== 'symbol') throw new SyntaxError('struct fields require a name or string key followed by : type');
+        const fieldType = resolveElement(type.name);
+        if (!fieldType) throw new SyntaxError(`Unknown struct field type: ${type.name}`);
+        fields.push([key.kind === 'symbol' ? key.name : key.value, fieldType]);
+      }
+      const constructor = createStruct(name, fields), index = descriptors.length;
+      descriptors.push(constructor);
+      const variable = scopes.at(-1).get(name);
+      variable.definition = constructor; variable.mutable = false;
+      return `const ${variable.identifier} = $descriptors[${index}]; ${nameComment(name)}`;
+    },
+    setAccess(node, replacement) { return `$setAccess(${emit(node.target)}, ${JSON.stringify(node.key)}, ${emit(replacement)}, ${node.quoted})`; },
+    condition(node) { return `$bool(${emit(node)})`; },
+    selector(nodes, operator) {
+      if (!nodes.length) return operator === 'and' ? 'true' : 'false';
+      if (nodes.length === 1) return emit(nodes[0]);
+      const values = nodes.map(node => emit(node));
+      const stop = operator === 'and' ? '!$bool($selected)' : '$bool($selected)';
+      const statements = values.slice(1).map(value => `if (${stop}) return $selected;\n$selected = ${value};`);
+      return `(function() {\nlet $selected = ${values[0]};\n${statements.join('\n')}\nreturn $selected;\n})()`;
+    },
     assertion(value, annotation, label, at) {
+      if (annotation.kind === 'literal' && annotation.value === null) annotation = { ...annotation, kind: 'symbol', name: 'nil' };
       if (annotation.kind !== 'symbol' || !typeNames.has(annotation.name)) {
         throw locate(new SyntaxError(`Unknown assertion type: ${annotation.name || annotation.kind}`), source, annotation.start, annotation.end);
       }
       const code = `$assert(${value}, ${JSON.stringify(annotation.name)}, ${JSON.stringify(label)})`;
-      return debug ? `$debug.at(${at.start}, ${at.end}, () => (${code}))` : code;
+      return trace ? `$trace.at(${at.start}, ${at.end}, () => (${code}))` : code;
     },
     shader(node) {
       const index = shaders.length;
-      shaders.push(compileShader(node, source));
+      const visibleStructs = new Map();
+      for (const scope of scopes) for (const [name, value] of scope) {
+        if (value.definition) visibleStructs.set(name, value.definition);
+        else visibleStructs.delete(name);
+      }
+      shaders.push(compileShader(node, source, { structDefinitions: visibleStructs }));
       return `$shaders[${index}]`;
     },
     callback(nameNode, parameters, body) {
@@ -144,7 +233,7 @@ export function compile(source, bindings = {}, forms = {}, { debug = true, scene
         throw locate(new SyntaxError(message), source, node.start, node.end);
       } });
       if (parsed.length > (receivesTime ? 1 : 0)) {
-        const argument = name === 'render' ? 'render-context' : 'dt';
+        const argument = `${name}-context`;
         throw new SyntaxError(`${name} accepts ${receivesTime ? `at most one ${argument} parameter` : 'no parameters'}`);
       }
       callbacks.add(name);
@@ -153,8 +242,10 @@ export function compile(source, bindings = {}, forms = {}, { debug = true, scene
     declaration(node) {
       return scopes.at(-1).get(symbolName(node)).identifier;
     },
+    declarationComment(node) { return nameComment(symbolName(node)); },
     assign(node) {
       const name = symbolName(node), variable = lookup(name);
+      if (variable.definition) throw new SyntaxError(`Cannot reassign struct: ${name}`);
       if (!variable.mutable) throw new SyntaxError(`Cannot assign host binding: ${name}`);
       return variable.identifier;
     },
@@ -178,10 +269,10 @@ export function compile(source, bindings = {}, forms = {}, { debug = true, scene
             `Parameter ${name}`, parameter) + ';');
         }
       }
-      const identifiers = [...scope.values()].map(variable => variable.identifier);
+      const identifiers = [...scope].map(([name, variable]) => `${variable.identifier} = null ${nameComment(name)}`);
       functionDepth++;
       try {
-        return `(function(${identifiers.join(', ')}) {\n${checks.join('\n')}\n${sequence(body, false, scope)}\n})`;
+        return `(function(${identifiers.join(', ')}) {\n${checks.join('\n')}\n${sequence(body, false, scope)}\nreturn null;\n})`;
       } finally { functionDepth--; }
     },
     statement(node) {
@@ -192,8 +283,8 @@ export function compile(source, bindings = {}, forms = {}, { debug = true, scene
   const emit = (node, statement = false) => {
     try {
       const result = emitRaw(node, statement);
-      return debug && typeof result === 'string'
-        ? `$debug.at(${node.start}, ${node.end}, () => (${result}))`
+      return trace && typeof result === 'string'
+        ? `$trace.at(${node.start}, ${node.end}, () => (${result}))`
         : result;
     } catch (error) { throw locate(error, source, node.start, node.end); }
   };
@@ -215,6 +306,7 @@ export function compile(source, bindings = {}, forms = {}, { debug = true, scene
       return JSON.stringify(node.value);
     }
     if (node.kind === 'symbol') return lookup(node.name).identifier;
+    if (node.kind === 'access') return `$access(${emit(node.target)}, ${JSON.stringify(node.key)}, ${node.quoted})`;
     if (node.kind === 'block') {
       if (!statement) throw new SyntaxError('Block requires statement position');
       return { statement: context.block(node.items) };
@@ -233,10 +325,11 @@ export function compile(source, bindings = {}, forms = {}, { debug = true, scene
       return result;
     }
     const callee = emit(head);
-    const argumentsCode = args.map(arg => emit(arg)).join(', ');
-    return debug
-      ? `$debug.call(${node.start}, ${node.end}, ${callee}, [${argumentsCode}])`
-      : `(${callee})(${argumentsCode})`;
+    const constructor = head.kind === 'symbol' && (lookup(head.name).definition || lookup(head.name).namedArguments);
+    const argumentsCode = args.map((arg, index) => constructor && index % 2 === 0 && arg.kind === 'symbol' ? JSON.stringify(arg.name) : emit(arg)).join(', ');
+    return trace
+      ? `$nil($trace.call(${node.start}, ${node.end}, ${callee}, [${argumentsCode}]))`
+      : `$nil((${callee})(${argumentsCode}))`;
   };
   function sequence(nodes, returnLast = false, scope = new Map()) {
     scopes.push(scope);
@@ -265,15 +358,15 @@ export function compile(source, bindings = {}, forms = {}, { debug = true, scene
     } finally { scopes.pop(); }
   }
   const declarations = [...hosts].map(([name, variable]) =>
-    `const ${variable.identifier} = $bindings[${JSON.stringify(name)}];`);
+    `const ${variable.identifier} = $nil($bindings[${JSON.stringify(name)}]);`);
   const javascript = ['"use strict";', ...declarations,
     ...(scene ? ['const $scene = {};'] : []),
     sequence(read(source), !scene),
-    ...(scene ? ['return $scene;'] : []),
+    ...(scene ? ['return $scene;'] : ['return null;']),
   ].join('\n');
-  const execute = debug
-    ? new Function('$bindings', '$shaders', '$assert', '$debug', javascript)
-    : new Function('$bindings', '$shaders', '$assert', javascript);
-  const diagnostics = debug ? runtimeDiagnostics(source, names) : undefined;
-  return { javascript, scene, shaders, run: (shaderValues = []) => execute(bindings, shaderValues, assertType, diagnostics) };
+  const execute = trace
+    ? new Function('$bindings', '$shaders', '$assert', '$access', '$nil', '$bool', '$setAccess', '$descriptors', '$array', '$many', '$trace', javascript)
+    : new Function('$bindings', '$shaders', '$assert', '$access', '$nil', '$bool', '$setAccess', '$descriptors', '$array', '$many', javascript);
+  const tracer = trace ? runtimeTrace(source, names) : undefined;
+  return { javascript, scene, shaders, run: (shaderValues = []) => execute(bindings, shaderValues, assertType, access, normalizeNil, bool, setAccess, descriptors, createArray, createMany, tracer) };
 }
