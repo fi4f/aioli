@@ -1,14 +1,14 @@
 ; Welcome to Mayo. This is the source of the editor you are using right now.
-; Change the title, palette, or background below, then pause to reload it.
+; Change the code below, then pause to patch it. Top-level data values survive.
 ;
-; Aioli supplies execution and invisible browser input. Everything you can see
+; Mercury supplies execution and invisible browser input. Everything you can see
 ; here (source, line numbers, selection, caret, and errors) is drawn with WebGPU.
 
-; Shared document state survives replacement of this script. GPU textures and
-; the text proxy belong to the current scene and are recreated after a reload.
-(let state aioli.state)
+; Shared document state and top-level data survive patching this script.
+; The attach callback creates a new text proxy for the updated callbacks.
+(let state app.state)
 (if (= state.source nil) {
-  (set state.source aioli.source)
+  (set state.source app.source)
   (set state.anchor 0)
   (set state.head 0)
   (set state.scroll 0)
@@ -91,24 +91,36 @@
   (set state.head edit.head)
   (set composing edit.composing)
   (set document edit)
-  (let row 0)
-  (for line edit.lines {
-    (if (and reveal (>= line.caret 0)) {
-      (if (< row state.scroll) (set state.scroll row))
-      (if (> (+ row 1) (+ state.scroll rows-in-view))
-        (set state.scroll (max 0 (- (+ row 1) rows-in-view))))
+  ; Sorted source offsets allow logarithmic caret lookup, even in large files.
+  (if reveal {
+    (let low 0)
+    (let high (- (len edit.lines) 1))
+    (let row 0)
+    (while (<= low high) {
+      (let middle (i32 (/ (+ low high) 2)))
+      (let line (get edit.lines.(get middle)))
+      (if (< edit.head line.start) {
+        (set high (- middle 1))
+      } elif (> edit.head line.end) {
+        (set low (+ middle 1))
+      } else {
+        (set row middle)
+        (break)
+      })
     })
-    (set row (+ row 1))
+    (if (< row state.scroll) (set state.scroll row))
+    (if (> (+ row 1) (+ state.scroll rows-in-view))
+      (set state.scroll (max 0 (- (+ row 1) rows-in-view))))
   })))
 
 ; The proxy supplies keyboard editing and IME. Lisp keeps the canonical draft.
 (on attach ()
   (set proxy (text-proxy accept))
-  (proxy.sync state.source state.anchor state.head)
-  (set document (proxy.snapshot))
+  (TextProxy.sync proxy state.source state.anchor state.head)
+  (set document (TextProxy.snapshot proxy))
   (set state.source document.content)
-  (proxy.focus))
-(on detach () (proxy.dispose))
+  (TextProxy.focus proxy))
+(on detach () (TextProxy.dispose proxy))
 
 ; Debounce is ordinary Lisp update logic. Never replace a scene during IME
 ; composition. A failed traced reload leaves this editor available to correct it.
@@ -119,7 +131,7 @@
       (set pending false)
       (set state.error "")
       (let requested version)
-      (async (aioli.reload state.source)
+      (promise (App.patch app state.source)
         catch (error) {
           (if (= version requested) (set state.error error.message))
         })
@@ -130,9 +142,9 @@
 ; scrolling and the line-number gutter. Shift and dragging extend selection.
 (on pointerdown (event)
   (if (>= event.y top) {
-    (proxy.select (i32 (+ state.scroll (/ (- event.y top) line-height)))
+    (TextProxy.select proxy (i32 (+ state.scroll (/ (- event.y top) line-height)))
       (i32 (max 0 (+ 0.5 (/ (- event.x 24 gutter-width) cell)))) event.shift)
-    (proxy.focus)
+    (TextProxy.focus proxy)
   }))
 ; Retain small wheel deltas rather than truncating them to whole lines.
 ; Browser wheel units may be pixels, lines, or pages; normalize each to rows.
@@ -144,9 +156,9 @@
     0 (max 0 (- (len document.lines) rows-in-view)))))
 (on pointermove (event)
   (if (and (> event.buttons 0) (>= event.y top)) {
-    (proxy.select (i32 (+ state.scroll (/ (- event.y top) line-height)))
+    (TextProxy.select proxy (i32 (+ state.scroll (/ (- event.y top) line-height)))
       (i32 (max 0 (+ 0.5 (/ (- event.x 24 gutter-width) cell)))) true)
-    (proxy.focus)
+    (TextProxy.focus proxy)
   }))
 
 ; Reusable GPU composition helpers. Each shader is compiled once for a scene.
@@ -170,7 +182,7 @@
   (let color (sample before uv))
   (if (and (>= xy.y clip.x) (< xy.y clip.y)
     (>= p.x 0) (< p.x label.w) (>= p.y 0) (< p.y label.h)) {
-    (let selected (get selections (i32 (/ p.y line-step))))
+    (let selected (get selections.(i32 (/ p.y line-step))))
     (if (and (>= p.x selected.x) (< p.x selected.y))
       (set color (blend (vec4 0.2 0.4 0.7 0.7) color)))
     (set color (blend (sample label (/ p label.wh)) color))
@@ -180,7 +192,7 @@
   })
   (return color)))
 
-; Drawing is demand-driven even though Stage continues to update the debounce.
+; Drawing is demand-driven even though the scheduler continues to update the debounce.
 (on render (context)
   (set rows-in-view (/ (max line-height (- context.h top 100)) line-height))
   (set state.scroll (clamp state.scroll 0 (max 0 (- (len document.lines) rows-in-view))))
@@ -197,7 +209,7 @@
   (let first-row (i32 state.scroll))
   (let fraction (- state.scroll first-row))
   (if (not (= token-source state.source)) {
-    (set tokens (aioli.tokenize state.source))
+    (set tokens (App.tokenize app state.source))
     (set token-source state.source)
   })
 
@@ -232,8 +244,8 @@
         (for pad (- digits number-digits) " ")
         (span (str number))
         "  "
-        (for token (get tokens row) {
-          (fill (or (get palette token.kind) palette.plain))
+        (for token (get tokens.(get row)) {
+          (fill (or (get palette.(get token.kind)) palette.plain))
           (span token.text)
         })
         (line)
@@ -248,14 +260,14 @@
   (for index visible {
     (let row (+ first-row index))
     (if (>= row (len document.lines)) (break))
-    (let line (get document.lines row))
+    (let line (get document.lines.(get row)))
     (let y (+ top (* (- index fraction) line-height)))
     (insert selections (vec2 (+ gutter-width (* line.selection-start cell))
       (+ gutter-width (* line.selection-end cell))))
     (if (>= line.caret 0) {
       (let position (vec2 (+ 24 gutter-width (* line.caret cell)) y))
       (set caret (vec4 position 1 line-height))
-      (proxy.caret (vec2 position.x (max top position.y)) line-height)
+      (TextProxy.caret proxy (vec2 position.x (max top position.y)) line-height)
     })
   })
   ; Source, selection backgrounds, and caret compose in one GPU pass.

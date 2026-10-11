@@ -1,19 +1,15 @@
 <!doctype html>
 <html lang="en">
   <meta charset="utf-8">
-  <title>Aioli</title>
-  <textarea id="source" rows="12" cols="80" aria-label="Lisp source" spellcheck="false">(on render (context)
+  <title>Mercury</title>
+  <textarea id="source" rows="12" cols="80" aria-label="Lisp source" spellcheck="false">; Serve starts fresh bindings. Patch preserves top-level data.
+; Rendering receives the app's dimensions and clock.
+(on render (context)
   ((sh ()
     (return (vec4f uv 0 1))) context))</textarea>
-  <button id="run" type="button">Run</button>
-  <label><input id="trace" type="checkbox" checked> Lisp trace</label>
+  <button id="run" type="button">Serve</button>
+  <button id="patch" type="button">Patch</button>
   <pre id="error" role="alert"></pre>
-  <p>WebGPU canvas</p>
   <canvas id="canvas" width="640" height="480" aria-label="Graphics output"></canvas>
-  <p><label for="javascript">Generated JavaScript</label></p>
-  <textarea id="javascript" rows="12" cols="80" readonly spellcheck="false"></textarea>
-  <p><label for="wgsl">Generated WGSL</label></p>
-  <textarea id="wgsl" rows="16" cols="80" readonly spellcheck="false"></textarea>
-  <script type="module" src="./hosts/playground.js"></script>
-
+  <script type="module" src="./index.js"></script>
 </html>
