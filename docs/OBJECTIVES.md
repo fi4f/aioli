@@ -18,10 +18,12 @@ Shader helpers capture lexical bindings; read-only captures pass by copy and cap
 Raw `js`/`gl` forms are deferred; their syntax and interop contracts remain open.
 `texture3d` is deferred; keep the existing `texture2d` API without adding a
 placeholder 3D texture type or creation/upload/sampling operations in this pass.
-Scene execution adopts fresh `App.serve` and preserving `App.patch` operations.
+Scene execution adopts fresh `App.loadSource` and preserving `App.patchSource`
+operations for source text; `App.load` and `App.patch` fetch URLs with the same
+replacement rules and shared request supersession.
 Patches preserve compatible top-level data bindings by name, reinitialize values
 that fail a new explicit type guard, and replace function/shader definitions;
-see [the implemented contract](./APP.md#serving-and-patching).
+see [the implemented contract](./APP.md#loading-and-patching).
 Keep cleanup with resource owners rather than infer disposal from scene binding
 removal or reinitialization; preserve existing borrowed-handle lifetime rules.
 Keep the plain per-app `app.state` dictionary for intentionally shared data across
@@ -61,20 +63,29 @@ to JavaScript hosts, Lisp applications, and future editors.
 
 ## Agreed requirements
 
+- Build the editor from composable, user-editable ordinary Lisp components.
+  Use a persistent mutable tree. Nested `on` expressions produce component handler
+  values; scene hook declarations remain distinct. Dockable titled panes support
+  minimizing, closing, four-edge split docking with dwell/progress/ready previews,
+  floating resize from every edge/corner, and dock divider resizing. Top menus
+  and the minimized-pane bottom bar scroll horizontally on overflow.
+  The prototype implementation and limits are recorded in [UI.md](./UI.md).
+
 - Use plain JavaScript objects and factory functions instead of classes. This
   includes Aioli, Stage, and ModuleLoader, not just the exported constructor.
 - Separate functions from instance data. The browser imports a single plain
   namespace object `hg`; relevant operations live in its namespaces. App data
   carries no instance methods. `hg.App.new(options)` is an ordinary function,
   never a class constructor or a use of JavaScript's `new` keyword.
-- There is no implicit global application state. `hg.App.serve(app, source)` takes
+- There is no implicit global application state. `hg.App.loadSource(app, source)` takes
   its target explicitly. The `hg` namespace holds functions, not an ambient
   current app/scene. Execution state, module caches, clocks, and resource ownership
   belong to explicit app data or explicitly supplied shared services.
 - Selected Lisp forms may imply the app that owns their compiled code. Keep
   namespace calls explicit and capture ownership across functions and async
-  continuations; defer additional shorthand forms for a later batch covering
-  multiple operations together.
+  continuations. Implement `pause`, `start`, `load-source`, `patch-source`, `load`,
+  `patch`, and `exec` as
+  app-capturing callable bindings; further shorthand remains deferred.
 - Scene `on` declarations define named runtime hooks. Generic events use independent
   `Events.new/on/off/emit` dispatchers; see [the implemented contract](./EVENTS.md).
 - Use the supplied initialization vocabulary: `c`, `w`, `h`, `si`, `is`, and `ups`.
@@ -97,7 +108,7 @@ to JavaScript hosts, Lisp applications, and future editors.
   behavior. Adapt language representation without inventing a second runtime API.
 - JS namespaces are packaged under `hg`; Lisp accesses those namespaces directly.
   For example, `hg.App.new(options)` maps to `(App.new options)` and
-  `hg.App.serve(app, source)` maps to `(App.serve app source)`. This is namespace
+  `hg.App.loadSource(app, source)` maps to `(App.loadSource app source)`. This is namespace
   exposure, not an implicit global current app or a second set of operations.
 - Each instance owns its execution clock and lifecycle; the parent can introspect
   its runtime. Independent scheduling does not imply a worker or separate process.

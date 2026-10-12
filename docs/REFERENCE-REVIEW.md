@@ -22,7 +22,7 @@ The `type` form reports Lisp types as dunder strings; scalar numbers share `"__n
 Shader helpers adopt live lexical captures, passing read-only captures by copy and
 captures written by the helper or its callees by hidden WGSL pointers.
 Raw `js` and `gl` forms are deferred; no syntax or interop contract is approved.
-Scene execution adopts separate fresh `App.serve` and preserving `App.patch`
+Scene execution adopts separate fresh `App.loadSource` and preserving `App.patchSource`
 operations, matching top-level data bindings by name and replacing code definitions.
 Bindings whose retained values fail a new explicit type guard are reinitialized
 using their new source initializer.
@@ -33,7 +33,7 @@ dictionary, with live values and explicit saving instead of a separate `Store` A
 Initial reflection is limited to top-level scene bindings and selects live binding
 references with explicit inspect/read/write operations. References follow same-name
 bindings across committed patches, including reinitialization, and are permanently
-invalidated by removal, fresh serving, or disposal. Representation and write
+invalidated by removal, fresh loading, or disposal. Representation and write
 validation now use registered `__binding__` records and ordinary `set` rules,
 implemented through `App.inspect`, `App.read`, and `App.write`. Locals and active
 call frames are deferred.
@@ -259,11 +259,16 @@ with zero active elements, are false. Nonempty collections are true even when
 their elements are false or nil. Many truthiness follows active length, not
 allocated capacity. Adding or removing elements changes the next truthiness check.
 
-`bool`, conditions, loops, and `and`/`or` share these rules. Shader many values also
+`bool`, conditions, loops, and `and`/`or`/`not` share these rules. Shader many values also
 use active length. Nil, false, numeric zero, and empty strings remain false;
 numeric values must be finite. Vectors and matrices remain true, including zero
 vectors/matrices. This retains the engine's behavior instead of adopting native
 JavaScript truthiness for empty arrays and objects.
+
+The owner subsequently chose truthiness-based `not` instead of strict boolean
+negation. It accepts exactly one operand, evaluates it once, and returns the
+opposite boolean truth value in both regular code and shaders. `and`/`or` retain
+their short-circuit selection behavior and return the selected original operand.
 
 ## Agreed dictionary construction
 
@@ -565,8 +570,8 @@ source; this deferral does not approve the reference's proposed forms.
 
 ## Agreed scene execution split
 
-Adopt `App.serve(app, source)` to initialize fresh scene memory and
-`App.patch(app, source)` to replace scene code while preserving scene memory.
+Adopt `App.loadSource(app, source)` to initialize fresh scene memory and
+`App.patchSource(app, source)` to replace scene code while preserving scene memory.
 Both keep the existing app, its shared `state` dictionary, and app-owned services.
 Retain the existing source-text argument, optional `sourceURL`, readiness waiting,
 and promise result resolving to the app. This decision does not approve a new
@@ -588,10 +593,23 @@ Shared data uses `app.state`, as agreed below. Reflection's initial scope is
 top-level scene bindings, with the implemented inspect/read/write contract below.
 Additional lifecycle APIs remain open.
 
-`App.load` is replaced by `serve` and `patch`. Both accept source text and optional
-`sourceURL`, wait for readiness, and resolve to the app. The playground exposes
-both operations; the editor starts with `serve` and updates itself with `patch`.
-See [the implemented contract](./APP.md#serving-and-patching).
+The input split is explicit: `App.loadSource` and `App.patchSource` accept source
+text and optional `{ sourceURL }`; `App.load` and `App.patch` fetch URLs. All four
+wait for readiness, share latest-request-wins activation, and resolve to the app.
+The playground exposes both source operations; the editor starts with `App.load`
+and updates itself with `(patch-source state.source)`.
+See [the implemented contract](./APP.md#loading-and-patching).
+
+## Agreed URL and source operation names
+
+The owner chose `load-source`/`load` for fresh loading and
+`patch-source`/`patch` for preserving replacement. Lisp source forms accept text
+and optional source options; URL forms accept one URL and resolve relative paths
+against the program that defined them. Namespace calls continue to take the app
+explicitly. The previous `serve` and `set-scene` bindings are removed rather than
+retained as aliases. URL replacement uses the same candidate validation, binding
+preservation, and supersession rules as source replacement; it does not use the
+module initialization cache.
 
 ## Agreed presentation background
 
@@ -656,7 +674,7 @@ operations, or `texture3d`. A generic ref registry was subsequently ruled out;
 ## Agreed resource cleanup ownership
 
 Keep cleanup with the resource's owner. Removing or reinitializing a binding
-during `App.patch` does not dispose its resource, transfer ownership, or infer
+during `App.patchSource` does not dispose its resource, transfer ownership, or infer
 that all references have disappeared. Patching does not trace collections,
 closures, app state, or references held by JS hosts to decide disposal.
 
@@ -670,7 +688,7 @@ already follows this policy, so this decision requires documentation only.
 
 Prefer the existing `app.state` dictionary over the reference's separate `Store`
 proposal. Each app starts with its own plain dictionary, accessible as the same
-object in JS and Lisp. Both `serve` and `patch` preserve it. Scene authors explicitly
+object in JS and Lisp. Both `load` and `patch` preserve it. Scene authors explicitly
 put data there when it needs to survive a fresh scene; ordinary scoped bindings
 retain their established lifetimes.
 
@@ -710,7 +728,7 @@ below as well. Internal binding cells remain private.
 
 ## Agreed binding reference lifetime
 
-References follow the same top-level binding name through committed `App.patch`
+References follow the same top-level binding name through committed `App.patchSource`
 operations, including reinitialization after a failed type guard and replacement
 of function/shader definitions. They identify the binding's current value rather
 than preserve the old value or point permanently at an old scene cell.
@@ -721,7 +739,7 @@ than preserve the old value or point permanently at an old scene cell.
 | Patch reinitializes the binding or replaces its code definition | Remains valid and reads/writes the replacement value. |
 | Patch removes the binding | Permanently invalidated. |
 | Later patch reintroduces the removed name | Old references remain invalid; the new binding has new reference identity. |
-| Serve a fresh scene | All references to the previous scene's bindings are permanently invalidated, even for matching names. |
+| Load a fresh scene | All references to the previous scene's bindings are permanently invalidated, even for matching names. |
 | Dispose the app | All of its binding references are invalidated. |
 
 Uncommitted candidate scenes must not retarget or invalidate active references.
@@ -757,7 +775,7 @@ handles. No UUID table or generic acquire/release registry is introduced.
 Inspection discovers bindings in the committed scene and returns an empty dictionary
 before the first commit. Editing its dictionary entries does not edit scene bindings.
 References are updated at successful scene replacement, so failed/superseded
-candidates do not retarget them. Removing a binding or serving a fresh scene
+candidates do not retarget them. Removing a binding or loading a fresh scene
 permanently drops old reference targets. See [the full App contract](./APP.md#live-binding-reflection).
 
 ## Agreed reflected function invocation
@@ -821,7 +839,7 @@ Errors propagate without automatic scene failure; completed effects are not roll
 back. Later top-level statements and async completion reject when their target
 scene is no longer active. A committed, initialized scene is required.
 
-Injected bindings follow ordinary `patch` name matching/removal and fresh `serve`
+Injected bindings follow ordinary `patch` name matching/removal and fresh `load`
 reset rules; neither operation incorporates injected code into the source.
 See [the implemented contract](./APP.md#top-level-execution).
 
@@ -839,9 +857,17 @@ Namespace APIs continue to receive explicit instance data. The owner also approv
 selected Lisp forms that imply the runtime instance owning their code. Capture that
 app through the compiler/runtime environment, preserving ownership across function
 calls and async continuations without global current-app state. On October 11,
-2026, the owner deferred additional shorthand forms for a later batch covering
-multiple operations together. This includes the proposed `pause`/`start` forms;
-generic dispatchers do not yet have a designated implicit events context.
+2026, the owner initially deferred additional shorthand forms for a later batch.
+The owner subsequently approved `pause`, `start`, `load-source`, `patch-source`,
+`load`, `patch`, and `exec`.
+These are implemented as ordinary callable bindings capturing the compiling app,
+including for modules and injections; nested functions and async continuations
+keep that ownership. Source forms forward optional source options and return their
+registered promises; pause/start and exec retain normal synchronous/result behavior.
+URL forms retain their defining program's origin. The editor uses
+`(patch-source state.source)` for self-replacement. The previous `serve` and
+`set-scene` bindings are removed.
+Further shorthand and an implicit generic-events context remain deferred.
 
 ## Deferred declaration metadata
 
@@ -873,12 +899,46 @@ On October 11, 2026, the owner deferred `texture3d`. Do not add a placeholder ty
 or implement 3D texture creation, uploads, or shader sampling in this pass. Retain
 the existing `texture2d` surface; revisit 3D textures when requested.
 
+## Editable Lisp UI addition
+
+The owner requested a persistent component tree built entirely from ordinary
+editable Lisp, retaining nested `on` syntax for component handlers. Dockable panes
+are the main container: titles/handles, minimize/close, four-edge split docking
+with dwell progress and a ready color, floating resizing from all eight edges and
+corners, and dock divider resizing. The owner selected four edges rather than
+center tabs. The editor needs an overflow-scrollable top menu and minimized-pane
+bottom tray. The prototype implements these in `hg/ui.lisp` and composes the editor
+with a Lisp code-editor component; see [the API and current limits](./UI.md).
+
+Docking feedback keeps readiness separate from the visible fill. Movement beyond
+the hold tolerance or a target change restarts the dwell timer, while the fill
+animates downward rather than snapping to zero. `dwell-decay` controls its drain
+speed, defaulting to 0.2 seconds for a full bar. Docking still requires the new
+target's complete dwell, regardless of leftover animation progress.
+
+Minimizing a docked pane retains its split-tree slot and ratios while its neighbors
+use the released space. Restoring returns the pane to that slot; floating panes
+restore to their saved rectangle. Saved layouts retain hidden slots, allowing
+multiple minimized panes to be restored in any order without losing their places.
+
+Pressing a pane handle does not undock it. A 6-UI-pixel drag threshold distinguishes
+clicks from dragging. When dragging undocks a pane, width and height each shrink
+by a fixed 32 UI pixels, limited by the pane's minimum dimensions. The workspace
+exposes these amounts as `drag-threshold` and `undock-shrink`; dragging an already
+floating pane does not shrink it again. Cancellation restores its original layout
+and dimensions.
+
+Dockable panes expose visible borders with hover/active colors. Floating resize
+edges/corners and docked dividers select matching CSS resize cursors using the
+same Lisp hit query that starts resizing. The engine supplies only an instanced
+canvas cursor setter; all selection and styling policies stay in editable Lisp.
+
 ## Deferred and future work
 
 | Area | Current engine | Reference direction |
 | --- | --- | --- |
-| App extensions | `serve`/`patch` preserve top-level data by name and reinitialize values that fail new explicit guards; cleanup remains with resource owners; shared data uses `app.state`. Reflection implements live top-level handles and inspect/read/write/call. `exec` injects top-level code without editing source. Pause/start preserve explicit pause across replacement and avoid catch-up or duplicate loops. | Further lifecycle proposals remain open; declaration metadata, locals, and persistence backends are deferred. |
-| Current-instance Lisp forms | Scene `on` defines named hooks; existing app-bound operations capture runtime services. Generic `Events` dispatchers are implemented separately. | Additional shorthand forms are deferred for a later batch covering multiple operations together. |
+| App extensions | `load-source`/`load` start fresh bindings; `patch-source`/`patch` preserve top-level data by name and reinitialize values that fail new explicit guards. Cleanup remains with resource owners; shared data uses `app.state`. Reflection implements live top-level handles and inspect/read/write/call. `exec` injects top-level code without editing source. Pause/start preserve explicit pause across replacement and avoid catch-up or duplicate loops. | Further lifecycle proposals remain open; declaration metadata, locals, and persistence backends are deferred. |
+| Current-instance Lisp forms | Scene `on` defines named hooks; `pause`, `start`, `load-source`, `patch-source`, `load`, `patch`, and `exec` capture their compiled program's app and delegate to `App`. Generic `Events` dispatchers are independent. | Further shorthand and an implicit events context remain deferred. |
 | Additional resources | Texture and binding handles use registered JS object identity; a generic `ref` registry is ruled out. | `texture3d` is deferred. |
 
 Brace scopes, mutable lexical declarations, shadowing, temporal initialization
@@ -930,9 +990,9 @@ and layouts. Data/Structures and Types/generated TypeBindings retain their value
 dependencies; these do not select an app or hold its scheduling state.
 
 Value representation, constructors, source syntax, function/promise results,
-serve/patch, top-level reflection, exec, and pause/start have the decisions recorded
+load/patch, top-level reflection, exec, and pause/start have the decisions recorded
 above. Proposed signatures in `API-DESIGN.md` and the alternate reference documents
-remain proposals unless adopted here. Current-instance shorthand, declaration
+remain proposals unless adopted here. Further current-instance shorthand, declaration
 metadata, local reflection, persistence backends, embedded output, raw interop,
 and 3D textures remain deferred. Any later accepted change should migrate operations,
 lowering, generators, examples, callers, and existing expectations together.

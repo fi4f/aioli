@@ -33,23 +33,36 @@ service namespaces and passes service records explicitly.
 
 ## Reproduction
 
-Serve the repository and install/provide Playwright with Chrome available.
-Run `node hg/tools/profile-mayo-typing.cjs`. Set `AIOLI_URL` if the server is
-not at `http://localhost:3000`. The benchmark executes the actual editor Lisp,
-instruments its existing runtime, and types a 51-character comment. It adds
-comments to the editable draft when `MAYO_EXTRA_LINES` is set.
+Provide Playwright and installed Chrome, then run:
 
-- `MAYO_EXTRA_LINES=20000`: larger document fixture.
-- `MAYO_START_ROW=12000`: move the global caret into the file before typing.
-- `MAYO_KEY_DELAY=5`: faster input workload.
+```powershell
+node hg/tools/profile-mayo.cjs
+```
+
+The tool starts its own loopback server on a free port and closes it and Chrome
+when finished. Set `AIOLI_URL` to use an existing server instead. It loads the
+actual editor, disables auto reload for measurement, and runs idle, hover, typing,
+and drag workloads. `profile-mayo-typing.cjs` uses the same implementation.
+Profiling globals and GPU timestamp support are injected only into that session.
+No production window globals or profiling UI are added.
+
+- `MAYO_EXTRA_LINES=20000`: append comment lines to the draft.
+- `MAYO_START_ROW=12000`: choose the document-relative caret row before typing.
+- `MAYO_KEY_DELAY=5`: milliseconds between typed characters (default 35).
 - `MAYO_BACKSPACE=1`: delete 30 characters after typing.
-- `MAYO_CPU_PROFILE=1`: print sampled CPU hotspots.
+- `MAYO_TRACE=1` / `0`: override the host's tracing choice for this session.
+- `MAYO_DPR=1.25`: emulated pixel ratio (default 1.25).
+- `MAYO_CPU_PROFILE=1`: include sampled CPU hotspots; use a separate run from
+  normal CPU timing because sampling adds overhead.
+- `MAYO_GPU_PROFILE=1`: enable timestamp queries when supported; this also adds
+  instrumentation, so compare CPU costs using a separate run without it.
+- `MAYO_OUTPUT`: write the complete JSON report to this path.
+- `MAYO_SCREENSHOT`: save a screenshot of the final state to this path.
 
-The measured interval begins at browser `beforeinput` and ends when rendering
-submits GPU work. It excludes keyboard hardware, time before event dispatch,
-GPU completion, compositor scheduling, and physical screen presentation.
-The continuous typing workload also excludes the later debounced self-reload.
-`hg/tools/profile-mayo.cjs` separately measures idle frames and redundant input.
+Input-to-submission starts at browser `beforeinput` and ends at GPU queue submit.
+It excludes hardware, dispatch before that event, GPU completion, compositor
+scheduling, and physical display. The continuous typing workload excludes the
+later debounced self-reload.
 
 ## What bounds the work
 

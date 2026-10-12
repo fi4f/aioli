@@ -7,14 +7,20 @@ Private implementation names use both a double-underscore prefix and suffix,
 such as `__name__`. Functions work without a `this` receiver.
 Selected Lisp forms may imply the app that owns their compiled code; namespace
 operations remain explicit, with no global current-app state.
+Lisp `pause`, `start`, `load-source`, `patch-source`, `load`, `patch`, and `exec`
+are ordinary callable bindings
+created by app compilation. Their closures retain the owning app across modules,
+injections, nested functions, and async continuations, even when called by another
+app or when the Lisp `app` name is shadowed. They delegate directly to `App`;
+no additional lowering or global current-instance dispatch is involved.
 
 All engine modules live directly in `hg/`. Modules normally export one domain
 namespace. `app.js` exports `App` and the internal `AppCore` orchestration namespace.
 `hg/tools/` contains code generators and profiling scripts; `hg/tests/` contains tests.
 `docs/` contains all documentation and supplied Markdown references. `examples/`
 contains Lisp examples and additional JavaScript/HTML hosts; `editor/` contains
-the editor's `index.html`, `index.js`, and Lisp files. The repository root retains
-`index.html` and `index.js` as the staging entry points.
+the editor's Lisp files. The repository root retains `index.html` and `index.js`
+as the staging entry points and `editor.html` and `editor.js` as the editor host.
 
 ## Module composition and Lisp exposure
 
@@ -63,9 +69,24 @@ introducing WGSL function values or mutable module globals.
 
 ## Current modules
 
+`hg/ui.lisp` supplies persistent plain component trees, explicit component
+namespaces, layout, painting, focus, event bubbling, scrollable menus/trays,
+split docking with dwell previews, and floating/docked resizing. These behaviors
+are ordinary Lisp and can be edited or replaced through live module exports.
+`editor/main.lisp` composes the editor; `editor/code-editor.lisp` implements its
+native-input-backed source control. See [UI composition](./UI.md).
+
+Value-position `on` lowers to the lexical `ui-on` function with an event name and
+callback, leaving representation and dispatch in Lisp. Statement-position scene
+hooks retain their existing contract. Ordinary host functions accept a final
+`&rest` parameter as a native list; shaders and scene hooks retain fixed arity.
+`keys` supplies ordinary dictionary enumeration. Native keyboard/wheel snapshots
+allow explicit synchronous default cancellation; wheel coordinates support Lisp
+hit testing, and text proxies can blur without disposal.
+
 | Modules | Namespace and responsibility |
 | --- | --- |
-| `app.js` | `App`: creation, serve/patch, reflection, calls, exec, pause/start, tokenization, disposal. `AppCore`: host orchestration and activation. |
+| `app.js` | `App`: creation, source/URL loading and patching, reflection, calls, exec, pause/start, tokenization, disposal. `AppCore`: host orchestration and activation. |
 | `scheduler.js` | `Scheduler`: per-instance clocks, named hooks, frame scheduling, and injected frame preparation. |
 | `modules.js` | `Modules`: loader records, URL resolution, owned caches, cycle checks, live binding cells. |
 | `scene-memory.js` | `SceneMemory`: top-level scene cells, retained-value lookup, import scopes, internal source origins, binding reflection and reference lifetimes. |
@@ -95,8 +116,10 @@ as required by the self-editor. Omitted replacement origins use the committed
 scene's origin rather than a temporarily initializing program's origin.
 
 `hg/hg.js` exposes `App`, `Events`, and `TextProxy`; Lisp receives those same namespaces.
-`App.new` returns synchronously; `App.serve(app, source)` and `App.patch(app, source)`
-await initialization. Serving initializes fresh scene bindings; patching matches
+`App.new` returns synchronously; `App.loadSource(app, source)` and `App.patchSource(app, source)`
+await initialization. `App.load` and `App.patch` fetch URLs before invoking those
+same replacement paths. Source and URL requests share supersession; URL shorthand
+retains the defining program's origin. Loading initializes fresh scene bindings; patching matches
 top-level data by name, skips retained initializers, and rebuilds code definitions.
 Both produce new binding cells and closures; retained data keeps its identity.
 Private weak metadata associates scenes with their cells. Modules keep their
@@ -107,7 +130,7 @@ Resource cleanup remains with each resource's owner. Removing or reinitializing
 a binding does not dispose resources, transfer ownership, or extend borrowed
 lifetimes; patching does not scan the app's references to infer disposal.
 Each app starts with its own plain `state` dictionary for explicitly shared data.
-JS and Lisp read and mutate the same values; `serve` and `patch` preserve this
+JS and Lisp read and mutate the same values; `load` and `patch` preserve this
 dictionary. Saving remains explicit, and no separate `Store` namespace is added.
 `App.inspect` enumerates the committed scene's top-level bindings as a plain
 dictionary of registered `__binding__` handles. `App.read` observes current cell
@@ -115,7 +138,7 @@ values; `App.write` validates language-value admission and binding mutability,
 without repeating initializer assertions. Compiler-created cells keep mutability
 in weak metadata. Each app owns its reflection state; commit updates surviving
 references only after scene replacement succeeds. Removed references release their
-cell targets permanently; fresh serving and disposal invalidate all old references.
+cell targets permanently; fresh loading and disposal invalidate all old references.
 `App.call` resolves a live binding through the same owner/lifetime checks and
 invokes its function with a native list of arguments. Calls use the function's
 lexical environment and normal guards, execute immediately without scheduling,
@@ -138,6 +161,11 @@ such as `(TextProxy.sync proxy source anchor head)`. Other namespaces remain
 internal until their Lisp contracts are designed. Exposure never selects an app.
 
 Compiled programs contain data and a generated executable, without a `run` method.
+Scene memory associates each scene with its compiled program in private weak
+metadata. The staging host uses this record for JavaScript/WGSL inspection and
+uses public reflection for current top-level binding values. Failed candidates do
+not replace the committed scene's artifacts. Inspection neither recompiles nor
+executes the source, and does not restore resources from serialized data.
 Module namespaces are plain objects holding ordinary `{ value }` cells shared
 with lexical closures and imports. Private weak metadata identifies these
 namespaces without reserving dictionary keys. Numeric/struct views explicitly
@@ -188,7 +216,7 @@ preparation validates direct app-field edits. The display tracks its last
 presented smoothing setting so a change redraws the existing image.
 
 `index.html` loads the vanilla staging host from `index.js`;
-`editor/index.html` loads Mayo's canvas editor from `editor/index.js`.
+`editor.html` loads Mayo's canvas editor from `editor.js`.
 Embedded children, program exports, structured diagnostics, and redesigning native
 text editing remain deferred. JavaScript is the CPU target; no Wasm backend or
 legacy Aioli facade is provided.

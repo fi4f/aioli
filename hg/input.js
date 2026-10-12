@@ -42,6 +42,9 @@ function __createInput__(
   service.pointerPositions = new WeakMap();
   service.primary = null;
   service.destroyed = false;
+  service.__oldCursor__ = service.outerCanvas.style?.cursor ?? '';
+  service.__oldCursorPriority__ = service.outerCanvas.style?.getPropertyPriority?.('cursor') ?? '';
+  service.__cursor__ = null;
   service.generation = 0;
   service.oldTabIndex = service.outerCanvas.getAttribute('tabindex');
   if (service.outerCanvas.tabIndex < 0) service.outerCanvas.tabIndex = 0;
@@ -82,6 +85,16 @@ function __createInput__(
       if (name === 'pointerup' || name === 'pointercancel')
         service.captured.delete(event.pointerId);
       __dispatch__(service, name, state);
+      // TextProxy may take keyboard focus during dispatch. Restore capture after
+      // its canvas blur so selection drags still receive movement off the canvas.
+      if (name === 'pointerdown' && !service.destroyed && event.buttons) {
+        service.pointers.set(event.pointerId, state);
+        if (event.isPrimary) service.primary = event.pointerId;
+        try {
+          service.outerCanvas.setPointerCapture(event.pointerId);
+          service.captured.add(event.pointerId);
+        } catch {}
+      }
     });
   __listen__(service, service.outerCanvas, 'lostpointercapture', (event) => {
     service.captured.delete(event.pointerId);
@@ -94,8 +107,13 @@ function __createInput__(
       __dispatch__(service, 'pointercancel', __pointerSnapshot__(service, state));
     }
   });
-  __listen__(service, service.outerCanvas, 'wheel', (event) =>
-    __dispatch__(
+  __listen__(service, service.outerCanvas, 'wheel', (event) => {
+    const rect = service.outerCanvas.getBoundingClientRect();
+    const point = service.coordinates(
+      (((event.clientX ?? rect.left) - rect.left) * service.outerCanvas.width) / (rect.width || 1),
+      (((event.clientY ?? rect.top) - rect.top) * service.outerCanvas.height) / (rect.height || 1),
+    );
+    const result = __dispatch__(
       service,
       'wheel',
       Data.dict(
@@ -107,11 +125,24 @@ function __createInput__(
         event.deltaZ,
         'mode',
         event.deltaMode,
+        'x',
+        point.x,
+        'y',
+        point.y,
+        'inside',
+        point.inside,
+        'prevent-default',
+        false,
         ...__modifiers__(event),
       ),
-    ),
-  );
+    );
+    if (result?.['prevent-default']) event.preventDefault();
+  });
   service.bindings = {
+    cursor: (...args) => {
+      if (args.length !== 1) throw new TypeError('cursor expects one CSS cursor string or nil');
+      return __cursor__(service, args[0]);
+    },
     'key?': (...args) => {
       if (args.length !== 1 || typeof args[0] !== 'string')
         throw new TypeError('key? expects a keyboard code string');
@@ -166,7 +197,10 @@ function __listen__(service, target, name, fn) {
 }
 
 function __dispatch__(service, name, value) {
-  if (!service.destroyed) service.emit(name, Data.reCopy(value));
+  if (service.destroyed) return;
+  const snapshot = Data.reCopy(value);
+  service.emit(name, snapshot);
+  return snapshot;
 }
 
 function __reset__(service) {
@@ -206,7 +240,7 @@ function __key__(service, event, down) {
   }
   if (down) service.keys.add(event.code);
   else service.keys.delete(event.code);
-  __dispatch__(
+  const result = __dispatch__(
     service,
     down ? 'keydown' : 'keyup',
     Data.dict(
@@ -216,9 +250,12 @@ function __key__(service, event, down) {
       event.key,
       'repeat',
       !!event.repeat,
+      'prevent-default',
+      false,
       ...__modifiers__(event),
     ),
   );
+  if (result?.['prevent-default']) event.preventDefault();
 }
 
 function __pointerSnapshot__(service, state) {
@@ -332,7 +369,33 @@ function __poll__(service) {
   }
 }
 
+function __restoreCursor__(service) {
+  const style = service.outerCanvas.style;
+  if (style && service.__cursor__ !== null && style.cursor === service.__cursor__) {
+    if (service.__oldCursor__) {
+      style.setProperty('cursor', service.__oldCursor__, service.__oldCursorPriority__);
+    } else {
+      style.removeProperty('cursor');
+    }
+  }
+  service.__cursor__ = null;
+}
+
+function __cursor__(service, value) {
+  if (value === null) {
+    __restoreCursor__(service);
+    return null;
+  }
+  if (service.destroyed) throw new TypeError('Cursor input service has been destroyed');
+  if (typeof value !== 'string' || !value.trim())
+    throw new TypeError('cursor expects a nonempty CSS cursor string or nil');
+  if (service.outerCanvas.style.cursor !== value) service.outerCanvas.style.cursor = value;
+  service.__cursor__ = service.outerCanvas.style.cursor;
+  return service.__cursor__;
+}
+
 function __destroy__(service) {
+  __restoreCursor__(service);
   service.destroyed = true;
   __reset__(service);
   service.listeners.forEach((remove) => remove());
@@ -344,5 +407,6 @@ export const Input = {
   new: __createInput__,
   poll: __poll__,
   reset: __reset__,
+  cursor: __cursor__,
   destroy: __destroy__,
 };

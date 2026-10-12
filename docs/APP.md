@@ -8,31 +8,50 @@ and app-bound operations can imply the runtime instance that owns their code.
 
 Scene `on` forms define named hooks invoked directly by runtime services. Generic
 subscriptions use the independent [Events dispatcher](./EVENTS.md).
+Value-position `on` creates handlers for the editable Lisp [UI library](./UI.md);
+it does not register scene hooks.
 
 ```js
 import hg from '../hg/hg.js';
 const app = hg.App.new({ c: 'canvas', w: 512, h: 512, si: 1, ups: 60 });
-await hg.App.serve(app, '(on render (c) (clear 0.1 0.2 0.4))');
+await hg.App.loadSource(app, '(on render (c) (clear 0.1 0.2 0.4))');
 hg.App.dispose(app);
 ```
 
 ```lisp
 (let other (App.new (dict "c" "another-canvas" "ups" 30)))
-(await (App.serve other "(on render (c) (clear 0 1 0 1))"))
+(await (App.loadSource other "(on render (c) (clear 0 1 0 1))"))
 (App.dispose other)
 ```
 
 `App.new` is synchronous. Its result has an ordinary `ready` promise for graphics
-initialization. `App.serve` and `App.patch` automatically await it, return promises
-resolving to the app, and take **source text**, not a path. Fetch a file explicitly in a JS
-host and supply `{ sourceURL: url }` as the third argument for relative imports
-and located errors. Omitted origin retains the committed scene's origin; while
+initialization. All four replacement operations automatically await it and return
+registered promises resolving to the app:
+
+| Operation | Input | Scene state |
+| --- | --- | --- |
+| `App.loadSource(app, source, options)` | Source text | Fresh bindings |
+| `App.patchSource(app, source, options)` | Source text | Preserve compatible top-level data |
+| `App.load(app, url, options)` | URL string, fetched by the app | Fresh bindings |
+| `App.patch(app, url, options)` | URL string, fetched by the app | Preserve compatible top-level data |
+
+Source operations accept `{ sourceURL: url }` for relative imports and located
+errors. Omitted origin retains the committed scene's origin; while
 a replacement initializes, it does not inherit that candidate's temporary origin.
 
-## Serving and patching
+URL operations resolve relative paths against the committed scene's origin or the
+app's base URL. Their optional `{ sourceURL: base }` overrides that resolution base.
+The fetched URL becomes the new scene's source origin. URL loading uses the same
+candidate initialization, attach, and first-render checks as source loading.
+Requests across all four operations share supersession: an obsolete fetch cannot
+compile or replace a newer scene, and a newer request also supersedes pending
+initialization. Fetch/compile/initialization failures reject; completed external
+effects are not rolled back. Fetches are not cached as imported modules.
 
-`App.serve(app, source, options)` starts fresh scene bindings.
-`App.patch(app, source, options)` replaces code while preserving top-level data:
+## Loading and patching
+
+`App.loadSource(app, source, options)` starts fresh scene bindings.
+`App.patchSource(app, source, options)` replaces code while preserving top-level data:
 
 - Match top-level `let` bindings by their names, independently of source position.
 - Keep compatible existing data values and identities; skip their new initializers.
@@ -43,9 +62,9 @@ a replacement initializes, it does not inherit that candidate's temporary origin
 - Keep function-local and block-local bindings outside preservation.
 
 ```js
-await hg.App.serve(app, '(let count 1) (set app.state.count count)');
-await hg.App.patch(app, '(let count 99) (set app.state.count count)'); // count is 1
-await hg.App.serve(app, '(let count 99) (set app.state.count count)'); // count is 99
+await hg.App.loadSource(app, '(let count 1) (set app.state.count count)');
+await hg.App.patchSource(app, '(let count 99) (set app.state.count count)'); // count is 1
+await hg.App.loadSource(app, '(let count 99) (set app.state.count count)'); // count is 99
 ```
 
 Patching without a current scene initializes all bindings. Removing a name and
@@ -73,7 +92,8 @@ Patching does not trace references through collections, closures, app state, or
 JS hosts to decide disposal, and retaining a handle does not extend a borrowed
 resource's lifetime. Existing attach/detach callbacks still
 run, and scheduler clocks retain their existing restart behavior on replacement.
-`App.load` is replaced by these two operations.
+`App.serve` and Lisp `set-scene` have been removed. Source strings and URLs have
+separate entry points; their contents are never inspected to guess the input kind.
 
 | Creation option | Meaning | Default |
 | --- | --- | --- |
@@ -107,14 +127,14 @@ Input and native caret positioning map between CSS and bitmap coordinates.
 App fields include `source`, `sourceURL`, `state`, `scene`, `elapsed`,
 `updateElapsed`, `dt`, `ups`, `w`, `h`, `si`, `is`, `paused`, `failed`, and `destroyed`.
 `state` is the plain per-app dictionary for intentionally shared data, accessible
-as the same object in JS and Lisp. Both `serve` and `patch` preserve it. Reads and
+as the same object in JS and Lisp. Both `load` and `patch` preserve it. Reads and
 writes use ordinary dictionary rules and share live values without copying them;
 different apps start with separate dictionaries. There is no separate `Store`
 namespace or automatic saving. Explicit JSON saves follow the existing JSON
 restrictions, and storing a resource handle does not transfer ownership or extend
 its lifetime. Document models and persistence backends remain deferred.
 Clock values are observations updated
-by scheduling. Changing source data does not compile it: call `App.serve` or `App.patch` explicitly.
+by scheduling. Changing source data does not compile it: call `App.loadSource` or `App.patchSource` explicitly.
 During candidate initialization, `source` identifies that candidate; it is restored
 on failure and published on successful replacement. Initialization effects on
 shared state or retained objects are not rolled back.
@@ -149,7 +169,7 @@ failure behavior. Trace does not isolate infinite loops or device loss.
 releases resources. It removes only runtime-created presentation canvases, even
 when disposed during initialization. Caller-supplied canvases remain in the DOM.
 Loading a disposed app rejects. Initialization errors remain available through
-`ready`, `App.serve`, `App.patch`, and the ordinary `initializationError` field.
+`ready`, `App.loadSource`, `App.patchSource`, and the ordinary `initializationError` field.
 
 `App.tokenize(app, source)` retains the editor's existing incremental tokenizer
 capability under the shared namespace. Text-proxy operations now use the shared `TextProxy` namespace and take proxy data explicitly.
@@ -172,7 +192,7 @@ can pause before readiness or before the first scene, and start before a scene
 exists; later scene attachment follows the selected state. Pausing during an
 asynchronous attach does not cancel its completion.
 
-`serve` and `patch` preserve explicit pause, including through failed or superseded
+`load` and `patch` preserve explicit pause, including through failed or superseded
 drafts. They still run their usual initialization and lifecycle callbacks; traced
 replacement still performs its explicit initial-render validation while paused.
 Scene replacement retains its existing clock-reset behavior. Pause/start by
@@ -187,7 +207,7 @@ the existing recovery behavior.
 
 ```js
 hg.App.pause(app);
-await hg.App.patch(app, editedSource); // Still paused.
+await hg.App.patchSource(app, editedSource); // Still paused.
 hg.App.start(app);                    // Resume without paused-time catch-up.
 ```
 
@@ -223,12 +243,12 @@ Handle identity, ownership, and lifetime are private metadata; editing JS labels
 does not retarget a handle. JSON rejects handles rather than serializing references.
 
 ```js
-await hg.App.serve(app, '(let count (1 : num))');
+await hg.App.loadSource(app, '(let count (1 : num))');
 const bindings = hg.App.inspect(app);
 const count = bindings.count;
 hg.App.read(app, count);                    // 1
 hg.App.write(app, count, 'hello');          // 'hello'; follows ordinary set
-await hg.App.patch(app, '(let count (2 : num))');
+await hg.App.patchSource(app, '(let count (2 : num))');
 hg.App.read(app, count);                    // 2; the same handle follows reinitialization
 ```
 
@@ -279,7 +299,7 @@ calls replacement functions after a patch. A function saved from `App.read` is
 that particular function value and does not automatically change after a patch.
 
 References follow same-name bindings across committed patches, including
-reinitialized values and replaced functions/shaders. Removal, fresh `serve`, or
+reinitialized values and replaced functions/shaders. Removal, fresh `load`, or
 app disposal permanently invalidates old references; reintroducing a removed name
 does not revive them. Uncommitted candidate scenes do not change active references.
 This binding lifetime does not extend the lifetime of a referenced resource value.
@@ -298,7 +318,7 @@ and a committed scene that is not attaching or being replaced. It runs immediate
 including while paused, and does not resume scheduling or reset clocks.
 
 ```js
-await hg.App.serve(app, '(let count 0)');
+await hg.App.loadSource(app, '(let count 0)');
 hg.App.exec(app, '(let increment (fn () { (set count (+ count 1)) }))');
 hg.App.exec(app, '(increment)'); // 1
 hg.App.read(app, hg.App.inspect(app).count); // 1
@@ -344,31 +364,74 @@ cancel functions or promises already running in their original lexical environme
 `exec` does not edit, append to, or replace `app.source` or `app.sourceURL`.
 Injection text remains attached to its own compiled diagnostics. Injected bindings
 follow the existing replacement policy: `patch` preserves compatible matching data
-names and removes names absent from the new source; `serve` starts fresh. Neither
+names and removes names absent from the new source; `load` starts fresh. Neither
 operation saves injected code into the source. Resource cleanup remains with its owner.
 
 ## Current-instance Lisp forms
 
 Namespace calls such as `(App.pause other)` retain their explicit target, matching
 JavaScript. Selected Lisp forms may instead refer to their owning app implicitly.
-Existing app-specific operations such as `clear`, `import`, and `set-scene` already
+Existing app-specific operations such as `clear` and `import` already
 capture runtime services; `on` defines hooks on the compiled scene.
 
-Additional current-app forms are approved in principle and deferred for a later
-batch covering multiple operations together, including proposed `pause`/`start`
-shorthand. Their operations and exact spellings will be selected then.
-They should capture the app that owns the code,
-including nested functions and asynchronous continuations. Calling a function
-from another runtime must not switch that ownership. No global current-app state
-or blanket omission of namespace instance arguments is introduced. Generic event
-dispatchers remain independent explicitly supplied instances until a specific
-implicit events context is agreed.
+The current-app shorthand is implemented as ordinary callable bindings:
+
+| Lisp call | Explicit equivalent | Result |
+| --- | --- | --- |
+| `(pause)` | `(App.pause app)` | The app, synchronously |
+| `(start)` | `(App.start app)` | The app, synchronously |
+| `(load-source source)` | `(App.loadSource app source)` | A promise resolving to the app |
+| `(patch-source source)` | `(App.patchSource app source)` | A promise resolving to the app |
+| `(load url)` | `(App.load app url (dict "sourceURL" origin))` | A promise resolving to the app |
+| `(patch url)` | `(App.patch app url (dict "sourceURL" origin))` | A promise resolving to the app |
+| `(exec source)` | `(App.exec app source)` | The injected program's result |
+
+`load-source` and `patch-source` accept the same optional source-options dictionary
+as their namespace operations, for example `(patch-source source (dict "sourceURL" url))`.
+The URL shorthand `load`/`patch` accepts exactly one URL string, resolving it
+against the origin of the program that defined the call (`origin` in the table).
+Functions saved from an older scene or imported module retain that origin.
+`pause`/`start` accept no arguments and `exec` accepts exactly one source string.
+Incorrect loading/patching arity rejects a registered promise;
+incorrect pause/start/exec arity throws synchronously. Normal operation results,
+promise identities, validation, and lifecycle behavior come from `App`.
+
+Each binding captures the app that owns its compiled program. This works in scenes,
+imported modules, injected code, nested functions, and asynchronous continuations.
+Calling a function from another runtime, or shadowing the Lisp `app` name, does not
+switch that ownership. These bindings can be passed as values and shadowed using
+ordinary lexical rules; they are not reserved syntax or new compiler emitters.
+
+```lisp
+(let evaluate (fn (source) {
+  (pause)
+  (let result (exec source))
+  (start)
+  result
+}))
+```
+
+Call `evaluate` after the scene has committed, for example from a later input
+hook or through `App.call`. As with `App.exec`, the shorthand requires an
+initialized committed scene; it cannot inject into a candidate being initialized.
+
+The previous `serve` and `set-scene` bindings are removed. Further shorthand
+remains deferred. Generic event
+dispatchers remain independent explicitly supplied instances; no implicit events
+context or global current-app state is introduced.
 
 ## Hosts
 
 `index.html` loads `index.js` for the vanilla staging environment: a textarea,
-Serve/Patch buttons, error text, and canvas, with no custom page CSS.
-`editor/index.html` loads `editor/index.js` and retains the existing canvas editor
+Load source/Patch source buttons, error text, and canvas, with no custom page CSS.
+Its Inspection panels show the active scene's compiled JavaScript body and Lisp
+shader WGSL, current top-level binding values through `App.inspect`/`App.read`,
+and compiler-supplied bindings with their generated identifiers. Refresh inspection
+reads current values without running source again; previews are bounded and do not
+await promises. Compiled artifacts are retained in internal scene metadata, so a
+failed replacement keeps the working scene's output. This host inspection does not
+add a public declaration-metadata API.
+`editor.html` loads `editor.js` and retains the existing canvas editor
 as a regression fixture. Internal compiler/scheduler helpers are
 in `hg/`; they are not re-exported as a legacy runtime surface.
 

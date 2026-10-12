@@ -6,23 +6,29 @@ data and namespace functions, with no classes or global current-app state.
 ```javascript
 import hg from './hg/hg.js';
 const app = hg.App.new({ c: 'canvas', w: 512, h: 512, si: 1, ups: 60 });
-await hg.App.serve(app, '(on render (c) (clear 0.1 0.2 0.4))');
+await hg.App.loadSource(app, '(on render (c) (clear 0.1 0.2 0.4))');
 hg.App.dispose(app);
 ```
 
-Lisp uses `App.new`, `App.serve`, `App.patch`, and `App.dispose` directly, passing app data
+Lisp uses `App.new`, `App.loadSource`, `App.patchSource`, and `App.dispose` directly, passing app data
 explicitly. Creation is synchronous; loading awaits the app's GPU initialization.
-`App.serve` initializes fresh scene bindings; `App.patch` preserves top-level data
+`App.loadSource` initializes fresh scene bindings; `App.patchSource` preserves top-level data
 by name and replaces code definitions. Both accept source text. With no `c`, the runtime creates an owned canvas
 using CSS `100dvw` by `100dvh`, without entering browser fullscreen.
 
 Serve the repository over localhost and open `/index.html` for the vanilla staging
-page: source textarea, Serve/Patch buttons, error text, and canvas, with no custom CSS.
-The staging host lives in `/index.js`. `/editor/index.html` loads `/editor/index.js`
-for Mayo, the existing canvas-only self-editor. Its text-proxy
+page: source textarea, Load source/Patch source buttons, error text, and canvas, with no custom CSS.
+Expand the Inspection panels to view the active scene's compiled JavaScript body,
+each Lisp shader's WGSL, and binding names, types, and current values. Compiler
+bindings include their generated `$bindingN` identifiers. Inspection refreshes after
+Load source/Patch source and when a panel opens; use Refresh inspection to read later changes.
+Large/cyclic values have bounded previews, and host records and promises have summaries.
+Failed replacements retain the working scene's compiled output.
+The staging host lives in `/index.js`. `/editor.html` loads `/editor.js`
+for Mayo, the composable Lisp canvas editor. Its text-proxy
 operations take data explicitly through `TextProxy`; tokenization is now `App.tokenize(app, source)`.
 
-See [App API](./APP.md), [explicit storage access](./ACCESSORS.md), and
+See [composable UI and docking](./UI.md), [App API](./APP.md), [explicit storage access](./ACCESSORS.md), and
 [architecture](./ARCHITECTURE.md). This is a breaking replacement of the old Aioli
 runtime API. Embedded children, program exports, diagnostic delivery, and text-proxy
 redesign remain deferred. CPU execution remains JavaScript; Wasm is out of scope.
@@ -32,12 +38,14 @@ redesign remain deferred. CPU execution remains JavaScript; Wasm is out of scope
 ```text
 index.html       staging entry point
 index.js         staging JavaScript host
+editor.html      editor entry point
+editor.js        editor JavaScript host
 hg/              engine, compiler, and library entry hg.js
 hg/tools/        code generators and profiling scripts
 hg/tests/        tests
 docs/            documentation and supplied Markdown references
 examples/        Lisp examples and JavaScript/HTML hosts
-editor/          editor index.html, index.js, and Lisp files
+editor/          editor Lisp files
 ```
 
 The earlier editor performance optimizations remain: incremental tokenization,
@@ -52,9 +60,21 @@ The developer-supplied canvas is the **outer canvas**, using its default Canvas
 2D context. The runtime creates a separate offscreen **inner canvas** for WebGPU
 rendering. Shader coordinates, contexts, clear, textures, and previous-pass images
 all use inner pixels. WebGPU is still required; Canvas 2D presents the completed
-inner image and does not replace GPU rendering. Serve and Patch await graphics initialization.
+inner image and does not replace GPU rendering. Load source and Patch source await graphics initialization.
 Unavailable WebGPU, device loss, and GPU errors are shown in the page and console.
 Use localhost via `npx serve`, or HTTPS.
+
+## Composable UI
+
+Import `hg/ui.lisp` for persistent, editable Lisp components. Titled panes support
+floating, minimize/close, dwell-confirmed split docking, all eight floating resize
+grips, and dock dividers. Menu strips and the minimized-pane tray scroll
+horizontally; dropdowns compose ordinary components. See [the UI API](./UI.md) and
+[the complete example](../examples/ui.lisp). The rewritten editor uses that library
+and `editor/code-editor.lisp`. Headless Chrome profiling covers startup, input,
+typing, and dragging; see [the measured costs and remaining limits](./PERFORMANCE.md).
+
+## Graphics operations
 
 The first graphics binding is `clear`, accepting a single numeric scalar (RGB
 splat), three RGB channels, four RGBA channels, or one `vec3f`/`vec4f`. RGB
@@ -409,13 +429,17 @@ in dictionaries and lists or asserted with the `promise` type.
 
 Async scene callbacks use an explicit async function body:
 
-`on` accepts an explicit `fn`, an `async`-wrapped `fn`, or a function variable/
+Scene `on` accepts an explicit `fn`, an `async`-wrapped `fn`, or a function variable/
 dictionary field. For example, `(on keydown (fn (event) ...body))` or
 `(on keydown handler)`. The original `(on keydown (event) ...body)` shorthand
 also works. Function bindings are captured when the scene is initialized;
 reassigning the variable later does not replace the registered callback.
 The same parameter limits and synchronous update/render restriction apply to
 function variables and inline declarations.
+
+In value position, nested `(on click (event) ...body)` calls the in-scope `ui-on`
+Lisp constructor to produce a component handler. It does not register a scene
+hook. See [nested handlers](./UI.md#nested-on-and-ordinary-functions).
 
 ```lisp
 (on attach (async (fn ()
@@ -441,7 +465,7 @@ Create an app with optional rendering dimensions and scale increment:
 ```javascript
 import hg from '../hg/hg.js';
 const app = hg.App.new({ c: outerCanvas, w: 320, h: 180, si: 1 });
-await hg.App.serve(app, source);
+await hg.App.loadSource(app, source);
 app.w = 640; app.h = 360; app.si = 0.5; // consumed at the next frame boundary
 ```
 
@@ -538,9 +562,9 @@ return independent snapshots, so changing a returned value does not change input
 
 | Callbacks | Event fields |
 | --- | --- |
-| `keydown`, `keyup` | `code` (physical key, e.g. `KeyW`), `key`, `repeat`, `alt`, `ctrl`, `shift`, `meta` |
+| `keydown`, `keyup` | `code` (physical key, e.g. `KeyW`), `key`, `repeat`, `alt`, `ctrl`, `shift`, `meta`, mutable `prevent-default` |
 | `pointerdown`, `pointerup`, `pointermove`, `pointercancel`, `pointerenter`, `pointerleave` | `id`, `type` (`mouse`/`touch`/`pen`), `primary`, inner `x`, `y`, `xy`, `uv`, `inside`, `button`, `buttons`, `pressure`, modifier booleans |
-| `wheel` | `dx`, `dy`, `dz`, `mode` (browser delta units), modifier booleans |
+| `wheel` | `dx`, `dy`, `dz`, `mode` (browser delta units), inner-pixel `x`/`y`, `inside`, modifier booleans, mutable `prevent-default` |
 | `joyconnected`, `joydisconnected` | Gamepad snapshot: `index`, `id`, `mapping`, `connected`, `timestamp`, `axes`, `buttons` |
 | `joydown`, `joyup` | `index`, `button`, `value`, `pressed` |
 | `joyaxis` | `index`, `axis`, `value` |
@@ -554,6 +578,12 @@ shortcuts retain browser behavior. Use CSS `touch-action: none` when touch gestu
 control the scene instead of scrolling or zooming.
 The canvas suppresses the browser context menu so right-click remains available
 for pointer input; destroying the runtime removes this handler.
+
+`(cursor "ew-resize")` sets the owning canvas's CSS cursor; `(cursor nil)` releases
+the override and restores its previous inline cursor. Disposal also releases it.
+Cursor choices for UI edges, corners, dividers, buttons, and text are implemented
+in [the ordinary Lisp UI library](./UI.md), using the same resize hit regions as
+pointer-down handling.
 
 `(pointer? mask)` tests the primary pointer's button mask; `(pointer? mask id)`
 selects a pointer. Masks are left/contact 1, right 2, middle 4, back 8, and
@@ -599,8 +629,7 @@ namespace functions:
   import hg from '../hg/hg.js';
   const app = hg.App.new({ c: 'demo' });
   const url = new URL('./examples/blue.lisp', location.href);
-  const response = await fetch(url);
-  await hg.App.serve(app, await response.text(), { sourceURL: url.href });
+  await hg.App.load(app, url.href);
 </script>
 ```
 
@@ -693,7 +722,7 @@ is retained rather than discarded, so a long gap between browser frames can
 produce a backlog. Explicit `App.pause(app)` discards the backlog and stops
 automatic updates/rendering while preserving scene data and resources.
 `App.start(app)` resumes without catching up paused time and repeated starts
-do not add loops. The explicit paused state survives `serve` and `patch`;
+do not add loops. The explicit paused state survives `load` and `patch`;
 reflection and explicit function calls remain available. See
 [pausing and starting](./APP.md#pausing-and-starting).
 
@@ -704,27 +733,32 @@ effects are not rolled back. Failed attach attempts invoke detach for cleanup.
 Frame errors stop scheduling to avoid repeated errors. Asynchronous source loads
 use latest-request-wins activation.
 
-`hg.App.serve(app, source)` compiles and replaces the app scene, awaiting graphics
+`hg.App.loadSource(app, source)` compiles and replaces the app scene, awaiting graphics
 initialization and checking the candidate when trace is enabled. Standalone
 compiler execution is internal to this staging pass.
 
-`hg.App.patch(app, source)` performs the same replacement while preserving
+`hg.App.patchSource(app, source)` performs the same replacement while preserving
 top-level data bindings by name. It skips retained initializers, initializes new
 names, omits removed names, and refreshes function/shader definitions and callbacks.
 Local bindings are not preserved. A retained value that fails the binding's new
 explicit type guard causes its new initializer to run; the replacement must pass
 the guard. Compatible and unannotated data remain preserved.
-Both operations retain `app.state` and app-owned resources. Use the plain `app.state`
+`hg.App.load(app, url)` fetches source and starts fresh bindings;
+`hg.App.patch(app, url)` fetches source and preserves compatible top-level data.
+All four operations share readiness, candidate validation, and latest-request-wins
+activation, and return promises resolving to the app. The fetched URL establishes
+the scene's origin for relative imports and loads.
+All four operations retain `app.state` and app-owned resources. Use the plain `app.state`
 dictionary for intentionally shared data across fresh scenes. JS and Lisp share
 its live values; separate apps start with separate dictionaries. Saving is explicit.
-See [serving and patching](./APP.md#serving-and-patching).
+See [loading and patching](./APP.md#loading-and-patching).
 
 `App.inspect(app)` returns a plain dictionary of live top-level binding handles
 keyed by name. `App.read(app, handle)` returns a binding's current value;
 `App.write(app, handle, value)` follows ordinary `set` mutability rules, without
 reapplying initializer assertions. These synchronous operations do not save or
 change source initializers. Handles follow committed patches, including
-reinitialization, but removal, fresh serving, and disposal invalidate them.
+reinitialization, but removal, fresh loading, and disposal invalidate them.
 See [live binding reflection](./APP.md#live-binding-reflection).
 
 Functions returned by `App.read` can be called normally. Alternatively,
@@ -741,7 +775,7 @@ Wrap a command in a function for temporary locals. Duplicate declarations remain
 errors; use `set` to update an existing mutable binding. Execution returns its final
 value (a promise when using top-level `await`), works while paused, and leaves completed
 effects in place if a later statement fails. Injected names absent from replacement
-source are removed by `patch`; `serve` starts fresh.
+source are removed by `patch`; `load` starts fresh.
 See [top-level execution](./APP.md#top-level-execution).
 
 ### Generic events and scene hooks
@@ -762,9 +796,15 @@ nested emissions queue behind the current emission. Duplicate registration of th
 same handler is harmless. A synchronous callback error discards queued emissions
 and propagates, leaving the dispatcher reusable. See [Events](./EVENTS.md).
 
-Selected Lisp forms may imply their owning app, as existing app-bound services
-already do; namespace operations continue to accept explicit instances.
-Additional shorthand forms are deferred for a later batch of functionality. See
+`(pause)`, `(start)`, `(load-source source)`, `(patch-source source)`, `(load url)`,
+`(patch url)`, and `(exec source)`
+operate on the app that owns their compiled code. They are ordinary callable
+bindings, including in modules, nested functions, and async continuations.
+`load-source`/`patch-source` also accept optional source options. URL shorthand
+resolves relative paths against the program that defined it, including in saved
+functions and modules. Namespace operations continue to accept explicit instances.
+The previous `serve` and `set-scene` bindings are removed.
+Further shorthand remains deferred. See
 [current-instance Lisp forms](./APP.md#current-instance-lisp-forms).
 
 ### Imports and scene paths
@@ -824,23 +864,25 @@ subsequent statements; an unawaited standalone import merges only when its
 promise resolves. Unknown merged names report runtime Lisp traces.
 
 ```lisp
-(await (set-scene "./scenes/menu.lisp"))
+(await (load "./scenes/menu.lisp"))
 ```
 
-`set-scene` loads a script as a scene, waits for its initialization, and installs
+`load` fetches a script as a scene, waits for its initialization, and installs
 its callbacks. All callbacks are optional; a script with none simply runs its
-initialization and stays idle. Each activation gets fresh scene locals, while
-imported modules stay shared. The existing scene keeps running during loading;
+initialization and stays idle. `load` starts fresh scene bindings; `patch` preserves
+compatible top-level data. Imported modules stay shared. Both use the same candidate
+validation as their source-text counterparts. The existing scene keeps running during loading;
 failed loads leave it active, and newer activation requests supersede older
 ones. Superseded initialization is not cancelled and its effects are not rolled
-back. JavaScript hosts fetch source explicitly and pass it to `hg.App.serve(app, source,
-{ sourceURL: url })`; the public load operation does not guess source versus path.
+back. JavaScript hosts use `hg.App.load`/`hg.App.patch` for URLs and
+`hg.App.loadSource`/`hg.App.patchSource` for text. Input kind follows the operation
+name rather than being guessed from string contents.
 
 Paths follow URL resolution: relative paths resolve against the importing
 script's URL, absolute URLs and root-relative paths are supported, and queries
 identify distinct modules. Fragments are ignored. Paths are exact: there is no
 extension guessing, directory search, or package-name resolver. The default
-base URL is the document's base URI. Pass `{ sourceURL: ... }` as the third argument to `hg.App.serve` to establish
+base URL is the document's base URI. Pass `{ sourceURL: ... }` as the third argument to `hg.App.loadSource` to establish
 the source origin.
 Imports inside a function retain the URL of the script that defined it.
 
@@ -1178,10 +1220,14 @@ first falsey operand or the last operand if all are truthy. `or` returns the fir
 truthy operand or the last operand if all are falsey. They return original values,
 including collection references, without copying or coercion. Empty `(and)`
 returns true and empty `(or)` returns false; unary forms return their operand.
-`not` remains strict boolean negation and requires exactly one boolean operand.
+`not` accepts exactly one operand, evaluates it once, and negates its language
+truthiness. It always returns a boolean.
 
 ```lisp
 (and true (not false)) ; true
+(not nil) ; true
+(not (list)) ; true
+(not 42) ; false
 (or false true) ; true
 (or nil "fallback") ; "fallback"
 (and 42 "result") ; "result"
@@ -1199,7 +1245,8 @@ Shader selector operands must share one type at compilation, including skipped
 branches: bools, scalars, vectors, or matrices. Boolean selectors emit native
 WGSL `&&`/`||`; numeric selectors use lifted functions with early returns to retain
 lazy evaluation. Vectors and matrices are always truthy, so `or` selects the first
-and `and` selects the last. `not` emits `!` and still requires a boolean.
+and `and` selects the last. `not` applies the same truthiness conversion as `bool`
+before emitting WGSL `!`, including active length for many values.
 Shader locals, helper parameters and returns, and assertions support `bool`.
 Boolean shader parameters and storage inputs containing boolean fields/elements
 are rejected, including nested structures. Supply numeric inputs and explicitly
@@ -1329,7 +1376,10 @@ Assignment shares a reference, so aliases see the change. Lists and vectors use
 zero-based integer indices. Matrices use flat column-major indices: column times
 dimension plus row. Out-of-range access or replacement throws. Numeric components
 must remain numbers. Missing dict keys return nil. `len` returns the number
-of elements, components, or dict keys.
+of elements, components, or dict keys; on strings it counts UTF-16 code units.
+`same?` compares identity, while `=` compares collection contents.
+`(keys dictionary)` returns a native list
+of its own string keys in ordinary JavaScript property order.
 
 To grow a list, use `(insert items value)` to append, or `(insert items value index)`
 to insert at a zero-based position and shift later elements right. The optional
@@ -1580,6 +1630,12 @@ shader numeric values. Shader `(get name)` and `(get name.x)` resolve typed valu
 and paths; `put` remains a host storage operation.
 
 ## Functions
+
+Ordinary host functions support a final `&rest` parameter, for example
+`(fn (first &rest items) ...body)`. It receives the remaining arguments as a native
+list, empty when omitted. Its optional type annotation must be `list`. Rest
+parameters also work in async functions; shader functions and scene hooks retain
+fixed parameter lists.
 
 Functions are values, defined with `fn` and a parenthesized parameter list.
 Everything after the parameter list is the body, with an implicit lexical scope.

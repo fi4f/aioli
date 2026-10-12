@@ -1,5 +1,6 @@
 import { Data } from './data.js';
 import { Structures } from './structures.js';
+const __shaderBindings__ = new WeakMap();
 
 function __bindTextShader__(shader, labels, parameterCount) {
   const hidden = labels.flatMap((label) => {
@@ -20,11 +21,13 @@ function __bindTextShader__(shader, labels, parameterCount) {
       ),
     ];
   });
-  return (context, ...args) => {
+  const bound = (context, ...args) => {
     if (args.length !== parameterCount)
       throw new TypeError(`Shader expects ${parameterCount} parameter arguments`);
     return shader(context, ...args, ...hidden);
   };
+  __shaderBindings__.set(bound, { shader, hidden, parameterCount });
+  return bound;
 }
 
 const __fontWeights__ = {
@@ -375,25 +378,37 @@ function __rasterizeText__(text, { maxSize = 8192, cache } = {}) {
   const content = text.runs.map((run) => run.text).join('');
   const [padX, padY] = text.padding;
   const innerWidth = text.width === null ? null : Math.max(0, text.width - 2 * padX);
+  // Index spans once. Scanning all spans for every line made viewport text quadratic.
+  const runEnds = [];
+  let runEnd = 0;
+  for (const run of text.runs) runEnds.push((runEnd += run.text.length));
+  const runAt = (index) => {
+    let low = 0,
+      high = runEnds.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (runEnds[middle] <= index) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  };
   const slices = (start, end) => {
-    let offset = 0;
-    return text.runs.flatMap((run) => {
+    const result = [];
+    for (let i = runAt(start); i < text.runs.length; i++) {
+      const offset = i ? runEnds[i - 1] : 0;
+      if (offset >= end) break;
+      const run = text.runs[i];
       const from = Math.max(0, start - offset),
         to = Math.min(run.text.length, end - offset);
-      offset += run.text.length;
-      return to > from ? [{ ...run, text: run.text.slice(from, to) }] : [];
-    });
+      if (to > from) result.push({ ...run, text: run.text.slice(from, to) });
+    }
+    return result;
   };
   const lines = [];
   let start = 0,
     end = 0;
   const styleAt = (index) => {
-    let offset = 0;
-    for (const run of text.runs) {
-      offset += run.text.length;
-      if (index < offset) return run;
-    }
-    return text.defaultStyle;
+    return text.runs[runAt(index)] ?? text.defaultStyle;
   };
   const appendLine = () => {
     const runs = slices(start, end),
@@ -629,6 +644,7 @@ function __rasterizeText__(text, { maxSize = 8192, cache } = {}) {
 
 export const Text = {
   bindTextShader: __bindTextShader__,
+  shaderBinding: (shader) => __shaderBindings__.get(shader),
   textNamedOptions: __textNamedOptions__,
   textOperations: __textOperations__,
   validateTextArity: __validateTextArity__,

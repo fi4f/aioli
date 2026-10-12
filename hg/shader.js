@@ -737,26 +737,11 @@ return homogeneous.${size === 2 ? 'xy' : 'xyz'} / homogeneous.${size === 2 ? 'z'
     if (name === 'bool') {
       if (args.length > 1) fail('bool expects at most one value', node);
       if (args.length === 0) return { code: 'false', type: 'bool' };
-      const candidate = expression(args[0]);
-      if (candidate.type?.kind === 'storage' && candidate.type.collection === 'many')
-        return {
-          code: `(frame.values[${candidate.resource.slot}].x != 0u)`,
-          type: 'bool',
-        };
-      const value = candidate;
-      if (
-        value.type === 'texture2d' ||
-        value.type?.kind === 'storage' ||
-        value.type?.kind === 'text'
-      )
-        fail('Expected a shader value, not a resource', args[0]);
-      return { code: boolCode(value.type, value.code), type: 'bool' };
+      return { code: __booleanExpression__(args[0]), type: 'bool' };
     }
     if (name === 'not') {
       if (args.length !== 1) fail('not expects exactly one operand', node);
-      const value = expression(args[0]);
-      if (value.type !== 'bool') fail('not requires a boolean operand', args[0]);
-      return { code: `(!${value.code})`, type: 'bool' };
+      return { code: `(!${__booleanExpression__(args[0])})`, type: 'bool' };
     }
     if (name === 'and' || name === 'or') {
       if (!args.length) return { code: name === 'and' ? 'true' : 'false', type: 'bool' };
@@ -1094,7 +1079,9 @@ return selected;
         code:
           scalar === 'f32' && Object.is(component, -0)
             ? '-0.0f'
-            : `${component}${scalar === 'i32' ? 'i' : scalar === 'u32' ? 'u' : 'f'}`,
+            : scalar === 'i32' && component === -2147483648
+              ? 'i32(-2147483648)'
+              : `${component}${scalar === 'i32' ? 'i' : scalar === 'u32' ? 'u' : 'f'}`,
         type: scalar === 'f32' ? 1 : scalar,
       };
     } catch (error) {
@@ -1106,9 +1093,10 @@ return selected;
     if (numericConversions.has(helper)) return helper;
     numericConversions.add(helper);
     // The upper thresholds are exclusive: f32 rounds each integer maximum up.
+    // Negate an abstract integer before converting: 2147483648i is out of range.
     helperCode.push(
       scalar === 'i32'
-        ? `fn clampI32(value: f32) -> i32 { if (value >= 2147483648f) { return 2147483647i; } if (value <= -2147483648f) { return -2147483648i; } return i32(trunc(value)); }`
+        ? `fn clampI32(value: f32) -> i32 { if (value >= 2147483648f) { return 2147483647i; } if (value <= -2147483648f) { return i32(-2147483648); } return i32(trunc(value)); }`
         : `fn clampU32(value: f32) -> u32 { if (value >= 4294967296f) { return 4294967295u; } if (value <= 0f) { return 0u; } return u32(trunc(value)); }`,
     );
     return helper;
@@ -1194,6 +1182,14 @@ return value[u32(index)];
 }`);
     }
     return { code: `${name}(${target.code}, ${index.code})`, type };
+  }
+  function __booleanExpression__(node) {
+    const value = expression(node);
+    if (value.type?.kind === 'storage' && value.type.collection === 'many')
+      return `(frame.values[${value.resource.slot}].x != 0u)`;
+    if (value.type === 'texture2d' || value.type?.kind === 'storage' || value.type?.kind === 'text')
+      fail('Expected a shader value, not a resource', node);
+    return boolCode(value.type, value.code);
   }
   function boolCode(type, code) {
     if (type === 'bool') return code;

@@ -255,7 +255,7 @@ export const AppCore = {
     source,
     sourceURL,
     executeScene = AppCore.execute,
-    commitBindings = SceneMemory.serve,
+    commitBindings = SceneMemory.load,
   ) {
     return Promises.registerPromise(
       Promise.resolve()
@@ -319,13 +319,15 @@ export const AppCore = {
             app.reloadPreparation = null;
             app.services.graphics.resetScene(app.graphics);
             const attach = scene.attach;
+            const hasAttach = Object.hasOwn(scene, 'attach');
             scene.attach = undefined;
             try {
               Scheduler.replace(app, scene);
               if (generation !== app.loadGeneration || app.destroyed || app.scene !== scene) return;
               commitBindings(app.__reflection__, scene);
             } finally {
-              scene.attach = attach;
+              if (hasAttach) scene.attach = attach;
+              else delete scene.attach;
             }
             app.source = program.source;
             app.sourceURL = program.sourceURL;
@@ -360,7 +362,7 @@ export const AppCore = {
       app.sourceURL = program.sourceURL;
       Scheduler.replace(app, scene);
       if (generation !== app.loadGeneration || app.destroyed || app.scene !== scene) return;
-      SceneMemory.serve(app.__reflection__, scene);
+      SceneMemory.load(app.__reflection__, scene);
       return scene;
     };
     const result = AppCore.execute(app, program);
@@ -369,15 +371,6 @@ export const AppCore = {
 
   setScene(app, source, options) {
     return AppCore.activate(app, AppCore.compileScene(app, source, options));
-  },
-
-  async load(app, path, options = {}) {
-    AppCore.cancelPreparation(app);
-    const generation = ++app.loadGeneration;
-    const url = Modules.resolve(app.modules, path, options.sourceURL ?? app.modules.baseURL);
-    const source = await Modules.read(app.modules, url);
-    if (generation !== app.loadGeneration || app.destroyed) return;
-    return AppCore.setScene(app, source, { ...options, sourceURL: url });
   },
 
   destroy(app) {
@@ -453,11 +446,17 @@ export const App = Data.registerHostData({
     app.ready.catch(() => {});
     return app;
   },
-  serve(app, source, options = {}) {
-    return __sourceRequest__(app, source, options, AppCore.reload, 'serve');
+  loadSource(app, source, options = {}) {
+    return __sourceRequest__(app, source, options, AppCore.reload, 'loadSource');
   },
-  patch(app, source, options = {}) {
-    return __sourceRequest__(app, source, options, AppCore.patch, 'patch');
+  patchSource(app, source, options = {}) {
+    return __sourceRequest__(app, source, options, AppCore.patch, 'patchSource');
+  },
+  load(app, url, options = {}) {
+    return __urlRequest__(app, url, options, AppCore.reload, 'load');
+  },
+  patch(app, url, options = {}) {
+    return __urlRequest__(app, url, options, AppCore.patch, 'patch');
   },
   inspect(app) {
     if (arguments.length !== 1) throw new TypeError('App.inspect expects exactly one app');
@@ -553,6 +552,7 @@ function __sourceRequest__(app, source, options, replace, operation) {
       await app.ready;
       if (app.destroyed) throw new Error('Mercury app has been disposed');
       if (generation !== app.requestGeneration) return app;
+      __prepareRequest__(app);
       await replace(
         app,
         source,
@@ -565,6 +565,44 @@ function __sourceRequest__(app, source, options, replace, operation) {
   );
 }
 
+function __prepareRequest__(app) {
+  const generation = ++app.loadGeneration;
+  AppCore.cancelPreparation(app);
+  // Obsolete asynchronous initialization must not leave candidate source published.
+  const program = SceneMemory.program(app.__reflection__.scene);
+  app.source = program?.source ?? '';
+  app.sourceURL = program?.sourceURL ?? '';
+  return generation;
+}
+
+function __urlRequest__(app, path, options, replace, operation) {
+  return Promises.registerPromise(
+    Promise.resolve().then(async () => {
+      if (!__isApp__(app)) throw new TypeError(`App.${operation} expects app data`);
+      if (typeof path !== 'string' || !path.length)
+        throw new TypeError(`App.${operation} expects a nonempty URL string`);
+      if (!options || typeof options !== 'object' || Array.isArray(options))
+        throw new TypeError(`App.${operation} expects URL options`);
+      for (const key of Object.keys(options))
+        if (key !== 'sourceURL') throw new TypeError(`Unknown ${operation} option: ${key}`);
+      const url = Modules.resolve(
+        app.modules,
+        path,
+        options.sourceURL ?? SceneMemory.sourceURL(app.__reflection__.scene) ?? app.modules.baseURL,
+      );
+      const request = (app.requestGeneration = (app.requestGeneration ?? 0) + 1);
+      await app.ready;
+      if (app.destroyed) throw new Error('Mercury app has been disposed');
+      if (request !== app.requestGeneration) return app;
+      const generation = __prepareRequest__(app);
+      const source = await Modules.read(app.modules, url);
+      if (request !== app.requestGeneration || generation !== app.loadGeneration) return app;
+      await replace(app, source, url);
+      return app;
+    }),
+  );
+}
+
 function __compileApp__(app, source, compiler, { trace = app.trace, sourceURL, environment } = {}) {
   if (app.destroyed) throw new Error('Mercury runtime has been destroyed.');
   if (!app.graphics) throw new Error('Attach a canvas before compiling a program.');
@@ -572,19 +610,57 @@ function __compileApp__(app, source, compiler, { trace = app.trace, sourceURL, e
   const hasSourceURL = sourceURL !== undefined;
   sourceURL = Modules.resolve(app.modules, sourceURL ?? app.modules.baseURL);
   const traceURL = hasSourceURL ? sourceURL : undefined;
+  // Callable shorthand retains this owner even when the Lisp app name is shadowed.
   const resourceBindings = {
     app,
+    pause: (...args) => {
+      if (args.length !== 0) throw new TypeError('pause expects no arguments');
+      return App.pause(app);
+    },
+    start: (...args) => {
+      if (args.length !== 0) throw new TypeError('start expects no arguments');
+      return App.start(app);
+    },
+    'load-source': (...args) => {
+      if (args.length < 1 || args.length > 2)
+        return Promises.registerPromise(
+          Promise.reject(
+            new TypeError('load-source expects source text and optional source options'),
+          ),
+        );
+      return App.loadSource(app, ...args);
+    },
+    'patch-source': (...args) => {
+      if (args.length < 1 || args.length > 2)
+        return Promises.registerPromise(
+          Promise.reject(
+            new TypeError('patch-source expects source text and optional source options'),
+          ),
+        );
+      return App.patchSource(app, ...args);
+    },
+    load: (...args) => {
+      if (args.length !== 1)
+        return Promises.registerPromise(
+          Promise.reject(new TypeError('load expects one URL string')),
+        );
+      return App.load(app, args[0], { sourceURL });
+    },
+    patch: (...args) => {
+      if (args.length !== 1)
+        return Promises.registerPromise(
+          Promise.reject(new TypeError('patch expects one URL string')),
+        );
+      return App.patch(app, args[0], { sourceURL });
+    },
+    exec: (...args) => {
+      if (args.length !== 1) throw new TypeError('exec expects one source text argument');
+      return App.exec(app, args[0]);
+    },
     import: (...args) => {
       if (args.length !== 1)
         return Promises.registerPromise(Promise.reject(new TypeError('import expects one path')));
       return Modules.import(app.modules, args[0], sourceURL);
-    },
-    'set-scene': (...args) => {
-      if (args.length !== 1)
-        return Promises.registerPromise(
-          Promise.reject(new TypeError('set-scene expects one path')),
-        );
-      return Promises.registerPromise(AppCore.load(app, args[0], { sourceURL }));
     },
   };
   let program;

@@ -552,6 +552,10 @@ export const TextProxy = {
   sync: __sync__,
   snapshot: __snapshot__,
   focus: __focus__,
+  blur(service) {
+    __check__(service);
+    if (service.target.ownerDocument.activeElement === service.target) service.target.blur();
+  },
   select: __select__,
   caret: __caret__,
   dispose: __dispose__,

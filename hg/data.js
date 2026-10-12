@@ -445,7 +445,14 @@ function __remove__(target, at) {
   __values__(target).splice(at, 1);
   return target;
 }
-function __equal__(left, right, seen = new Map()) {
+function __same__(left, right) {
+  if (arguments.length !== 2) throw new TypeError('same? expects exactly two values');
+  if (typeof left === 'number') NumericTypes.assertFinite(left, 'same? operand');
+  if (typeof right === 'number') NumericTypes.assertFinite(right, 'same? operand');
+  return Object.is(__normalizeNil__(left), __normalizeNil__(right));
+}
+
+function __equal__(left, right, seen) {
   if (typeof left === 'number') NumericTypes.assertFinite(left, '= operand');
   if (typeof right === 'number') NumericTypes.assertFinite(right, '= operand');
   if (Object.is(left, right)) return true;
@@ -467,6 +474,7 @@ function __equal__(left, right, seen = new Map()) {
       ).every(Boolean)
     );
   }
+  seen ??= new Map();
   if (seen.get(left)?.has(right)) return true;
   if (!seen.has(left)) seen.set(left, new Set());
   seen.get(left).add(right);
@@ -585,6 +593,7 @@ function __cap__(value) {
 }
 
 function __len__(value) {
+  if (typeof value === 'string') return value.length;
   const kind = __dataKind__(value);
   if (kind === 'list') return value.length;
   if (kind === 'dict') return Object.keys(__values__(value)).length;
@@ -603,6 +612,12 @@ function __len__(value) {
   return value.values.length;
 }
 
+function __keys__(value) {
+  if (arguments.length !== 1 || __dataKind__(value) !== 'dict')
+    throw new TypeError('keys expects one dictionary');
+  return Object.keys(__values__(value));
+}
+
 const __dataBindings__ = {
   list: __list__,
   dict: __dict__,
@@ -615,8 +630,10 @@ const __dataBindings__ = {
   in: __contains__,
   're-copy': (value) => __reCopy__(value),
   '=': (left, right) => __equal__(left, right),
+  'same?': __same__,
   cap: __cap__,
   len: __len__,
+  keys: __keys__,
   'to-json': __serializeData__,
   'from-json': __deserializeData__,
 };
@@ -650,11 +667,13 @@ export const Data = {
   insert: __insert__,
   remove: __remove__,
   equal: __equal__,
+  same: __same__,
   contains: __contains__,
   where: __where__,
   serializeData: __serializeData__,
   deserializeData: __deserializeData__,
   cap: __cap__,
   len: __len__,
+  keys: __keys__,
   dataBindings: __dataBindings__,
 };

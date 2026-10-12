@@ -36,6 +36,11 @@ metadata is excluded. `Data.deserializeData` parses ordinary JSON with finite
 number validation; tags remain payload and do not restore typed storage or aliases.
 Native resources, executables, and promises retain opaque lifetime rules.
 
+`(same? left right)` compares identity using native `Object.is`, normalizing missing
+values to nil and rejecting non-finite numbers. Use it for component nodes and
+namespaces. `(= left right)` retains structural equality. `(len string)` counts
+UTF-16 code units, matching native string length and text-proxy selection offsets.
+
 Runtime-created textures carry an own `__type__: '__texture2d__'` field. In Lisp,
 `image.__type__` and `(get image.__type__)` read that marker, including for registered
 caller-frozen handles without an own tag. Texture metadata is read-only through
@@ -48,7 +53,7 @@ access reads registered metadata. `App.inspect` enumerates handles, `App.read`
 reads the current cell, and `App.write` replaces its value using ordinary `set`
 mutability rules. Handles are opaque identity values for copying/equality, not
 dictionaries or serializable snapshots. References follow committed same-name
-patches, but removal, fresh serving, or disposal permanently invalidates them.
+patches, but removal, fresh loading, or disposal permanently invalidates them.
 Their kind remains `__binding__` after invalidation; read/write validate liveness
 and owner separately from type recognition.
 

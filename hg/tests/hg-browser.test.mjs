@@ -19,11 +19,11 @@ test('Mercury namespaces operate on explicit app data from JS and Lisp', { timeo
       const { default: hg } = await import('/hg/hg.js');
       const make = id => { const c = document.createElement('canvas'); c.id = id; c.width = 80; c.height = 60; document.body.append(c); return c; };
       const left = make('left'), right = make('right');
-      const newApp = hg.App.new, load = hg.App.serve, dispose = hg.App.dispose;
+      const newApp = hg.App.new, load = hg.App.loadSource, dispose = hg.App.dispose;
       const a = newApp({ c: 'left', w: 16, h: 12, si: 1, ups: 30 });
       const b = newApp({ c: right.getContext('2d'), ups: 120 });
       const synchronous = !(a instanceof Promise);
-      await load(a, '(set app.state.factory App.new) (set app.state.loader App.serve) (set app.state.identity app) (on render (c) (clear 1 0 0 1))');
+      await load(a, '(set app.state.factory App.new) (set app.state.loader App.loadSource) (set app.state.identity app) (on render (c) (clear 1 0 0 1))');
       await load(b, '(set app.state.count 0) (on update (c) (set app.state.count (+ app.state.count 1))) (on render (c) (clear 0 1 0 1))');
       const scene = a.scene;
       let error;
@@ -59,7 +59,7 @@ test('default presentation uses dynamic viewport units and cleans up owned canva
     assert.deepEqual(await page.evaluate(async () => {
       const { default: hg } = await import('/hg/hg.js');
       window.defaultApp = hg.App.new();
-      await hg.App.serve(defaultApp, '(on render (c) (clear 0 0 1 1))');
+      await hg.App.loadSource(defaultApp, '(on render (c) (clear 0 0 1 1))');
       const c = defaultApp.outerCanvas;
       return [c.style.width, c.style.height, c.width, c.height, !!document.fullscreenElement];
     }), ['100dvw', '100dvh', 900, 700, false]);

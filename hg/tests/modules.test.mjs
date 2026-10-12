@@ -21,7 +21,7 @@ function harness(files, options = {}) {
     }, ...options });
   runtime.graphics = {};
   runtime.services.graphics = { createText: (graphics, description) => description, createShader: () => { throw new Error('Unexpected shader'); },
-    resetScene() {}, destroy() {} };
+    resetScene() {}, destroy() {}, render: (graphics, callback) => callback(Data.dict()) };
   runtime.requestFrame = () => 1;
   runtime.cancelFrame = () => {};
   return { runtime, requests, events };
@@ -135,21 +135,23 @@ test('path-based scene activation runs fresh script state and shares imported li
     'https://example.test/app/scenes/idle.lisp': '(record "idle")',
   });
   try {
-    const a = await AppCore.run(runtime, '(await (set-scene "./scenes/menu.lisp"))');
-    assert.equal(a, runtime.scene);
-    assert.equal(a.render(null), 1);
+    assert.equal(await AppCore.run(runtime, '(await (load "./scenes/menu.lisp"))'), runtime);
+    const a = runtime.scene;
     assert.equal(a.render(null), 2);
-    const b = await AppCore.run(runtime, '(await (set-scene "./menu.lisp"))', { sourceURL: './scenes/controller.lisp' });
+    assert.equal(a.render(null), 3);
+    assert.equal(await AppCore.run(runtime, '(await (load "./menu.lisp"))', { sourceURL: './scenes/controller.lisp' }), runtime);
+    const b = runtime.scene;
     assert.notEqual(a, b);
-    assert.equal(b.render(null), 1);
+    assert.equal(b.render(null), 2);
     assert.deepEqual(events, ['library', 7, 7]);
     assert.equal(requests.filter(url => url.endsWith('/lib.lisp')).length, 1);
-    await assert.rejects(AppCore.run(runtime, '(await (set-scene "./missing.lisp"))'), /404/);
+    await assert.rejects(AppCore.run(runtime, '(await (load "./missing.lisp"))'), /404/);
     assert.equal(runtime.scene, b);
-    const idle = await AppCore.run(runtime, '(await (set-scene "./scenes/idle.lisp"))');
+    assert.equal(await AppCore.run(runtime, '(await (load "./scenes/idle.lisp"))'), runtime);
+    const idle = runtime.scene;
     assert.deepEqual(idle, {});
     assert.equal(runtime.scene, idle);
-    for (const source of ['(set-scene)', '(set-scene 1)']) await assert.rejects(AppCore.run(runtime, source));
+    for (const source of ['(load)', '(load 1)']) await assert.rejects(AppCore.run(runtime, source));
   } finally { AppCore.destroy(runtime); }
 });
 
@@ -228,14 +230,15 @@ test('newer scene requests supersede pending path loads without replacing the ac
   });
   try {
     const initial = AppCore.setScene(runtime,'(record "initial")');
-    const slow = AppCore.run(runtime, '(set-scene "./slow.lisp")');
+    const slow = AppCore.run(runtime, '(load "./slow.lisp")');
     await new Promise(resolve => setTimeout(resolve, 0));
     assert.equal(runtime.scene, initial);
-    const fast = await AppCore.run(runtime, '(set-scene "./fast.lisp")');
+    assert.equal(await AppCore.run(runtime, '(load "./fast.lisp")'), runtime);
+    const fast = runtime.scene;
     release('(record "superseded")');
-    assert.equal(await slow, undefined);
+    assert.equal(await slow, runtime);
     assert.equal(runtime.scene, fast);
-    await assert.rejects(AppCore.run(runtime, '(set-scene "./fail.lisp")'), /failed/);
+    await assert.rejects(AppCore.run(runtime, '(load "./fail.lisp")'), /failed/);
     assert.equal(runtime.scene, fast);
     assert.deepEqual(events, ['initial', 'fast']);
   } finally { AppCore.destroy(runtime); }

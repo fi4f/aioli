@@ -16,10 +16,10 @@ Booleans cannot cross the host/GPU boundary, including nested fields and collect
 `(type value)` returns a dunder type string; only scalar numbers share `"__num__"`, since their runtime representation is a JS number.
 Shader helpers capture lexical bindings; read-only captures pass by copy and captures possibly written by the helper or its callees use hidden WGSL pointers.
 Raw `js`/`gl` forms are deferred; their syntax and interop contracts remain open.
-Scene execution adopts fresh `App.serve` and preserving `App.patch` operations.
+Scene execution adopts fresh `App.loadSource` and preserving `App.patchSource` operations.
 Patches match top-level data bindings by name, skip compatible retained initializers,
 reinitialize values that fail a new explicit type guard, and replace function/shader
-definitions. See [the implemented contract](./APP.md#serving-and-patching).
+definitions. See [the implemented contract](./APP.md#loading-and-patching).
 Resource owners remain responsible for cleanup; removed or reinitialized scene
 bindings do not trigger resource disposal or transfer ownership.
 Use the existing plain per-app `app.state` dictionary for intentionally shared
@@ -27,7 +27,7 @@ data across scenes, with shared live values and explicit saving rather than a
 separate `Store` namespace.
 `App.pause` and `App.start` control automatic scheduling, preserving the scene and
 resources, avoiding duplicate loops and paused-time catch-up. Explicit pause survives
-`serve` and `patch`; reflection and explicit calls remain available. See
+`load` and `patch`; reflection and explicit calls remain available. See
 [pausing and starting](./APP.md#pausing-and-starting).
 
 Current pass: implement the plain Mercury App core and vanilla textarea/canvas
@@ -73,8 +73,10 @@ namespaces; instance data does not carry methods. JavaScript accesses namespaces
 through `hg` (for example, `hg.App.new`); Lisp refers to them directly (`App.new`).
 The namespace members, arguments, results, and operation semantics are the same.
 Selected Lisp forms may supply their owning app implicitly through compiler/runtime
-capture; namespace calls keep explicit instance arguments. Additional shorthand forms
-are deferred for a later batch of functionality. Scene `on` declarations are named runtime hooks; generic events
+capture; namespace calls keep explicit instance arguments. `pause`, `start`,
+`load-source`, `patch-source`, `load`, `patch`, and `exec` are implemented as
+app-capturing callable bindings; additional
+shorthand remains deferred. Scene `on` declarations are named runtime hooks; generic events
 use the implemented independent [Events namespace](./EVENTS.md).
 The `hg` prefix is JS module packaging, not part of Lisp names and not an implicit
 current app. No camelCase/kebab-case alias system is needed. The earlier proposed
@@ -138,28 +140,31 @@ false; non-booleans, including null/nil, are rejected. Changes apply at the next
 frame boundary and trigger presentation even without a new scene draw.
 
 The synchronous call returns app data. GPU creation is asynchronous. The implemented
-`App.serve` and `App.patch` await the app's `ready` promise. Reading app data never performs
+`App.loadSource` and `App.patchSource` await the app's `ready` promise. Reading app data never performs
 initialization. Initialization failures reject readiness/loading and are retained
 on the app; unobserved rejection is prevented without discarding the failure.
 
 ## Explicit operation target
 
-The corrected namespace signature is `hg.App.serve(app, source)`. Its target is
+The corrected namespace signature is `hg.App.loadSource(app, source)`. Its target is
 explicit. There is no global application state or dynamically selected current app;
 selected Lisp forms can capture their owning runtime:
 
 ```js
-await hg.App.serve(app, source);
+await hg.App.loadSource(app, source);
 ```
 
 ```lisp
-(await (App.serve app source))
+(await (App.loadSource app source))
 ```
 
-The explicit target is agreed. The implemented promise resolves to the app;
-Both operations take source text, optionally with a source URL in their third argument.
-JS hosts fetch files explicitly. Do not infer source versus URL from string
-contents or add a current-app binding/overload omitting the app.
+The explicit target is agreed. `App.loadSource` and `App.patchSource` take source
+text, optionally with `{ sourceURL }` in their third argument. `App.load` and
+`App.patch` fetch URLs and use the same fresh/preserving replacement lifecycle.
+All four return promises resolving to the app and share request supersession.
+Do not infer source versus URL from string contents or add a current-app
+namespace overload omitting the app. Lisp URL shorthand captures the defining
+program's origin for relative paths.
 
 The `hg` namespace contains operations, not hidden app state. Execution state,
 clocks, module caches, and ownership live with explicit app data or explicitly
@@ -256,7 +261,7 @@ and active call frames remain deferred. Adopt live binding references for reflec
 `App.write` explicitly replaces binding values. Inspection entries are not copied
 values presented as live storage. Binding references follow same-name bindings
 through committed patches, including reinitialized values and replaced code
-definitions. Removing a binding, serving a fresh scene, or disposing the app
+definitions. Removing a binding, loading a fresh scene, or disposing the app
 permanently invalidates its old references; reintroducing a name does not revive
 them. Uncommitted candidate scenes do not change active references.
 Implemented: inspection returns a plain dictionary keyed by name containing

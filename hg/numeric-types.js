@@ -12,10 +12,30 @@ const __typeAliases__ = Object.fromEntries(
     [`mat${size}`, `mat${size}x${size}f`],
   ]),
 );
-const __canonicalType__ = (type) =>
-  typeof type === 'string'
-    ? type.replace(/\b(?:vec[234]|mat[234])\b/g, (name) => __typeAliases__[name])
-    : type;
+const __canonicalNames__ = new Set([
+  ...__scalarTypes__,
+  ...__vectorTypes__,
+  ...__matrixTypes__,
+  'num',
+  'str',
+  'bool',
+  'nil',
+  'function',
+  'promise',
+  'error',
+  'texture2d',
+  'binding',
+  'list',
+  'dict',
+  'struct',
+  'array',
+  'many',
+]);
+const __canonicalType__ = (type) => {
+  if (typeof type !== 'string' || __canonicalNames__.has(type)) return type;
+  if (Object.hasOwn(__typeAliases__, type)) return __typeAliases__[type];
+  return type.replace(/\b(?:vec[234]|mat[234])\b/g, (name) => __typeAliases__[name]);
+};
 const __matrixDimensions__ = Object.assign(Object.create(null), {
   mat2x2f: 2,
   mat3x3f: 3,

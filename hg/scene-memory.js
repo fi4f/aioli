@@ -8,6 +8,7 @@ const __mutable__ = new WeakMap();
 const __definitions__ = new WeakMap();
 const __imports__ = new WeakMap();
 const __sourceURLs__ = new WeakMap();
+const __programs__ = new WeakMap();
 const __references__ = new WeakMap();
 
 function __reference__(reflection, name, cell) {
@@ -71,6 +72,9 @@ export const SceneMemory = {
   },
   sourceURL(scene) {
     return __sourceURLs__.get(scene);
+  },
+  program(scene) {
+    return __programs__.get(scene);
   },
   execution(reflection, alive) {
     const scene = reflection.scene;
@@ -137,6 +141,7 @@ export const SceneMemory = {
     if (imported) memory.imports.push(imported);
     __imports__.set(scene, memory.imports);
     __sourceURLs__.set(scene, memory.sourceURL);
+    __programs__.set(scene, memory.program);
     __previous__.set(scene, memory.previousScene);
     memory.previous = undefined;
     memory.previousScene = undefined;
@@ -145,7 +150,7 @@ export const SceneMemory = {
   reflection() {
     return { scene: null, bindings: new Map() };
   },
-  serve(reflection, scene) {
+  load(reflection, scene) {
     __commit__(reflection, scene, new Map());
   },
   patch(reflection, scene) {
@@ -156,7 +161,7 @@ export const SceneMemory = {
     );
   },
   clear(reflection) {
-    SceneMemory.serve(reflection, null);
+    SceneMemory.load(reflection, null);
   },
   inspect(reflection) {
     const result = Data.dict();

@@ -59,12 +59,29 @@ const __forms__ = {
   },
   not(args, emit, context) {
     if (args.length !== 1) throw new SyntaxError('not expects exactly one operand');
-    return `(!${__boolOperand__('not', args[0], 0, emit, context)})`;
+    return `(!${context.condition(args[0])})`;
   },
   sh(args, emit, context) {
     return context.shader(context.node);
   },
   on(args, emit, context) {
+    // In value position, construct a Lisp-owned component handler. Scene hooks
+    // retain their statement-only contract and their fixed parameter limits.
+    if (!context.inStatement) {
+      if (args.length === 2 && args[1]?.kind === 'list' && args[1].items[0]?.name === 'fn') {
+        const [, parameters, ...body] = args[1].items;
+        if (parameters?.kind !== 'list')
+          throw new SyntaxError('fn handler expects a parameter list');
+        return context.handler(args[0], parameters.items, body);
+      }
+      if (args.length === 2 && args[1]?.kind === 'list' && args[1].items[0]?.name === 'async')
+        return context.handlerValue(args[0], args[1]);
+      if (args.length === 2 && ['symbol', 'access'].includes(args[1]?.kind))
+        return context.handlerValue(args[0], args[1]);
+      if (args.length < 2 || args[1]?.kind !== 'list')
+        throw new SyntaxError('on handler expects a name, parameter list, and body');
+      return context.handler(args[0], args[1].items, args.slice(2));
+    }
     if (args.length === 2 && args[1]?.kind === 'list' && args[1].items[0]?.name === 'fn') {
       const [, parameters, ...body] = args[1].items;
       if (parameters?.kind !== 'list')
@@ -141,15 +158,6 @@ function __loopForm__(name) {
     if (!context.inStatement) throw new SyntaxError(`${name} requires statement position`);
     return context.loop(name, args);
   };
-}
-
-function __boolOperand__(name, node, index, emit, context) {
-  return context.assertion(
-    emit(node),
-    { kind: 'symbol', name: 'bool', start: node.start, end: node.end },
-    `${name} operand ${index + 1}`,
-    node,
-  );
 }
 
 // Register block declarations before emission to preserve JavaScript's TDZ.

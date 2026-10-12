@@ -1,15 +1,77 @@
 <!doctype html>
 <html lang="en">
-  <meta charset="utf-8">
+  <meta charset="utf-8" />
   <title>Mercury</title>
-  <textarea id="source" rows="12" cols="80" aria-label="Lisp source" spellcheck="false">; Serve starts fresh bindings. Patch preserves top-level data.
+  <textarea id="source" rows="12" cols="80" aria-label="Lisp source" spellcheck="false">
+; Load source starts fresh bindings. Patch source preserves top-level data.
 ; Rendering receives the app's dimensions and clock.
 (on render (context)
   ((sh ()
     (return (vec4f uv 0 1))) context))</textarea>
-  <button id="run" type="button">Serve</button>
-  <button id="patch" type="button">Patch</button>
+  <button id="run" type="button">Load source</button>
+  <button id="patch" type="button">Patch source</button>
   <pre id="error" role="alert"></pre>
   <canvas id="canvas" width="640" height="480" aria-label="Graphics output"></canvas>
+  <section aria-labelledby="inspection-heading">
+    <h2 id="inspection-heading">Inspection</h2>
+    <p id="inspection-status" role="status">Load or patch source to inspect it.</p>
+    <button id="refresh-inspection" type="button">Refresh inspection</button>
+    <details id="javascript-inspection">
+      <summary>Compiled JavaScript</summary>
+      <textarea
+        id="compiled-javascript"
+        rows="18"
+        cols="100"
+        readonly
+        spellcheck="false"
+        aria-label="Compiled JavaScript"
+      ></textarea>
+    </details>
+    <details id="wgsl-inspection">
+      <summary>Compiled WGSL</summary>
+      <textarea
+        id="compiled-wgsl"
+        rows="18"
+        cols="100"
+        readonly
+        spellcheck="false"
+        aria-label="Compiled WGSL"
+      ></textarea>
+    </details>
+    <details id="bindings-inspection">
+      <summary>Bindings</summary>
+      <h3>Scene bindings</h3>
+      <p>Top-level bindings from the active scene. Refresh to read their current values.</p>
+      <p>Large values have bounded previews; promises and host records are shown as summaries.</p>
+      <p id="scene-bindings-status"></p>
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">Type</th>
+            <th scope="col">Value</th>
+          </tr>
+        </thead>
+        <tbody id="scene-bindings"></tbody>
+      </table>
+      <details>
+        <summary>Compiler bindings</summary>
+        <p>
+          Supplied bindings used by the generated JavaScript. Identifiers match its declarations.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Identifier</th>
+              <th scope="col">Name</th>
+              <th scope="col">Type</th>
+              <th scope="col">Value</th>
+            </tr>
+          </thead>
+          <tbody id="compiler-bindings"></tbody>
+        </table>
+      </details>
+    </details>
+  </section>
   <script type="module" src="./index.js"></script>
 </html>

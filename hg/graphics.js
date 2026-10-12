@@ -60,7 +60,18 @@ async function __createGraphics__(
   service.pools = [[], []];
   service.slots = [];
   service.cache = new WeakMap();
+  service.__layers__ = new WeakMap();
+  service.__replaceTarget__ = { format: service.format };
+  service.__layerTarget__ = {
+    format: service.format,
+    blend: {
+      color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+      alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+    },
+  };
   service.handles = new WeakMap();
+  service.__views__ = new WeakMap();
+  service.__presentGroups__ = new WeakMap();
   service.textCache = new Map();
   service.persistentTextures = new Set();
   service.textCacheBytes = 0;
@@ -79,19 +90,13 @@ async function __createGraphics__(
       service.reportError(new Error(`WebGPU device lost: ${info.message || info.reason}`));
   });
   service.device.addEventListener('uncapturederror', (event) => service.reportError(event.error));
-  service.fill = __createShader__(service, {
-    uniforms: ['red', 'green', 'blue', 'alpha'].map((name) => ({ name, type: 'f32' })),
-    wgsl: `${Shader.vertexWGSL}
-      struct Frame { data: vec4f, values: array<vec4f, 4>, }
-      @group(0) @binding(0) var<uniform> frame: Frame;
-      @fragment fn fragment() -> @location(0) vec4f {
-        return vec4f(frame.values[0].x, frame.values[1].x, frame.values[2].x, frame.values[3].x);
-      }`,
-    source: '',
-    start: 0,
-    end: 0,
-  });
-  service.bindings = { clear: (...color) => __clear__(service, ...color) };
+  service.bindings = {
+    clear: (...color) => __clear__(service, ...color),
+    layer: (context, bounds, shader, ...values) =>
+      __layer__(service, context, bounds, shader, values),
+    'layer-regions': (context, regions, shader, ...values) =>
+      __layerRegions__(service, context, regions, shader, values),
+  };
   __render__(service, null);
   return service;
 }
@@ -144,12 +149,12 @@ function __target__(service, pool, index) {
   return service.pools[pool][index];
 }
 
-function __pass__(service, encoder, output, pipeline, group) {
+function __pass__(service, encoder, output, pipeline, group, clearValue = [0, 0, 0, 1]) {
   const renderPass = encoder.beginRenderPass({
     colorAttachments: [
       {
-        view: output.createView(),
-        clearValue: [0, 0, 0, 1],
+        view: __view__(service, output),
+        clearValue,
         loadOp: 'clear',
         storeOp: 'store',
       },
@@ -163,13 +168,25 @@ function __pass__(service, encoder, output, pipeline, group) {
   renderPass.end();
 }
 
+function __view__(service, texture) {
+  if (!service.__views__.has(texture)) service.__views__.set(texture, texture.createView());
+  return service.__views__.get(texture);
+}
+
+function __encoder__(service, frame) {
+  return (frame.encoder ??= service.device.createCommandEncoder());
+}
+
 function __present__(service, encoder, texture) {
-  const group = texture
-    ? service.device.createBindGroup({
+  if (texture && !service.__presentGroups__.has(texture))
+    service.__presentGroups__.set(
+      texture,
+      service.device.createBindGroup({
         layout: service.presentPipeline.getBindGroupLayout(0),
-        entries: [{ binding: 0, resource: texture.createView() }],
-      })
-    : null;
+        entries: [{ binding: 0, resource: __view__(service, texture) }],
+      }),
+    );
+  const group = texture ? service.__presentGroups__.get(texture) : null;
   __pass__(
     service,
     encoder,
@@ -203,8 +220,8 @@ function __createShader__(service, descriptor) {
         `Shader parameter ${parameter.name}: booleans cannot cross the host/GPU boundary`,
       );
   if (service.cache.has(descriptor)) return service.cache.get(descriptor);
-  let pipeline = null,
-    failure = null;
+  const pipelines = new Map();
+  let failure = null;
   const resources = descriptor.uniforms.filter(
     (parameter) => parameter.type === 'texture2d' || parameter.kind === 'storage',
   );
@@ -213,7 +230,7 @@ function __createShader__(service, descriptor) {
   const hasAutomatic = descriptor.uniforms.some((parameter) => parameter.automatic);
   const hasSampler =
     descriptor.hasSampler ?? resources.some((parameter) => parameter.type === 'texture2d');
-  const shader = (frameContext, ...values) => {
+  const prepare = (frameContext, values, target) => {
     __available__(service);
     if (!service.activeFrame || frameContext !== service.activeFrame.context)
       throw new Error('Shader calls require the current render context.');
@@ -281,6 +298,7 @@ function __createShader__(service, descriptor) {
       }
     }
     if (failure) throw failure;
+    let pipeline = pipelines.get(target);
     if (!pipeline) {
       service.device.pushErrorScope('validation');
       try {
@@ -315,8 +333,9 @@ function __createShader__(service, descriptor) {
         pipeline = service.device.createRenderPipeline({
           layout: service.device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
           vertex: { module, entryPoint: 'vertex' },
-          fragment: { module, entryPoint: 'fragment', targets: [{ format: service.format }] },
+          fragment: { module, entryPoint: 'fragment', targets: [target] },
         });
+        pipelines.set(target, pipeline);
         service.stats.shaderCompilations++;
       } finally {
         service.device.popErrorScope().then((error) => {
@@ -355,6 +374,7 @@ function __createShader__(service, descriptor) {
         }),
         groups: new Map(),
         storage: new Map(),
+        data: new Float32Array(size / 4),
       };
     }
     const slot = service.slots[index];
@@ -381,8 +401,9 @@ function __createShader__(service, descriptor) {
       }
       inputs[resourceIndex] = cached.buffer;
     }
-    const data = new Float32Array(size / 4);
-    const integerData = new DataView(data.buffer);
+    const data = slot.data;
+    const integerData = (slot.__integers__ ??= new DataView(data.buffer));
+    data.fill(0);
     data.set([service.width, service.height, frame.t, frame.dt]);
     let uniformIndex = 0;
     descriptor.uniforms.forEach((parameter, i) => {
@@ -428,7 +449,8 @@ function __createShader__(service, descriptor) {
             { binding: 0, resource: { buffer: slot.buffer } },
             ...inputs.map((input, i) => ({
               binding: i + 1,
-              resource: resources[i].kind === 'storage' ? { buffer: input } : input.createView(),
+              resource:
+                resources[i].kind === 'storage' ? { buffer: input } : __view__(service, input),
             })),
             ...(hasSampler ? [{ binding: resources.length + 1, resource: service.sampler }] : []),
           ],
@@ -436,8 +458,14 @@ function __createShader__(service, descriptor) {
       };
       slot.groups.set(pipeline, cached);
     }
-    const texture = __target__(service, frame.pool, index);
-    __pass__(service, frame.encoder, texture, pipeline, cached.group);
+    return { pipeline, group: cached.group, inputs };
+  };
+  const shader = (frameContext, ...values) => {
+    const draw = prepare(frameContext, values, service.__replaceTarget__);
+    const frame = service.activeFrame;
+    __finishLayers__(service, frame);
+    const texture = __target__(service, frame.pool, frame.targetCount++);
+    __pass__(service, __encoder__(service, frame), texture, draw.pipeline, draw.group);
     frame.output = texture;
     const handle = Types.textureHandle(service.width, service.height);
     service.handles.set(handle, { texture, frame });
@@ -445,7 +473,95 @@ function __createShader__(service, descriptor) {
     return handle;
   };
   service.cache.set(descriptor, shader);
+  service.__layers__.set(shader, { prepare, descriptor });
   return shader;
+}
+
+function __finishLayers__(service, frame) {
+  frame.__layerPass__?.end();
+  frame.__layerPass__ = null;
+  if (frame.__clearColor__) {
+    __pass__(service, __encoder__(service, frame), frame.output, null, null, frame.__clearColor__);
+    frame.__clearColor__ = null;
+  }
+}
+
+// Generic clipped shader composition. UI layout and paint policy stay in Lisp.
+function __layer__(service, context, bounds, shader, values) {
+  return __layerRegions__(service, context, [bounds], shader, values);
+}
+
+function __layerRegions__(service, context, regions, shader, values) {
+  __available__(service);
+  const frame = service.activeFrame;
+  if (!frame || frame.context !== context)
+    throw new Error('layer requires the current render context');
+  Types.assertType(regions, 'list', 'layer-regions bounds');
+  const bound = Text.shaderBinding(shader);
+  if (bound) {
+    if (values.length !== bound.parameterCount)
+      throw new TypeError(`Shader expects ${bound.parameterCount} parameter arguments`);
+    values = [...values, ...bound.hidden];
+    shader = bound.shader;
+  }
+  const registered = service.__layers__.get(shader);
+  if (!registered) throw new TypeError('layer expects a shader from this runtime');
+  if (
+    registered.descriptor.uniforms.some(
+      (parameter) => parameter.automatic && parameter.name === 'before',
+    )
+  )
+    throw new TypeError(
+      'layer shaders cannot sample before; return a straight-alpha color instead',
+    );
+  const clips = [];
+  for (const bounds of Data.values(regions)) {
+    Types.assertType(bounds, 'vec4f', 'layer bounds');
+    // Pixel centers decide coverage. Shared fractional boundaries must not overlap.
+    const x = Math.max(0, Math.min(service.width, Math.ceil(bounds.x - 0.5)));
+    const y = Math.max(0, Math.min(service.height, Math.ceil(bounds.y - 0.5)));
+    const right = Math.max(
+      x,
+      Math.min(service.width, Math.ceil(bounds.x + Math.max(0, bounds.z) - 0.5)),
+    );
+    const bottom = Math.max(
+      y,
+      Math.min(service.height, Math.ceil(bounds.y + Math.max(0, bounds.w) - 0.5)),
+    );
+    if (right !== x && bottom !== y) clips.push([x, y, right - x, bottom - y]);
+  }
+  if (!clips.length) return null;
+  const draw = registered.prepare(context, values, service.__layerTarget__);
+  if (draw.inputs.includes(frame.output))
+    throw new TypeError('layer cannot sample the texture it is painting');
+  if (!frame.__layerPass__) {
+    const existing = frame.output;
+    frame.output ??= __target__(service, frame.pool, frame.targetCount++);
+    frame.__layerPass__ = __encoder__(service, frame).beginRenderPass({
+      colorAttachments: [
+        {
+          view: __view__(service, frame.output),
+          clearValue: frame.__clearColor__ || [0, 0, 0, 0],
+          loadOp: frame.__clearColor__ || !existing ? 'clear' : 'load',
+          storeOp: 'store',
+        },
+      ],
+    });
+    frame.__clearColor__ = null;
+    if (!existing) {
+      const handle = Types.textureHandle(service.width, service.height);
+      service.handles.set(handle, { texture: frame.output, frame });
+      Data.put(frame.context, 'before', handle);
+    }
+  }
+  const pass = frame.__layerPass__;
+  pass.setPipeline(draw.pipeline);
+  pass.setBindGroup(0, draw.group);
+  for (const clip of clips) {
+    pass.setScissorRect(...clip);
+    pass.draw(3);
+  }
+  return null;
 }
 
 function __render__(service, callback, dt = 0, t = 0) {
@@ -455,9 +571,10 @@ function __render__(service, callback, dt = 0, t = 0) {
   __resize__(service);
   const frame = {
     context: Data.dict('t', t, 'dt', dt, 'w', service.width, 'h', service.height),
-    encoder: service.device.createCommandEncoder(),
+    encoder: null,
     pool: service.completed ? 1 - service.completed.pool : 0,
     drawCount: 0,
+    targetCount: 0,
     output: null,
     dt,
     t,
@@ -471,12 +588,14 @@ function __render__(service, callback, dt = 0, t = 0) {
   service.activeFrame = frame;
   try {
     callback?.(frame.context);
+    __finishLayers__(service, frame);
     if (!frame.output && service.completed && !service.needsPresent()) return;
-    __present__(service, frame.encoder, frame.output || service.completed?.texture);
+    __present__(service, __encoder__(service, frame), frame.output || service.completed?.texture);
     service.device.queue.submit([frame.encoder.finish()]);
     if (frame.output) service.completed = { texture: frame.output, pool: frame.pool };
     service.painted?.();
   } catch (error) {
+    __finishLayers__(service, frame);
     // Discard recorded passes and keep the last completed image visible.
     const encoder = service.device.createCommandEncoder();
     __present__(service, encoder, service.completed?.texture);
@@ -514,8 +633,21 @@ function __clear__(service, ...color) {
       throw new TypeError(`clear: channel ${i + 1} must be a finite number between 0 and 1`);
     }
   }
-  if (service.activeFrame) return service.fill(service.activeFrame.context, ...color);
-  __render__(service, (frame) => service.fill(frame, ...color));
+  if (service.activeFrame) return __clearFrame__(service, color);
+  __render__(service, () => __clearFrame__(service, color));
+}
+
+function __clearFrame__(service, color) {
+  const frame = service.activeFrame;
+  __finishLayers__(service, frame);
+  const texture = __target__(service, frame.pool, frame.targetCount++);
+  frame.output = texture;
+  // The first layer can consume this clear in its own pass. Ordinary shader reads flush it first.
+  frame.__clearColor__ = color;
+  const handle = Types.textureHandle(service.width, service.height);
+  service.handles.set(handle, { texture, frame });
+  Data.put(frame.context, 'before', handle);
+  return handle;
 }
 
 function __createText__(service, text) {
@@ -625,4 +757,8 @@ export const Graphics = {
   resetScene: __resetScene__,
   destroy: __destroy__,
   clear: __clear__,
+  layer: (service, context, bounds, shader, ...values) =>
+    __layer__(service, context, bounds, shader, values),
+  layerRegions: (service, context, regions, shader, ...values) =>
+    __layerRegions__(service, context, regions, shader, values),
 };

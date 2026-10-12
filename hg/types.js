@@ -151,10 +151,20 @@ function __assertType__(value, type, label = 'Value') {
   return value;
 }
 
-function __parseParameters__(nodes, { required = false, types = __typeNames__, fail } = {}) {
+function __parseParameters__(
+  nodes,
+  { required = false, rest = false, types = __typeNames__, fail } = {},
+) {
   const result = [];
   for (let i = 0; i < nodes.length;) {
-    const node = nodes[i++];
+    let node = nodes[i++];
+    const isRest = node.kind === 'symbol' && node.name === '&rest';
+    if (isRest) {
+      if (!rest) fail('Rest parameters are not supported here', node);
+      const marker = node;
+      node = nodes[i++];
+      if (node?.kind !== 'symbol') fail('Expected a parameter name after &rest', node || marker);
+    }
     if (node.kind !== 'symbol') fail('Expected a parameter name', node);
     let annotation = null;
     if (nodes[i]?.kind === 'colon') {
@@ -170,9 +180,13 @@ function __parseParameters__(nodes, { required = false, types = __typeNames__, f
           annotation,
         );
     } else if (required) fail(`Expected colon after parameter ${node.name}`, nodes[i] || node);
+    if (isRest && i !== nodes.length) fail('Rest parameter must be last', nodes[i]);
+    if (isRest && annotation && annotation.name !== 'list')
+      fail('Rest parameter type must be list', annotation);
     result.push({
       name: node.name,
       type: annotation?.name || null,
+      rest: isRest,
       node,
       start: node.start,
       end: annotation?.end || node.end,

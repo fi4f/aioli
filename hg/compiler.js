@@ -463,6 +463,20 @@ function __compileProgram__(
         .join('\n');
       return `(function() {\n${declarations}\nreturn $text.bind($shaders[${index}], [${texts.map((text) => text.identifier).join(', ')}], ${descriptor.parameterCount});\n})()`;
     },
+    handler(nameNode, parameters, body, asynchronous = false) {
+      const name =
+        nameNode?.kind === 'literal' && typeof nameNode.value === 'string'
+          ? nameNode.value
+          : symbolName(nameNode);
+      return `${lookup('ui-on').identifier}(${JSON.stringify(name)}, ${context.function(parameters, body, asynchronous)})`;
+    },
+    handlerValue(nameNode, value) {
+      const name =
+        nameNode?.kind === 'literal' && typeof nameNode.value === 'string'
+          ? nameNode.value
+          : symbolName(nameNode);
+      return `${lookup('ui-on').identifier}(${JSON.stringify(name)}, ${emit(value)})`;
+    },
     callback(nameNode, parameters, body, asynchronous = false) {
       if (!scene && !module) throw new SyntaxError('on requires scene or module compilation');
       if (scopes.length !== 2 || functionDepth)
@@ -668,6 +682,7 @@ function __compileProgram__(
       const scope = new Map();
       const checks = [];
       const parsed = Types.parseParameters(parameters, {
+        rest: true,
         fail: (message, node) => {
           throw Trace.locate(new SyntaxError(message), source, node.start, node.end);
         },
@@ -694,8 +709,9 @@ function __compileProgram__(
           );
         }
       }
-      const identifiers = [...scope].map(
-        ([name, variable]) => `${Codegen.nameComment(name)} ${variable.identifier} = null`,
+      const identifiers = parsed.map(
+        (parameter) =>
+          `${Codegen.nameComment(parameter.name)} ${parameter.rest ? '...' : ''}${scope.get(parameter.name).identifier}${parameter.rest ? '' : ' = null'}`,
       );
       functionDepth++;
       const savedAsync = asyncFunction;
@@ -706,7 +722,7 @@ function __compileProgram__(
       loopDepth = 0;
       try {
         const code = `(${asynchronous ? 'async ' : ''}function(${identifiers.join(', ')}) {\n${checks.join('\n')}\n${sequence(body, true, scope)}\nreturn null;\n})`;
-        return `$promises.define(${code}, ${parsed.length}, ${asynchronous})`;
+        return `$promises.define(${code}, ${parsed.at(-1)?.rest ? 'Infinity' : parsed.length}, ${asynchronous})`;
       } finally {
         functionDepth--;
         loopDepth = savedLoopDepth;
@@ -1074,6 +1090,7 @@ function __execute__(program, shaderValues, memory) {
 function __run__(program, shaderValues = [], previousScene) {
   const memory = SceneMemory.new(previousScene);
   memory.sourceURL = program.sourceURL;
+  memory.program = program;
   return __execute__(program, shaderValues, memory);
 }
 

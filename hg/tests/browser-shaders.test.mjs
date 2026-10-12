@@ -87,7 +87,7 @@ test('dynamic imports share writable namespaces and loaded scenes use imported G
       await AppCore.attach(other,otherCanvas);
       await AppCore.run(runtime, '(let colors (await (import "./lib/color.lisp"))) (set colors.color (vec4 0 1 0 1))');
       const independent = await AppCore.run(other, '(await (import "./lib/color.lisp"))');
-      await AppCore.run(runtime, '(await (set-scene "./scenes/menu.lisp"))');
+      await AppCore.run(runtime, '(await (load "./scenes/menu.lisp"))');
       Scheduler.stop(runtime); Scheduler.frame(runtime,0);
       globalThis.moduleTest = { runtime, other, errors };
       return { shared: same === effects, independent: Array.from(Data.values(Data.values(independent).color)),

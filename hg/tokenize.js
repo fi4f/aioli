@@ -3,13 +3,27 @@ import { Bindings } from './bindings.js';
 import { Text } from './text.js';
 import { Forms } from './forms.js';
 
-const __keywords__ = new Set([...Object.keys(Forms), 'elif', 'else', 'then', 'catch', 'finally']);
+const __keywords__ = new Set([
+  ...Object.keys(Forms),
+  '&rest',
+  'elif',
+  'else',
+  'then',
+  'catch',
+  'finally',
+]);
 const __builtins__ = new Set([
   ...Object.keys(Bindings),
   ...Text.textOperations,
   'sample',
   'import',
-  'set-scene',
+  'load',
+  'load-source',
+  'patch',
+  'patch-source',
+  'pause',
+  'start',
+  'exec',
 ]);
 const __types__ =
   /^(?:num|f32|i32|u32|str|bool|nil|function|promise|error|list|dict|struct|array|many|texture2d|vec[234](?:[fiu])?|mat[234](?:x[234]f)?)$/;

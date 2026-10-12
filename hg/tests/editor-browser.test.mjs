@@ -109,7 +109,7 @@ test('Mayo renders its own editor on canvas and reloads itself after Lisp deboun
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
-    await page.goto(new URL('/editor/index.html', process.env.AIOLI_URL || 'http://localhost:3000').href);
+    await page.goto(new URL('/editor.html', process.env.AIOLI_URL || 'http://localhost:3000').href);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -235,7 +235,7 @@ test('Mayo preserves small wheel deltas, clamps fast scrolling, and respects whe
       let passes = 0;
       const begin = GPUCommandEncoder.prototype.beginRenderPass;
       GPUCommandEncoder.prototype.beginRenderPass = function(...args) { passes++; return begin.apply(this, args); };
-      await AppCore.load(runtime,'/editor/main.lisp');
+      await runtime.bindings.App.load(runtime,'/editor/main.lisp');
       Scheduler.stop(runtime);
       passes = 0;
       Scheduler.frame(runtime,0);
