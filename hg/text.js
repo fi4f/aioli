@@ -1,5 +1,6 @@
 import { Data } from './data.js';
 import { Structures } from './structures.js';
+import { Layout } from './layout.js';
 const __shaderBindings__ = new WeakMap();
 
 function __bindTextShader__(shader, labels, parameterCount) {
@@ -215,15 +216,7 @@ function __textOperation__(builder, operation, ...args) {
       throw new TypeError('font expects a nonempty CSS font family string');
     builder.style.font = value;
   } else if (operation === 'padding') {
-    const padding =
-      typeof value === 'number'
-        ? [value, value]
-        : Data.dataKind(value) === 'vec2f'
-          ? [...Data.values(value)]
-          : null;
-    if (!padding || padding.some((component) => !Number.isFinite(component) || component < 0))
-      throw new TypeError('padding expects a finite nonnegative scalar or vec2f');
-    builder.padding = padding;
+    builder.padding = [...Data.values(Layout.padding(value))];
   } else if (operation === 'h-align' || operation === 'v-align') {
     if (!__textNamedOptions__[operation].includes(value))
       throw new TypeError(`${operation} expects ${__textNamedOptions__[operation].join(', ')}`);
@@ -331,6 +324,8 @@ function __measure__(context, runs, fallback) {
     const metrics = context.measureText(group.text);
     group.x = width;
     group.width = metrics.width;
+    group.inkAscent = metrics.actualBoundingBoxAscent || 0;
+    group.inkDescent = metrics.actualBoundingBoxDescent || 0;
     group.ascent = Math.max(
       metrics.fontBoundingBoxAscent ?? group.size * 0.8,
       metrics.actualBoundingBoxAscent || 0,
@@ -377,7 +372,11 @@ function __rasterizeText__(text, { maxSize = 8192, cache } = {}) {
   context.direction = 'ltr';
   const content = text.runs.map((run) => run.text).join('');
   const [padX, padY] = text.padding;
-  const innerWidth = text.width === null ? null : Math.max(0, text.width - 2 * padX);
+  const inner = Layout.inset(
+    Data.vector(4, [0, 0, text.width ?? 0, text.height ?? 0]),
+    Data.vector(2, text.padding),
+  );
+  const innerWidth = text.width === null ? null : inner.z;
   // Index spans once. Scanning all spans for every line made viewport text quadratic.
   const runEnds = [];
   let runEnd = 0;
@@ -469,14 +468,11 @@ function __rasterizeText__(text, { maxSize = 8192, cache } = {}) {
     minX = 0,
     maxX = blockWidth,
     minY = 0,
-    maxY = 0;
+    maxY = 0,
+    inkTop = Infinity,
+    inkBottom = -Infinity;
   for (const line of lines) {
-    line.x =
-      text.hAlign === 'center'
-        ? (blockWidth - line.width) / 2
-        : text.hAlign === 'right'
-          ? blockWidth - line.width
-          : 0;
+    line.x = Layout.offset(blockWidth, line.width, text.hAlign);
     line.baseline = previous
       ? previous.baseline + (text.lineHeight ?? (previous.ascent + previous.descent) * 1.2)
       : line.ascent;
@@ -487,6 +483,10 @@ function __rasterizeText__(text, { maxSize = 8192, cache } = {}) {
     for (const group of line.groups)
       for (const span of group.spans) {
         const [dx, dy] = span.offset;
+        if (group.inkAscent + group.inkDescent > 0) {
+          inkTop = Math.min(inkTop, line.baseline - group.inkAscent + dy);
+          inkBottom = Math.max(inkBottom, line.baseline + group.inkDescent + dy);
+        }
         minX = Math.min(minX, line.x + group.x + span.left + dx);
         maxX = Math.max(maxX, line.x + group.x + span.right + dx);
         minY = Math.min(minY, line.baseline - group.ascent + dy);
@@ -509,10 +509,8 @@ function __rasterizeText__(text, { maxSize = 8192, cache } = {}) {
   const padding = 1 + Math.ceil(strokeExtent);
   const naturalTop = Math.min(0, ...lines.map((line) => line.baseline - line.ascent));
   const naturalHeight = Math.max(...lines.map((line) => line.baseline + line.descent)) - naturalTop;
-  const spareHeight =
-    text.height === null ? 0 : Math.max(0, text.height - 2 * padY) - naturalHeight;
-  const vertical =
-    text.vAlign === 'center' ? spareHeight / 2 : text.vAlign === 'bottom' ? spareHeight : 0;
+  const spareHeight = text.height === null ? 0 : inner.w - naturalHeight;
+  const vertical = Layout.offset(spareHeight, 0, text.vAlign);
   const offsetX = text.width === null ? padding + padX - Math.floor(minX) : padX;
   const offsetY =
     text.height === null ? padding + padY - Math.floor(minY) : padY - naturalTop + vertical;
@@ -547,7 +545,10 @@ function __rasterizeText__(text, { maxSize = 8192, cache } = {}) {
         const paintX = x + span.offset[0],
           paintY = y + span.offset[1];
         const left = i === 0 ? -width : span.left;
-        const right = i === group.spans.length - 1 ? width * 2 : span.right;
+        // A large negative offset can move the last span's origin far outside
+        // the viewport; its trailing paint clip must still reach the right edge.
+        const right =
+          i === group.spans.length - 1 ? Math.max(width * 2, width - paintX) : span.right;
         target.save();
         target.beginPath();
         target.rect(paintX + left, 0, right - left, paintHeight);
@@ -636,6 +637,8 @@ function __rasterizeText__(text, { maxSize = 8192, cache } = {}) {
     width,
     height,
     baseline: offsetY + lines[0].baseline,
+    inkTop: Number.isFinite(inkTop) ? offsetY + inkTop - strokeExtent : 0,
+    inkBottom: Number.isFinite(inkBottom) ? offsetY + inkBottom + strokeExtent : height,
     offsetX,
     offsetY,
     lineCount: lines.length,

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 const { chromium } = createRequire(import.meta.url)('playwright');
-const url = process.env.AIOLI_URL || 'http://localhost:3000/index.html';
+const url = new URL('/hg/tests/browser.html', process.env.AIOLI_URL || 'http://localhost:3000').href;
 
 test('Mercury namespaces operate on explicit app data from JS and Lisp', { timeout: 30000 }, async () => {
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -16,7 +16,7 @@ test('Mercury namespaces operate on explicit app data from JS and Lisp', { timeo
       }
     });
     const result = await page.evaluate(async () => {
-      const { default: hg } = await import('/hg/hg.js');
+      const { default: hg } = await import('/hg.js');
       const make = id => { const c = document.createElement('canvas'); c.id = id; c.width = 80; c.height = 60; document.body.append(c); return c; };
       const left = make('left'), right = make('right');
       const newApp = hg.App.new, load = hg.App.loadSource, dispose = hg.App.dispose;
@@ -57,7 +57,7 @@ test('default presentation uses dynamic viewport units and cleans up owned canva
       }
     });
     assert.deepEqual(await page.evaluate(async () => {
-      const { default: hg } = await import('/hg/hg.js');
+      const { default: hg } = await import('/hg.js');
       window.defaultApp = hg.App.new();
       await hg.App.loadSource(defaultApp, '(on render (c) (clear 0 0 1 1))');
       const c = defaultApp.outerCanvas;
@@ -66,7 +66,7 @@ test('default presentation uses dynamic viewport units and cleans up owned canva
     await page.setViewportSize({ width: 720, height: 540 });
     await page.waitForFunction(() => defaultApp.outerCanvas.width === 720 && defaultApp.outerCanvas.height === 540);
     assert.deepEqual(await page.evaluate(async () => {
-      const { default: hg } = await import('/hg/hg.js');
+      const { default: hg } = await import('/hg.js');
       const c = defaultApp.outerCanvas;
       hg.App.dispose(defaultApp);
       const pending = hg.App.new();

@@ -1,6 +1,7 @@
-# Mayo canvas editor contracts
+# Mercury canvas editor contracts
 
-Mayo's visible UI is drawn exclusively through the WebGPU canvas. A native
+Mercury's ordinary UI is drawn through the WebGPU canvas. A native host error panel
+provides diagnostics and F2 recovery when Lisp execution fails. A native
 browser textarea supplies invisible input services; it has zero opacity and
 cannot receive pointer events. Offscreen text rasterization is uploaded and
 composed through the existing GPU path.
@@ -24,7 +25,8 @@ bindings by name and rebuild function/shader definitions and callbacks. The
 attach callback rebuilds the composition and native proxy. The document model
 stays in `app.state.editor`; plain docking layout stays in `app.state.layout`.
 
-The traced candidate checks and retained module/state behavior remain. Text-proxy
+Candidate attach and first-render checks apply in both trace modes; retained
+module/state behavior remains. Text-proxy
 operations use `TextProxy` and an explicit record. Native editing redesign and program exports are deferred.
 Token rows/spans remain fresh mutable language snapshots, built lazily through explicit reads
 from the compiler's shared incremental scanner.
@@ -62,9 +64,9 @@ Large-document undo/redo retains up to 64 edit snapshots until `sync` or disposa
 consecutive characters currently undo separately. Small documents use native
 browser history. Composition retains its native window until it finishes.
 Row snapshots build lazily from compact newline offsets and remain stable after
-later edits. Mayo locates the caret by binary search through those offsets.
+later edits. Mercury locates the caret by binary search through those offsets.
 Tab inserts two spaces. Pointer hit testing and scrolling belong to Lisp.
-Mayo preserves fractional scroll positions, interprets wheel pixel/line/page
+Mercury preserves fractional scroll positions, interprets wheel pixel/line/page
 units, and clips partially visible rows to the source viewport. Scrolling stops
 at the last viewport of the document. Only document or selection changes reveal
 the caret; composition-only notifications preserve manual scroll position.
@@ -73,7 +75,7 @@ The code-editor component creates its proxy during mount and disposes it during
 unmount, including pane close and scene detach. Minimizing retains the component
 and proxy without text focus. Runtime
 shutdown also disposes remaining proxies. Native composition finishes before
-Mayo requests replacement, and replacement recreates the proxy from shared state.
+Mercury requests replacement, and replacement recreates the proxy from shared state.
 
 ## Lisp-owned behavior
 

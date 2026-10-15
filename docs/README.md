@@ -3,8 +3,11 @@
 Mercury compiles Lisp to JavaScript and WGSL. Its runtime uses plain mutable app
 data and namespace functions, with no classes or global current-app state.
 
+Load the root `hg.js` entry point as an ES module. When hosted on GitHub Pages,
+import it from `https://fi4f.github.io/hg/hg.js`:
+
 ```javascript
-import hg from './hg/hg.js';
+import hg from 'https://fi4f.github.io/hg/hg.js';
 const app = hg.App.new({ c: 'canvas', w: 512, h: 512, si: 1, ups: 60 });
 await hg.App.loadSource(app, '(on render (c) (clear 0.1 0.2 0.4))');
 hg.App.dispose(app);
@@ -16,17 +19,23 @@ explicitly. Creation is synchronous; loading awaits the app's GPU initialization
 by name and replaces code definitions. Both accept source text. With no `c`, the runtime creates an owned canvas
 using CSS `100dvw` by `100dvh`, without entering browser fullscreen.
 
-Serve the repository over localhost and open `/index.html` for the vanilla staging
-page: source textarea, Load source/Patch source buttons, error text, and canvas, with no custom CSS.
-Expand the Inspection panels to view the active scene's compiled JavaScript body,
-each Lisp shader's WGSL, and binding names, types, and current values. Compiler
-bindings include their generated `$bindingN` identifiers. Inspection refreshes after
-Load source/Patch source and when a panel opens; use Refresh inspection to read later changes.
-Large/cyclic values have bounded previews, and host records and promises have summaries.
-Failed replacements retain the working scene's compiled output.
-The staging host lives in `/index.js`. `/editor.html` loads `/editor.js`
-for Mayo, the composable Lisp canvas editor. Its text-proxy
+Serve the repository over localhost and open `/` or `/index.html` for Mercury,
+the composable Lisp canvas editor. `/index.js` hosts the editor and loads
+`editor/main.lisp`. Its text-proxy
 operations take data explicitly through `TextProxy`; tokenization is now `App.tokenize(app, source)`.
+
+Mercury includes a persistent [virtual filesystem](./FILESYSTEM.md), an editable Lisp
+Files pane, delayed autosave, and image previews. Bindings and Diagnostics use
+the reusable `ui-scroll` container for wheel, keyboard, and scrollbar navigation.
+First launch seeds editor code,
+icons, the UI library, and sample projects. The filesystem and project packaging
+are editable Lisp. JSON project snapshots contain both editor and application
+files plus explicit state. Saved editor files remain authoritative; F2 opens an
+independent recovery editor with resume and backup/restore actions.
+Refreshing restores the tab's workspace, window positions, draft, selection,
+scroll positions, and preview settings automatically.
+Project files are edited and saved; project execution remains
+deferred.
 
 See [composable UI and docking](./UI.md), [App API](./APP.md), [explicit storage access](./ACCESSORS.md), and
 [architecture](./ARCHITECTURE.md). This is a breaking replacement of the old Aioli
@@ -36,11 +45,10 @@ redesign remain deferred. CPU execution remains JavaScript; Wasm is out of scope
 ## Repository layout
 
 ```text
-index.html       staging entry point
-index.js         staging JavaScript host
-editor.html      editor entry point
-editor.js        editor JavaScript host
-hg/              engine, compiler, and library entry hg.js
+index.html       editor entry point
+index.js         editor JavaScript host
+hg.js            public library entry point
+hg/              engine and compiler implementation
 hg/tools/        code generators and profiling scripts
 hg/tests/        tests
 docs/            documentation and supplied Markdown references
@@ -89,8 +97,8 @@ With no arguments, `(clear)` clears to opaque black, equivalent to `(clear 0)`.
 (print "Canvas cleared")
 ```
 
-The rendered image is opaque and initially black. Clear updates a color uniform and
-submits a full-canvas triangle whose fragment shader returns that color.
+The rendered image is opaque and initially black. Clear uses a GPU attachment
+clear; subsequent clipped layers can consume it in the same render pass.
 Alpha is preserved in the output texture and `context.before` for subsequent
 shader sampling, even though the displayed image is opaque. Unused outer-canvas
 pixels are cleared; their visible background comes from the canvas or its parent.
@@ -105,8 +113,8 @@ Text operations validate argument counts during compilation, including inside
 render callbacks. For example, `(resolution)` reports a source-located error
 before a live reload can replace the working scene; `(resolution 2)` is valid.
 Literal setting values such as `(resolution 0)` are also checked at compilation.
-Traced self-reloads check the candidate's first render before accepting it, so
-computed invalid settings reject reload and restore the working editor.
+Self-reloads check the candidate's first render before accepting it in both trace
+modes, so computed invalid settings reject reload and restore the working editor.
 It captures outer variables directly. Statements, `print`, `if`/`elif`/`else`,
 mutation, and regular function calls work as usual. For example:
 
@@ -463,7 +471,7 @@ does not cancel arbitrary async work or its side effects on shared host objects.
 Create an app with optional rendering dimensions and scale increment:
 
 ```javascript
-import hg from '../hg/hg.js';
+import hg from '../hg.js';
 const app = hg.App.new({ c: outerCanvas, w: 320, h: 180, si: 1 });
 await hg.App.loadSource(app, source);
 app.w = 640; app.h = 360; app.si = 0.5; // consumed at the next frame boundary
@@ -620,13 +628,13 @@ rediscovered on the next visible frame. Runtime destruction removes listeners
 and releases pointer capture. Input callback failures stop animation and report
 through `onError`; activating a scene enables callbacks again.
 
-The editor is a consumer of Mercury. Import `hg/hg.js` and supply app data to
+The editor is a consumer of Mercury. Import `hg.js` and supply app data to
 namespace functions:
 
 ```html
 <canvas id="demo" width="320" height="240"></canvas>
 <script type="module">
-  import hg from '../hg/hg.js';
+  import hg from '../hg.js';
   const app = hg.App.new({ c: 'demo' });
   const url = new URL('./examples/blue.lisp', location.href);
   await hg.App.load(app, url.href);
@@ -646,17 +654,25 @@ in regular code and shaders. Shader operands must share a scalar type (`f32`,
 `(while (< i 10) (set i (+ i 1)))`. Vectors, matrices, and nonnumeric values
 are rejected. Regular-code numeric operands must be finite.
 
-Math functions work in regular code and shaders: `min` and `max` take two
+Math functions work in regular code and shaders: `min` and `max` take one or more
 operands, `clamp` takes `(value minimum maximum)`, and `sin`, `cos`, `tan`,
-`asin`, `acos`, `atan`, and `sqrt` take one operand. Trig angles use radians.
+`asin`, `acos`, `atan`, `sqrt`, `log2`, and `abs` take one operand. Trig angles use radians.
+`log2` computes the base-two logarithm; host inputs must produce finite results.
 They accept numeric scalars or operate component-wise on matching vectors;
 `min`, `max`, and `clamp` broadcast scalars to a vector's dimension. Trig and
 square root require float vectors in either compiler, and float scalars in shaders.
 Shader operands must share a scalar family. `clamp` requires minimum <= maximum.
 
+`abs` accepts finite numbers and float/signed/unsigned vectors, preserving vector
+type and applying absolute value component-wise. Unsigned values are unchanged.
+Typed signed vectors and shader `i32` values preserve `-2147483648` because its
+positive magnitude is not representable, matching [WGSL's `abs` rule](https://www.w3.org/TR/WGSL/#abs-builtin).
+Host scalar numbers use `Math.abs` and can represent that positive magnitude.
+
 ```lisp
 (let wave (sin t))
 (let bounded (clamp (vec3 -1 0.5 2) 0 1)) ; vec3 0 0.5 1
+(let magnitude (abs (vec3 -1 0.5 -2))) ; vec3 1 0.5 2
 ```
 
 ```lisp
@@ -734,8 +750,8 @@ Frame errors stop scheduling to avoid repeated errors. Asynchronous source loads
 use latest-request-wins activation.
 
 `hg.App.loadSource(app, source)` compiles and replaces the app scene, awaiting graphics
-initialization and checking the candidate when trace is enabled. Standalone
-compiler execution is internal to this staging pass.
+initialization and checking the candidate in both trace modes. Standalone
+compiler execution remains internal to the runtime.
 
 `hg.App.patchSource(app, source)` performs the same replacement while preserving
 top-level data bindings by name. It skips retained initializers, initializes new
@@ -1054,8 +1070,16 @@ Pass an earlier shader output into a texture parameter to compose passes:
 ```
 
 `sample` reads normalized UV coordinates with linear filtering, clamp-to-edge,
-and mip level zero. Each pass has separate input and output textures. Resource
-handles must come from the same runtime's current frame; stale handles and handles
+and mip level zero by default. `(sample image coordinates level)` selects an
+explicit float mip level, interpolating between levels. Loaded images contain
+filtered mip levels for smooth shrinking; text and render targets retain one
+level. Each pass has separate input and output textures.
+
+`(sample-nearest image coordinates)` reads the nearest original pixel without
+interpolation or mip filtering, with clamp-to-edge coordinates. It also accepts
+textures and hoisted text with their default UV when coordinates are omitted.
+
+Resource handles must come from the same runtime's current frame; stale handles and handles
 from other canvases are rejected. Scene `vec2f`, `vec3f`, and `vec4f` bindings construct
 numeric vectors for uniform arguments. Vectors retain their declared dimensions;
 GPU numeric inputs must be finite f32 values. Uniforms and textures follow the
@@ -1150,25 +1174,26 @@ available to Node (for example through NODE_PATH). AIOLI_URL can override localh
 
 ## Compilation modes
 
-Lisp traces are enabled by default. Uncheck the checkbox to inspect and run
-plain generated JavaScript. Changing the checkbox recompiles without execution.
-Programmatic callers can use `compile(source, bindings, forms, { trace: false })`.
+Mercury disables expression tracing by default; open `/index.html?trace=1` to enable
+detailed runtime source traces. Programmatic compiler callers default to tracing
+and can use `Compiler.compile(source, bindings, forms, { trace: false })`.
 This emits direct calls without trace wrappers, thunks, or location arguments.
 Both modes use one compiler and preserve strict arithmetic and lexical scope.
 Compilation errors retain source locations in either mode; runtime errors in
 fast mode use native JavaScript messages. Executables are built once per compilation
-and reused by `program.run()`.
+and reused by `Compiler.run(program)`.
 
 ## Errors
 
-Errors appear below Run and in the browser console with a Lisp source line,
-column, excerpt, and underline. Reader nodes retain source offsets. Runtime
+Reload errors appear in the editor's Diagnostics pane. Runtime failures also
+appear in a native host panel with F2 recovery. With tracing enabled, errors
+include a Lisp source line, column, excerpt, and underline. Reader nodes retain source offsets. Runtime
 instrumentation attributes failures to the innermost expression; calls through
 Lisp functions add source call sites. Non-callable values report the original
 expression and value type. Arithmetic retains its strict operand errors, and
 initialization errors translate generated identifiers back to Lisp names.
 Successful runs clear the previous trace. This instrumentation adds runtime
-overhead and can be disabled with the checkbox. Generated JavaScript has no source maps yet; native host
+overhead and is disabled in the editor unless `?trace=1` is supplied. Generated JavaScript has no source maps yet; native host
 function internals can still have JavaScript-specific error messages.
 
 ## Bindings

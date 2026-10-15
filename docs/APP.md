@@ -1,6 +1,6 @@
 # Mercury app core
 
-Import the single mutable namespace object from `hg/hg.js`. App data is a plain,
+Import the single mutable namespace object from `hg.js`. App data is a plain,
 extensible object. Operations are functions in `hg.App`; none require `this`.
 Lisp accesses the same namespace as `App` and receives the same app identity.
 There is no global current-app variable and no public Stage. Selected Lisp forms
@@ -11,8 +11,27 @@ subscriptions use the independent [Events dispatcher](./EVENTS.md).
 Value-position `on` creates handlers for the editable Lisp [UI library](./UI.md);
 it does not register scene hooks.
 
+`App.setFilesystem(app, state, namespace)` connects an explicit, editable Lisp
+filesystem namespace to an app. The namespace supplies file operations and a
+`fetch(state, url, options)` adapter returning plain resource records. Module and
+image loading use that adapter; compiled Lisp receives app-owned `fs-` forms and
+`resource`. Native `fetch`, `Resources`, `Storage`, and `Strings` supply underlying
+mechanisms. Filesystem and storage lifetimes remain with their creator.
+`App.setFilesystem` is the sole filesystem attachment path; `App.new` has no
+filesystem option. The runtime does not provide a JavaScript filesystem.
+See [filesystem and project operations](./FILESYSTEM.md).
+
+`App.abandon(app)` releases the app's resources without invoking Lisp detach hooks.
+The F2 recovery host uses it when a broken hook could prevent recovery; ordinary
+`App.dispose` retains its lifecycle callbacks.
+
+`App.reloadModules(app, url = app.sourceURL)` reloads a URL with fresh scene
+bindings and imports, preserving `app.state` and resource ownership. Compilation,
+import, initialization, attach, and first-render failures restore the prior module
+cache. Ordinary load/patch operations retain their existing module-cache contract.
+
 ```js
-import hg from '../hg/hg.js';
+import hg from '../hg.js';
 const app = hg.App.new({ c: 'canvas', w: 512, h: 512, si: 1, ups: 60 });
 await hg.App.loadSource(app, '(on render (c) (clear 0.1 0.2 0.4))');
 hg.App.dispose(app);
@@ -102,7 +121,7 @@ separate entry points; their contents are never inspected to guess the input kin
 | `si` | Scale increment, retaining the former scale-step behavior | null: continuous fit |
 | `is` | Boolean image smoothing during presentation, independent of `si` | false |
 | `ups` | Positive finite updates per second | 60 |
-| `trace` | Source-located execution tracing and replacement checks | true |
+| `trace` | Source-located execution tracing | true |
 
 The default canvas uses CSS `100dvw` by `100dvh`; no browser fullscreen request
 is made. An owned WebGPU canvas renders independently of the supplied 2D surface.
@@ -139,6 +158,9 @@ During candidate initialization, `source` identifies that candidate; it is resto
 on failure and published on successful replacement. Initialization effects on
 shared state or retained objects are not rolled back.
 
+Mercury's host applies the editable `Project.capture`/`restore` hooks to automatic
+per-tab refresh checkpoints. See [state capture](./FILESYSTEM.md#state-capture-and-refresh-checkpoints).
+
 Ordinary edits to `w`, `h`, `si`, `is`, and `ups` are validated/consumed at the next frame
 boundary. Each app retains its own clock, module cache, input, and GPU resources.
 Internal service hooks are implementation details, not a second instance-method API.
@@ -156,14 +178,18 @@ smooth.is = false; // Applied at the next frame boundary.
 `(configure)` includes the requested `is` setting. Smoothing changes request a
 fresh presentation of the existing image without resizing the rendering buffer.
 
-Traced loading checks compilation, initialization, attach, and initial rendering
+Loading checks compilation, initialization, attach, and initial rendering
 before discarding the working scene. Overlapping loads use the latest request.
 Patching pauses scheduled scene callbacks and input delivery while candidate
-bindings initialize, including across awaits. A failed traced patch keeps the
+bindings initialize, including across awaits. A failed patch keeps the
 previous code and binding cells; mutations to shared objects are not rolled back.
 Later frame errors stop that app's scheduling and use the existing console error
-path. Structured diagnostic delivery is deferred. `trace: false` retains ordinary
-failure behavior. Trace does not isolate infinite loops or device loss.
+path. Native text edit/key callback failures use the same stopped-app error path;
+their promise rejections are observed and callbacks stop after a failure.
+Mercury displays runtime failures in a native host panel with an F2 recovery action,
+independent of Lisp rendering. Structured diagnostic delivery is deferred.
+Replacement checks also run with `trace: false`. These checks do not isolate
+infinite loops or device loss, or roll back completed external effects.
 
 `App.dispose` is idempotent. It stops scheduling, cancels pending activation, and
 releases resources. It removes only runtime-created presentation canvases, even
@@ -193,7 +219,7 @@ exists; later scene attachment follows the selected state. Pausing during an
 asynchronous attach does not cancel its completion.
 
 `load` and `patch` preserve explicit pause, including through failed or superseded
-drafts. They still run their usual initialization and lifecycle callbacks; traced
+drafts. They still run their usual initialization and lifecycle callbacks;
 replacement still performs its explicit initial-render validation while paused.
 Scene replacement retains its existing clock-reset behavior. Pause/start by
 themselves neither detach nor reattach the scene.
@@ -228,12 +254,24 @@ through ordinary app-field and dictionary access.
 | --- | --- |
 | `App.inspect(app)` | A fresh plain dictionary keyed by binding name, containing live binding handles. Before the first scene is committed, it returns an empty dictionary. |
 | `App.read(app, reference)` | The binding's current value, without snapshot copying. |
+| `App.preview(app, reference, path = [], limit = 50, offset = 0)` | A shallow description of the current value at a nested path, with paged child keys. |
 | `App.write(app, reference, value)` | Replaces a mutable binding's value and returns the replacement. |
 | `App.call(app, reference, args)` | Resolves the current callable binding, invokes it with the argument list, and returns its result. |
 
-These operations require exactly their listed arguments. Inspect/read/write are
+Inspect/read/write/call require exactly their listed arguments. Inspect/read/write are
 synchronous; call invokes immediately and returns the function's ordinary result
 or its original promise.
+
+`App.preview` is synchronous and returns `{ type, preview, keys, count, circular }`.
+Paths contain string field names or integer indices; matrix indices select columns
+before components. `limit` is 1–500 and `offset` is a nonnegative integer. Only
+the selected path is read. Previewing never calls functions or property accessors,
+or recursively copies a value. Dictionaries, module namespaces, host records,
+structs, lists, arrays, many, vectors, matrices, and registered handle metadata
+can expose children. Unsupported native resources remain opaque leaves. Circular
+references to a path ancestor stop expansion; shared siblings remain expandable.
+Fields removed during inspection and accessors return an unavailable leaf.
+Invalid binding references retain the normal reflection errors.
 Handles are registered plain records `{ __type__: '__binding__', name }`.
 `(type reference)` returns `"__binding__"`; `binding?` recognizes a registered
 handle, not whether it is currently valid. Lisp can read `reference.name` and
@@ -422,17 +460,17 @@ context or global current-app state is introduced.
 
 ## Hosts
 
-`index.html` loads `index.js` for the vanilla staging environment: a textarea,
-Load source/Patch source buttons, error text, and canvas, with no custom page CSS.
-Its Inspection panels show the active scene's compiled JavaScript body and Lisp
-shader WGSL, current top-level binding values through `App.inspect`/`App.read`,
-and compiler-supplied bindings with their generated identifiers. Refresh inspection
-reads current values without running source again; previews are bounded and do not
-await promises. Compiled artifacts are retained in internal scene metadata, so a
-failed replacement keeps the working scene's output. This host inspection does not
-add a public declaration-metadata API.
-`editor.html` loads `editor.js` and retains the existing canvas editor
-as a regression fixture. Internal compiler/scheduler helpers are
+`index.html` loads `index.js` for Mercury, the primary application. The host loads
+`editor/main.lisp` as an ordinary Lisp component editor, themed through
+`editor/theme.lisp`. It provides independent F2 recovery and native failure
+diagnostics. Additional example hosts live in `examples/`; browser runtime tests
+use the inert canvas fixture in `hg/tests/browser.html`.
+`App.listenInput(app, callback)` registers a disposable input route; its Lisp
+shorthand is `(listen-input callback)`. The callback receives the input name and
+mutable event. Newer routes run first, and `event.handled` stops propagation to
+older routes and the scene's named input hook. `ui-mount`/`ui-unmount` own this
+subscription automatically. Generic `Events` instances remain independent.
+Internal compiler/scheduler helpers are
 in `hg/`; they are not re-exported as a legacy runtime surface.
 
 See [explicit storage access](./ACCESSORS.md) for retained language storage behavior.

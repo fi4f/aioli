@@ -7,12 +7,14 @@ function __parseConditional__(args, fail) {
   const explicit = keyword(args[2]) || args.length > 3;
   if (!explicit)
     return {
-      branches: [{ condition: args[0], body: body(args[1]) }],
+      branches: [{ condition: args[0], body: body(args[1]), block: args[1].kind === 'block' }],
       otherwise: args[2] ? body(args[2]) : null,
+      otherwiseBlock: args[2]?.kind === 'block',
       explicit,
     };
-  const branches = [{ condition: args[0], body: body(args[1]) }];
+  const branches = [{ condition: args[0], body: body(args[1]), block: args[1].kind === 'block' }];
   let otherwise = null;
+  let otherwiseBlock = false;
   for (let i = 2; i < args.length;) {
     const marker = args[i++];
     if (!keyword(marker)) fail('Expected elif or else after if branch', marker);
@@ -22,6 +24,7 @@ function __parseConditional__(args, fail) {
         fail('else expects a branch statement or block', fallback || marker);
       if (i !== args.length) fail('else must be the final branch', args[i]);
       otherwise = body(fallback);
+      otherwiseBlock = fallback.kind === 'block';
     } else {
       const condition = args[i++],
         branch = args[i++];
@@ -30,10 +33,10 @@ function __parseConditional__(args, fail) {
           'elif expects a condition and branch statement or block',
           branch || condition || marker,
         );
-      branches.push({ condition, body: body(branch) });
+      branches.push({ condition, body: body(branch), block: branch.kind === 'block' });
     }
   }
-  return { branches, otherwise, explicit };
+  return { branches, otherwise, otherwiseBlock, explicit };
 }
 
 export const Conditionals = { parseConditional: __parseConditional__ };

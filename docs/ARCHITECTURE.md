@@ -19,8 +19,8 @@ namespace. `app.js` exports `App` and the internal `AppCore` orchestration names
 `hg/tools/` contains code generators and profiling scripts; `hg/tests/` contains tests.
 `docs/` contains all documentation and supplied Markdown references. `examples/`
 contains Lisp examples and additional JavaScript/HTML hosts; `editor/` contains
-the editor's Lisp files. The repository root retains `index.html` and `index.js`
-as the staging entry points and `editor.html` and `editor.js` as the editor host.
+the editor's Lisp files. The repository root contains `index.html` and `index.js`
+as the primary editor entry point and host.
 
 ## Module composition and Lisp exposure
 
@@ -76,6 +76,19 @@ are ordinary Lisp and can be edited or replaced through live module exports.
 `editor/main.lisp` composes the editor; `editor/code-editor.lisp` implements its
 native-input-backed source control. See [UI composition](./UI.md).
 
+UI composition treats content as rectangles. Labels and icons provide intrinsic
+measurement; boxes and buttons arrange their children. Bare strings become label
+nodes. Pane/dropdown titles can themselves be composed elements. Local Lisp
+configuration values replace icon slots and constructor style dictionaries;
+every property, including typography, is local to its component. `layout.js` supplies shared
+padding, inset, and alignment geometry used by text rasterization and Lisp flow.
+Text shaping/line breaking and editable component flow remain separate consumers
+of these geometric primitives. Native geometry does not dispatch UI components.
+Generic `Resources.withOrigin` factories receive the calling program's source URL
+as an explicit argument. This lets an editable Lisp `ui-icon` constructor resolve
+relative paths at its declaration site, including through ordinary function
+aliases, without a global current source or native UI dispatch.
+
 Value-position `on` lowers to the lexical `ui-on` function with an event name and
 callback, leaving representation and dispatch in Lisp. Statement-position scene
 hooks retain their existing contract. Ordinary host functions accept a final
@@ -89,6 +102,7 @@ hit testing, and text proxies can blur without disposal.
 | `app.js` | `App`: creation, source/URL loading and patching, reflection, calls, exec, pause/start, tokenization, disposal. `AppCore`: host orchestration and activation. |
 | `scheduler.js` | `Scheduler`: per-instance clocks, named hooks, frame scheduling, and injected frame preparation. |
 | `modules.js` | `Modules`: loader records, URL resolution, owned caches, cycle checks, live binding cells. |
+| `storage.js`, `resources.js`, `strings.js` | `Storage`, `Resources`, `Strings`: generic atomic persistence, native fetch/file transfer, binary conversion, and string mechanisms for editable Lisp. |
 | `scene-memory.js` | `SceneMemory`: top-level scene cells, retained-value lookup, import scopes, internal source origins, binding reflection and reference lifetimes. |
 | `events.js` | `Events`: independent generic dispatchers, ordered subscriber snapshots, and queued nested emissions. Scene `on` declarations remain named runtime hooks. |
 | `compiler.js`, `forms.js`, `conditionals.js`, `codegen.js` | `Compiler`, `Forms`, `Conditionals`, `Codegen`: reading and JavaScript emission. Separate `Compiler.compile`, `compileScene`, `compileModule`, and `compileExec` entry points; `run` executes a program record and `runExec` executes against live scene memory. |
@@ -96,6 +110,7 @@ hit testing, and text proxies can blur without disposal.
 | `data.js`, `structures.js`, `types.js` | `Data`, `Structures`, `Types`: language values, explicit storage access, packed layouts, validation, dot operations. |
 | `numeric-types.js`, `numeric.js`, `arithmetic.js`, `math.js`, `conversions.js`, `colors.js`, `transforms.js` | Numeric metadata, type rules, arithmetic, math, conversion, color, transform namespaces. |
 | `text.js`, `promises.js`, `errors.js`, `loops.js`, `trace.js` | Text construction/rasterization, async operations, serializable error records, iteration, explicit trace records. |
+| `layout.js` | `Layout`: shared padding, rectangle insetting, and alignment geometry for text and editable Lisp layout. |
 | `graphics.js`, `inner-canvas.js` | `Graphics`, `InnerCanvas`: per-instance GPU resources, rendering, defensive 2D presentation. |
 | `input.js`, `text-proxy.js` | `Input`, `TextProxy`: per-instance browser input records and invisible native editing. |
 | `bindings.js`, `contracts.js` | `Bindings`, `Contracts`: language exposure and shared execution vocabulary. |
@@ -115,7 +130,13 @@ Scene initialization still temporarily exposes candidate source to its own code,
 as required by the self-editor. Omitted replacement origins use the committed
 scene's origin rather than a temporarily initializing program's origin.
 
-`hg/hg.js` exposes `App`, `Events`, and `TextProxy`; Lisp receives those same namespaces.
+`hg.js` exposes `App`, `Events`, `TextProxy`, `Resources`, `Storage`, `Strings`, and `Layout`.
+The editor installs its Lisp `FileSystem` as `Vfs` through `App.setFilesystem`.
+Apps configured with a filesystem also expose captured `fs-` forms. The editor
+host owns storage and the F2 recovery entry point. Paths, mutations, resource
+fallback, project snapshots, state hooks, backups, and editor defaults are ordinary
+Lisp. A project packages both `/editor` and `/project`; saved editor sources are
+authoritative. See [the filesystem API](./FILESYSTEM.md).
 `App.new` returns synchronously; `App.loadSource(app, source)` and `App.patchSource(app, source)`
 await initialization. `App.load` and `App.patch` fetch URLs before invoking those
 same replacement paths. Source and URL requests share supersession; URL shorthand
@@ -156,16 +177,21 @@ renders and accumulated backlog on pause, and resets the wall-time baseline on
 resume. Scheduling guards prevent duplicate loops and paused event-driven renders.
 Separate attachment and frame generations allow async attach completion while
 paused and suppress callbacks belonging to superseded scene transitions.
+Source loads and patches share one preparation record and one cancellation path
+through initialization, attachment, and the first render. A patch also suspends
+the active scene during initialization. Successful preparation hands the already
+attached scene to `Scheduler.install`, without editing its hooks or attaching it
+again. Fresh scenes and patches use the same reflection commit; only candidates
+initialized from the committed scene retain its same-name binding references.
 `(text-proxy callback)` creates an app-owned editing record, followed by calls
 such as `(TextProxy.sync proxy source anchor head)`. Other namespaces remain
 internal until their Lisp contracts are designed. Exposure never selects an app.
 
 Compiled programs contain data and a generated executable, without a `run` method.
 Scene memory associates each scene with its compiled program in private weak
-metadata. The staging host uses this record for JavaScript/WGSL inspection and
-uses public reflection for current top-level binding values. Failed candidates do
-not replace the committed scene's artifacts. Inspection neither recompiles nor
-executes the source, and does not restore resources from serialized data.
+metadata. Public reflection exposes current top-level binding values. Failed
+candidates do not replace the committed scene's artifacts. Inspection neither
+recompiles nor executes the source, and does not restore resources from serialized data.
 Module namespaces are plain objects holding ordinary `{ value }` cells shared
 with lexical closures and imports. Private weak metadata identifies these
 namespaces without reserving dictionary keys. Numeric/struct views explicitly
@@ -195,7 +221,7 @@ handles need no mutation; Lisp reads their marker through explicit access.
 Caller-supplied canvases remain externally owned. Omitting `c` creates an owned
 `100dvw` by `100dvh` surface. Each app renders on its own WebGPU canvas and presents
 into the outer 2D canvas. Disposal releases owned resources and removes owned DOM
-surfaces. Traced reloads retain the working scene through candidate initialization,
+surfaces. Reloads retain the working scene through candidate initialization,
 attach, and first rendering.
 
 Supplied outer bitmap dimensions are read without resizing them. App selects an
@@ -215,8 +241,8 @@ configuration callback mirrors requested display options into app data; frame
 preparation validates direct app-field edits. The display tracks its last
 presented smoothing setting so a change redraws the existing image.
 
-`index.html` loads the vanilla staging host from `index.js`;
-`editor.html` loads Mayo's canvas editor from `editor.js`.
+`index.html` loads Mercury's canvas editor from `index.js`. Browser runtime tests use
+the inert canvas fixture in `hg/tests/browser.html`.
 Embedded children, program exports, structured diagnostics, and redesigning native
 text editing remain deferred. JavaScript is the CPU target; no Wasm backend or
 legacy Aioli facade is provided.

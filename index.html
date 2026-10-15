@@ -1,77 +1,30 @@
 <!doctype html>
 <html lang="en">
-  <meta charset="utf-8" />
+  <meta charset="utf-8">
   <title>Mercury</title>
-  <textarea id="source" rows="12" cols="80" aria-label="Lisp source" spellcheck="false">
-; Load source starts fresh bindings. Patch source preserves top-level data.
-; Rendering receives the app's dimensions and clock.
-(on render (context)
-  ((sh ()
-    (return (vec4f uv 0 1))) context))</textarea>
-  <button id="run" type="button">Load source</button>
-  <button id="patch" type="button">Patch source</button>
-  <pre id="error" role="alert"></pre>
-  <canvas id="canvas" width="640" height="480" aria-label="Graphics output"></canvas>
-  <section aria-labelledby="inspection-heading">
-    <h2 id="inspection-heading">Inspection</h2>
-    <p id="inspection-status" role="status">Load or patch source to inspect it.</p>
-    <button id="refresh-inspection" type="button">Refresh inspection</button>
-    <details id="javascript-inspection">
-      <summary>Compiled JavaScript</summary>
-      <textarea
-        id="compiled-javascript"
-        rows="18"
-        cols="100"
-        readonly
-        spellcheck="false"
-        aria-label="Compiled JavaScript"
-      ></textarea>
-    </details>
-    <details id="wgsl-inspection">
-      <summary>Compiled WGSL</summary>
-      <textarea
-        id="compiled-wgsl"
-        rows="18"
-        cols="100"
-        readonly
-        spellcheck="false"
-        aria-label="Compiled WGSL"
-      ></textarea>
-    </details>
-    <details id="bindings-inspection">
-      <summary>Bindings</summary>
-      <h3>Scene bindings</h3>
-      <p>Top-level bindings from the active scene. Refresh to read their current values.</p>
-      <p>Large values have bounded previews; promises and host records are shown as summaries.</p>
-      <p id="scene-bindings-status"></p>
-      <table>
-        <thead>
-          <tr>
-            <th scope="col">Name</th>
-            <th scope="col">Type</th>
-            <th scope="col">Value</th>
-          </tr>
-        </thead>
-        <tbody id="scene-bindings"></tbody>
-      </table>
-      <details>
-        <summary>Compiler bindings</summary>
-        <p>
-          Supplied bindings used by the generated JavaScript. Identifiers match its declarations.
-        </p>
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Identifier</th>
-              <th scope="col">Name</th>
-              <th scope="col">Type</th>
-              <th scope="col">Value</th>
-            </tr>
-          </thead>
-          <tbody id="compiler-bindings"></tbody>
-        </table>
-      </details>
-    </details>
+  <link rel="icon" href="data:,">
+  <link rel="modulepreload" href="./hg/compiler.js">
+  <link rel="modulepreload" href="./hg/app.js">
+  <link rel="modulepreload" href="./hg/bindings.js">
+  <link rel="modulepreload" href="./hg/types.js">
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #272822; }
+    canvas { display: block; width: 100%; height: 100%; outline: none; }
+    #host-loading:not([hidden]) { position: fixed; inset: 0; display: grid; place-content: center; text-align: center; color: #f8f8f2; background: #272822; font: 14px monospace; cursor: progress; }
+    #host-loading strong { color: #a6e22e; font-size: 24px; }
+    #host-error { position: fixed; z-index: 1; inset: auto 12px 12px; max-height: 45%; overflow: auto; padding: 12px; color: #fff; background: #30212b; border: 1px solid #ff8da1; font: 14px system-ui; }
+    #host-error pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  </style>
+  <canvas id="canvas" width="1100" height="800" aria-label="Mercury canvas editor" aria-busy="true"></canvas>
+  <section id="host-loading" role="status" aria-live="polite">
+    <strong>Mercury</strong>
+    <p id="host-loading-status">Loading editor…</p>
+  </section>
+  <section id="host-error" role="alert" hidden>
+    <strong>Editor error</strong>
+    <p>Press F2 or open recovery to repair the editor.</p>
+    <button id="host-recover" type="button">Open recovery</button>
+    <pre id="host-diagnostic"></pre>
   </section>
   <script type="module" src="./index.js"></script>
 </html>

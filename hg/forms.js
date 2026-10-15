@@ -67,32 +67,17 @@ const __forms__ = {
   on(args, emit, context) {
     // In value position, construct a Lisp-owned component handler. Scene hooks
     // retain their statement-only contract and their fixed parameter limits.
-    if (!context.inStatement) {
-      if (args.length === 2 && args[1]?.kind === 'list' && args[1].items[0]?.name === 'fn') {
-        const [, parameters, ...body] = args[1].items;
-        if (parameters?.kind !== 'list')
-          throw new SyntaxError('fn handler expects a parameter list');
-        return context.handler(args[0], parameters.items, body);
-      }
-      if (args.length === 2 && args[1]?.kind === 'list' && args[1].items[0]?.name === 'async')
-        return context.handlerValue(args[0], args[1]);
-      if (args.length === 2 && ['symbol', 'access'].includes(args[1]?.kind))
-        return context.handlerValue(args[0], args[1]);
-      if (args.length < 2 || args[1]?.kind !== 'list')
-        throw new SyntaxError('on handler expects a name, parameter list, and body');
-      return context.handler(args[0], args[1].items, args.slice(2));
-    }
     if (args.length === 2 && args[1]?.kind === 'list' && args[1].items[0]?.name === 'fn') {
       const [, parameters, ...body] = args[1].items;
       if (parameters?.kind !== 'list')
-        throw new SyntaxError('fn callback expects a parameter list');
-      if (!context.inStatement) throw new SyntaxError('on requires statement position');
+        throw new SyntaxError(`fn ${context.inStatement ? 'callback' : 'handler'} expects a parameter list`);
+      if (!context.inStatement) return context.handler(args[0], parameters.items, body);
       return { statement: context.callback(args[0], parameters.items, body) };
     }
     if (args.length === 2 && args[1]?.kind === 'list' && args[1].items[0]?.name === 'async') {
+      if (!context.inStatement) return context.handlerValue(args[0], args[1]);
       const wrapped = args[1].items[1];
       if (args[1].items.length !== 2) throw new SyntaxError('async expects one function');
-      if (!context.inStatement) throw new SyntaxError('on requires statement position');
       if (wrapped?.kind !== 'list' || wrapped.items[0]?.name !== 'fn')
         return { statement: context.callbackValue(args[0], args[1]) };
       const [, parameters, ...body] = wrapped.items;
@@ -101,13 +86,15 @@ const __forms__ = {
       return { statement: context.callback(args[0], parameters.items, body, true) };
     }
     if (args.length === 2 && ['symbol', 'access'].includes(args[1]?.kind)) {
-      if (!context.inStatement) throw new SyntaxError('on requires statement position');
+      if (!context.inStatement) return context.handlerValue(args[0], args[1]);
       return { statement: context.callbackValue(args[0], args[1]) };
     }
-    if (args.length < 2 || args[1].kind !== 'list') {
+    if (args.length < 2 || args[1]?.kind !== 'list') {
+      if (!context.inStatement)
+        throw new SyntaxError('on handler expects a name, parameter list, and body');
       throw new SyntaxError('on expects callback name, parameter list, and body statements');
     }
-    if (!context.inStatement) throw new SyntaxError('on requires statement position');
+    if (!context.inStatement) return context.handler(args[0], args[1].items, args.slice(2));
     return { statement: context.callback(args[0], args[1].items, args.slice(2)) };
   },
   fn(args, emit, context) {
@@ -141,11 +128,16 @@ const __forms__ = {
     if (context.inStatement) {
       const code = parsed.branches
         .map(
-          (branch) => `if (${context.condition(branch.condition)}) ${context.block(branch.body)}`,
+          (branch) =>
+            `if (${context.condition(branch.condition)}) ${context.block(branch.body, context.returnLast && !branch.block)}`,
         )
         .join(' else ');
       return {
-        statement: code + (parsed.otherwise ? ` else ${context.block(parsed.otherwise)}` : ''),
+        statement:
+          code +
+          (parsed.otherwise
+            ? ` else ${context.block(parsed.otherwise, context.returnLast && !parsed.otherwiseBlock)}`
+            : ''),
       };
     }
     if (parsed.explicit) throw new SyntaxError('if branch chains require statement position');

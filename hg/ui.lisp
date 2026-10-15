@@ -2,19 +2,43 @@
 ; interaction policy can all be edited here or replaced through its live exports.
 ; Component namespaces receive (ui node ...) explicitly; nodes are plain dicts.
 
-(let ui-style (fn (props)
-  (dict "kind" "style" "props" (props : dict))))
+(let ui-config (fn (&rest props)
+  (dict "kind" "config" "props" (dict (if (= (len props) 1) (get props.0) props)))))
+; Compatibility for saved projects. New construction uses individual configuration forms.
+(let ui-style ui-config)
+(let ui-prop (fn (key value) (ui-config (dict (key : str) value))))
+(let padding (fn (value) (Layout.padding value) (ui-prop "padding" value)))
+(let gap (fn (value) (ui-prop "gap" (max 0 (value : num)))))
+(let grow (fn (value) (ui-prop "grow" (max 0 (value : num)))))
+(let width (fn (value) (ui-prop "w" (max 0 (value : num)))))
+(let height (fn (value) (ui-prop "h" (max 0 (value : num)))))
+(let font (fn (value) (ui-prop "font" (value : str))))
+(let size (fn (value) (ui-prop "size" (max 0.01 (value : num)))))
+(let fill (fn (&rest channels) (ui-prop "color" (Colors.rgba channels))))
+(let h-align (fn (value) (ui-prop "h-align" (value : str))))
+(let v-align (fn (value) (ui-prop "v-align" (value : str))))
+(let align (fn (value) (ui-config "h-align" (value : str) "v-align" value)))
+(let background (fn (value) (ui-prop "background" (value : vec4))))
+(let visible (fn (value) (ui-prop "visible" (value : bool))))
+(let disabled (fn (value) (ui-prop "disabled" (value : bool))))
 
 ; The value-position (on ...) form calls this ordinary, editable function.
 (let ui-on (fn (name handler)
   (dict "kind" "handler" "name" (name : str) "handler" (handler : function))))
 
+(let __ui-input-names__ (list "pointerdown" "pointermove" "pointerup" "pointercancel"
+  "pointerleave" "wheel" "keydown" "keyup"))
+
 (let __ui-options__ (fn (node items)
   (for item items {
     (if (or (= item nil) (= item false)) (continue))
     (if (list? item) { (__ui-options__ node item) (continue) })
-    (if (= item.kind "style") {
-      (for key (keys item.props) (put node.props key (get item.props.(get key))))
+    (if (str? item) { (insert node.children (ui-label item)) (continue) })
+    (if (or (= item.kind "config") (= item.kind "style")) {
+      (for key (keys item.props) {
+        (put node.props key (get item.props.(get key)))
+        (put node.state.configured key true)
+      })
     } elif (= item.kind "handler") {
       (let handlers (get node.handlers.(get item.name)))
       (if (= handlers nil) {
@@ -29,9 +53,25 @@
   node))
 
 (let ui-node (fn (component props &rest items)
+  ; A string starts property pairs; subsequent component items keep their order.
+  (if (str? props) {
+    (let entries (list props (get items.0)))
+    (let index 1)
+    (while (< index (len items)) {
+      (let key (get items.(get index)))
+      (if (or (dict? key) (list? key) (= key nil) (= key false)) (break))
+      (insert entries key)
+      (insert entries (get items.(+ index 1)))
+      (set index (+ index 2))
+    })
+    (set props (dict entries))
+    (let remaining (list))
+    (for i (len items) (if (>= i index) (insert remaining (get items.(get i)))))
+    (set items remaining)
+  })
   (__ui-options__ (dict
     "kind" "node" "component" (component : dict) "props" (copy (props : dict))
-    "children" (list) "handlers" (dict) "state" (dict)
+    "children" (list) "overlays" (list) "handlers" (dict) "state" (dict "configured" (dict))
     "bounds" (vec4) "clip" (vec4) "measured" (vec2)) items)))
 
 (let ui-repaint (fn (ui) (set ui.dirty true)))
@@ -80,14 +120,29 @@
   (layer context (ui-intersect bounds clip) __ui-rectangle-shader__ bounds clip color)))
 (let __ui-image__ (fn (context image bounds clip)
   (layer context (ui-intersect bounds clip) __ui-image-shader__ image bounds clip)))
-(let __ui-border__ (fn (context bounds clip color thickness)
+
+(let __ui-icon-shader__ (sh (image:texture2d bounds:vec4 clip:vec4 color:vec4)
+  (if (and (>= xy.x bounds.x) (>= xy.y bounds.y)
+    (< xy.x (+ bounds.x bounds.z)) (< xy.y (+ bounds.y bounds.w))
+    (>= xy.x clip.x) (>= xy.y clip.y)
+    (< xy.x (+ clip.x clip.z)) (< xy.y (+ clip.y clip.w))) {
+    (let pixel (sample image (/ (- xy bounds.xy) bounds.zw)))
+    (return (vec4 color.xyz (* color.w pixel.w)))
+  })
+  (vec4)))
+(let ui-icon-image (fn (context image bounds clip color scale)
+  (let physical (* bounds scale))
+  (let clipped (* clip scale))
+  (layer context (ui-intersect physical clipped) __ui-icon-shader__ image physical clipped color)))
+(let __ui-border__ (fn (context bounds clip color thickness edges)
   ; Shade the four border strips, not every pixel inside a pane.
-  (let middle (max 0 (- bounds.w (* thickness 2))))
+  (set edges (or edges (vec4 thickness)))
+  (let middle (max 0 (- bounds.w edges.y edges.w)))
   (layer-regions context (list
-    (ui-intersect clip (vec4 bounds.x bounds.y bounds.z thickness))
-    (ui-intersect clip (vec4 bounds.x (- (+ bounds.y bounds.w) thickness) bounds.z thickness))
-    (ui-intersect clip (vec4 bounds.x (+ bounds.y thickness) thickness middle))
-    (ui-intersect clip (vec4 (- (+ bounds.x bounds.z) thickness) (+ bounds.y thickness) thickness middle)))
+    (ui-intersect clip (vec4 bounds.x bounds.y bounds.z edges.y))
+    (ui-intersect clip (vec4 bounds.x (- (+ bounds.y bounds.w) edges.w) bounds.z edges.w))
+    (ui-intersect clip (vec4 bounds.x (+ bounds.y edges.y) edges.x middle))
+    (ui-intersect clip (vec4 (- (+ bounds.x bounds.z) edges.z) (+ bounds.y edges.y) edges.z middle)))
     __ui-border-shader__ bounds clip color thickness)))
 
 (let ui-rectangle (fn (context node color)
@@ -107,60 +162,263 @@
 ; Cache text by its actual properties. No DOM element implements a widget.
 (let __ui-label-measure__ (fn (ui node)
   (let props node.props)
-  (let key (list props.value props.font props.size (re-copy props.color) ui.scale))
+  (let typography node.props)
+  (let key (list props.value typography.font typography.size (re-copy typography.color) ui.scale))
   (if (not (= node.state.text-key key)) {
-    (set node.state.image (text (font props.font) (size (* props.size ui.scale))
-      (fill props.color) (wrap false) (span props.value)))
+    (set node.state.image (text (font typography.font) (size (* typography.size ui.scale))
+      (fill typography.color) (wrap false) (span props.value)))
     (set node.state.text-key key)
     (ui-invalidate ui)
   })
   (let image node.state.image)
-  (vec2 (+ (/ image.w ui.scale) (* 2 props.padding))
-    (+ (/ image.h ui.scale) (* 2 props.padding)))))
+  (let pad (Layout.padding props.padding))
+  (set node.state.text-extent (/ image.w ui.scale))
+  (+ (vec2 (min (or props.title-width (/ image.w ui.scale)) (/ image.w ui.scale))
+    (/ image.h ui.scale)) (* 2 pad))))
 
 (let __ui-label-paint__ (fn (ui node context)
   (let image node.state.image)
-  (let padding node.props.padding)
-  (ui-image context image.texture
-    (vec2 (+ node.bounds.x padding) (+ node.bounds.y padding)) node.clip ui.scale)))
+  (let bounds (Layout.inset node.bounds node.props.padding))
+  (if node.props.value {
+    (let clipped (ui-intersect node.clip bounds))
+    (let x (+ bounds.x (Layout.offset bounds.z (/ image.w ui.scale) (or node.props.h-align "left"))))
+    ; Center visible glyphs, excluding the font's unused ascent/descent space.
+    (let ink-height (/ (- image.ink.bottom image.ink.top) ui.scale))
+    (let y (+ bounds.y (if (= (or node.props.v-align "top") "top") 0
+      (- (Layout.offset bounds.w ink-height node.props.v-align) (/ image.ink.top ui.scale)))))
+    (ui-image context image.texture
+      (vec2 (- x (or node.state.marquee 0)) y) clipped ui.scale)
+  })))
+
+(let __ui-marquee-tick__ (fn (ui node context)
+  (if (not node.props.marquee) (return))
+  (let owner (or node.state.hover-owner node))
+  (let hovered (and (not ui.drag) ui.hot (not ui.hot.props.chrome-button) (ui-path owner ui.hot)))
+  (let pad (Layout.padding node.props.padding))
+  (let visible-bounds (ui-intersect node.bounds node.clip))
+  (let overflow (max 0 (- (or node.state.text-extent 0)
+    (max 0 (- visible-bounds.z (* 2 pad.x))))))
+  (let previous (or node.state.marquee 0))
+  (if (or (not hovered) (= overflow 0)) {
+    (set node.state.marquee 0)
+    (set node.state.marquee-time 0)
+    (set node.state.marquee-direction 1)
+  } else {
+    (set node.state.marquee-time (+ (or node.state.marquee-time 0) context.dt))
+    (if (> node.state.marquee-time (or node.props.marquee-delay 0.6)) {
+      (let direction (or node.state.marquee-direction 1))
+      (set node.state.marquee (clamp (+ previous
+        (* context.dt direction (or node.props.marquee-speed 30))) 0 overflow))
+      (if (or (>= node.state.marquee overflow) (<= node.state.marquee 0)) {
+        (set node.state.marquee-direction (- direction))
+        (set node.state.marquee-time 0)
+      })
+    })
+  })
+  (if (not (= previous node.state.marquee)) (ui-repaint ui))))
 
 (let ui-label-component (dict
-  "measure" __ui-label-measure__ "paint" __ui-label-paint__))
+  "measure" __ui-label-measure__ "paint" __ui-label-paint__ "tick" __ui-marquee-tick__))
 
-(let label (fn (value &rest options)
+(let ui-label (fn (value &rest options)
   (ui-node ui-label-component
-    (dict "value" (value : str) "font" "sans-serif" "size" 16
-      "color" (vec4 0.87 0.9 0.95 1) "padding" 0) options)))
+    (dict "value" (value : str) "font" "sans-serif" "size" 16 "color" (vec4 0.87 0.9 0.95 1)
+      "padding" 0 "v-align" "center") options)))
+
+; Icons are leaves, like labels. A URL loads on mount; a texture is immediately usable.
+(let __ui-icon-load__ (fn (ui node)
+  (if (same? node.state.source node.props.source) (return))
+  (let source node.props.source)
+  (set node.state.source source)
+  (set node.state.error nil)
+  (set node.state.image (if (str? source) nil (source : texture2d)))
+  (ui-invalidate ui)
+  (if (str? source)
+    (promise (image (Resources.resolve source node.props.source-origin))
+      then (texture) {
+        (if (and node.state.mounted (same? source node.props.source)) {
+          (set node.state.image texture)
+          (ui-invalidate ui)
+        })
+      }
+      catch (error) {
+        (if (and node.state.mounted (same? source node.props.source)) {
+          (set node.state.error error)
+          (ui-invalidate ui)
+          (ui-event ui node "error" (dict "error" error))
+        })
+      }))))
+(let __ui-icon-unmount__ (fn (ui node) (set node.state.source nil)))
+(let __ui-icon-measure__ (fn (ui node)
+  (if node.state.mounted (__ui-icon-load__ ui node))
+  (let extent node.props.size)
+  (let image node.state.image)
+  (+ (if image (vec2 (* extent (/ image.w image.h)) extent) (vec2 extent))
+    (* 2 (Layout.padding node.props.padding)))))
+(let __ui-icon-paint__ (fn (ui node context)
+  (if (and node.state.image node.props.color) {
+    (let bounds (Layout.inset node.bounds node.props.padding))
+    (let natural (vec2 (* node.props.size (/ node.state.image.w node.state.image.h)) node.props.size))
+    (let factor (min (/ bounds.z natural.x) (/ bounds.w natural.y)))
+    (if (and (= node.props.w nil) (= node.props.h nil)) (set factor (min 1 factor)))
+    (let placed (Layout.align bounds (* natural factor) (or node.props.h-align "center") (or node.props.v-align "center")))
+    (ui-icon-image context node.state.image placed node.clip node.props.color ui.scale)
+  })))
+(let ui-icon-component (dict "mount" __ui-icon-load__ "unmount" __ui-icon-unmount__
+  "measure" __ui-icon-measure__ "paint" __ui-icon-paint__))
+(let ui-icon (Resources.withOrigin (fn (origin source &rest options)
+  (let reference (if (str? source) (Resources.resolve source origin) source))
+  (let node (ui-node ui-icon-component (dict "source" reference "source-origin" origin
+    "size" 16 "color" (vec4 0.87 0.9 0.95 1) "padding" 0) options))
+  (if (not (str? source)) (set node.state.image (source : texture2d)))
+  node) (source-url ".")))
 
 (let __ui-button-paint__ (fn (ui node context)
   (let background node.props.background)
   (if node.state.hot (set background node.props.hover))
   (if (not (= node.state.pressed-id nil)) (set background node.props.pressed))
   (if node.props.disabled (set background node.props.disabled-background))
-  (ui-rectangle context node background)
-  (if node.state.focused {
-    (let bounds node.bounds)
-    (__ui-rectangle__ context (* (vec4 bounds.x bounds.y bounds.z 2) ui.scale)
-      (* node.clip ui.scale) node.props.focus-color)
-    (__ui-rectangle__ context (* (vec4 bounds.x (- (+ bounds.y bounds.w) 2) bounds.z 2) ui.scale)
-      (* node.clip ui.scale) node.props.focus-color)
-  })
-  (let image node.state.image)
-  (ui-image context image.texture
-    (vec2 (+ node.bounds.x (/ (- node.bounds.z (/ image.w ui.scale)) 2))
-      (+ node.bounds.y (/ (- node.bounds.w (/ image.h ui.scale)) 2))) node.clip ui.scale)))
+  (ui-rectangle context node background)))
+(let __ui-button-overlay__ (fn (ui node context)
+  (if (and (not node.props.disabled)
+    (or node.state.focused (not (= node.state.pressed-id nil))))
+    (__ui-outline__ context node.bounds node.clip node.props.focus-color ui.scale node.props.border-width))))
 
 (let ui-button-component (dict
-  "measure" __ui-label-measure__ "paint" __ui-button-paint__))
+  "measure" (fn (ui node)
+    (if node.state.value-label {
+      (if (not (= node.props.value node.state.value))
+        (set node.state.value-label.props.value node.props.value)
+        else (set node.props.value node.state.value-label.props.value))
+      (set node.state.value node.props.value)
+    })
+    (__ui-container-measure__ ui node))
+  "arrange" (fn (ui node) (__ui-container-arrange__ ui node))
+  "paint" __ui-button-paint__ "overlay" __ui-button-overlay__))
 
-(let button (fn (value &rest options)
-  (ui-node ui-button-component
-    (dict "value" (value : str) "font" "sans-serif" "size" 14
-      "color" (vec4 0.9 0.93 1 1) "padding" 10 "focusable" true
+(let __ui-hover-owner__ (fn (node owner)
+  (if (and (same? node.component ui-label-component) (= node.state.hover-owner nil))
+    (set node.state.hover-owner owner))
+  (for child node.children (__ui-hover-owner__ child owner))))
+
+(let ui-button (fn (&rest items)
+  (let node (ui-node ui-button-component
+    (dict "axis" "x" "gap" 4 "h-align" "center" "v-align" "center"
+      "padding" (vec2 10 4) "focusable" true "hit-children" false
       "cursor" "pointer"
       "background" (vec4 0.16 0.19 0.25 1) "hover" (vec4 0.23 0.28 0.36 1)
       "pressed" (vec4 0.12 0.16 0.23 1) "disabled-background" (vec4 0.1 0.11 0.14 1)
-      "focus-color" (vec4 0.42 0.7 1 1)) options)))
+      "focus-color" (vec4 0.42 0.7 1 1) "border-width" 2) items))
+  ; Preserve the mutable value shorthand for a button built from a single label.
+  (if (and (= (len node.children) 1) (same? (get node.children.0).component ui-label-component)) {
+    (set node.state.value-label (get node.children.0))
+    (set node.props.value node.state.value-label.props.value)
+    (set node.state.value node.props.value)
+  })
+  (for child node.children (__ui-hover-owner__ child node))
+  node))
+
+; Single-line input is ordinary Lisp; the host only supplies invisible native editing.
+(let __ui-textbox-mount__ (fn (ui node)
+  (set node.state.proxy (text-proxy (fn (edit) {
+    (let value "")
+    (for line edit.lines (set value $"{value}{line.text}"))
+    (if (not (= value edit.content)) {
+      (TextProxy.sync node.state.proxy value (min edit.anchor (len value)) (min edit.head (len value)))
+      (set edit (TextProxy.snapshot node.state.proxy))
+    })
+    (set node.props.value value)
+    (set node.state.edit edit)
+    (ui-event ui node "change" (dict "value" value))
+  })))
+  (TextProxy.sync node.state.proxy node.props.value (len node.props.value) (len node.props.value))
+  (set node.state.edit (TextProxy.snapshot node.state.proxy))
+  (set node.state.key-release (TextProxy.listenKeys node.state.proxy
+    (fn (event) (ui-input ui "keydown" event))))))
+(let __ui-textbox-unmount__ (fn (ui node)
+  (if node.state.key-release (node.state.key-release))
+  (if node.state.proxy (TextProxy.dispose node.state.proxy))
+  (set node.state.proxy nil)))
+(let __ui-textbox-measure__ (fn (ui node)
+  (if node.state.proxy (TextProxy.readOnly node.state.proxy (bool node.props.disabled)))
+  (if (and node.state.proxy (not (= node.state.edit.content node.props.value))) {
+    (TextProxy.sync node.state.proxy node.props.value (len node.props.value) (len node.props.value))
+    (set node.state.edit (TextProxy.snapshot node.state.proxy))
+  })
+  (let typography node.props)
+  (let key (list typography.font typography.size ui.scale))
+  (if (not (= key node.state.cell-key)) {
+    (let wide (text (font typography.font) (size (* typography.size ui.scale)) (for i 100 "M")))
+    (let narrow (text (font typography.font) (size (* typography.size ui.scale)) "M"))
+    (set node.state.cell (/ (- wide.w narrow.w) (* 99 ui.scale)))
+    (set node.state.cell-key key)
+  })
+  (let appearance (list node.props.value typography.font typography.size (re-copy typography.color) ui.scale))
+  (if (not (= appearance node.state.input-key)) {
+    (set node.state.input-key appearance) (ui-repaint ui)
+  })
+  (vec2 100 32)))
+(let __ui-textbox-event__ (fn (ui node name event)
+  (if (= name "focus") (TextProxy.focus node.state.proxy))
+  (if (= name "blur") (TextProxy.blur node.state.proxy))
+  (if node.props.disabled (return))
+  (if (and (= name "keydown") (= event.key "Enter")) {
+    (set event.prevent-default true) (set event.stop true)
+    (ui-event ui node "submit" (dict "value" node.props.value))
+  })
+  (if (or (= name "pointerdown")
+    (and (= name "pointermove") node.state.selecting (> event.buttons 0))) {
+    (if (= name "pointerdown") (set node.state.selecting true))
+    (let pad (Layout.padding node.props.padding))
+    (let column (i32 (max 0 (+ 0.5 (/ (+ (- event.x node.bounds.x pad.x)
+      (or node.state.scroll 0)) node.state.cell)))))
+    (TextProxy.select node.state.proxy 0 column (or event.shift (= name "pointermove")))
+    (TextProxy.focus node.state.proxy) (set event.stop true)
+  })
+  (if (or (= name "pointerup") (= name "pointercancel")) (set node.state.selecting false))))
+(let __ui-textbox-paint__ (fn (ui node context)
+  (ui-rectangle context node node.props.background)
+  (let typography node.props)
+  (let clip (ui-intersect node.clip (Layout.inset node.bounds node.props.padding)))
+  (let edit node.state.edit)
+  (let head (* edit.head node.state.cell))
+  (let scroll (or node.state.scroll 0))
+  (if node.state.focused {
+    (if (< head scroll) (set scroll head))
+    (if (> (+ head node.state.cell) (+ scroll clip.z)) (set scroll (max 0 (- (+ head node.state.cell) clip.z))))
+  })
+  (set node.state.scroll scroll)
+  (let raster-scroll (i32 (+ (* scroll ui.scale) 0.5)))
+  (let raster-width (max 1 (i32 (+ (* clip.z ui.scale) 0.5))))
+  (let key (list node.props.value typography.font typography.size (re-copy typography.color)
+    ui.scale raster-width raster-scroll))
+  (if (not (= key node.state.text-key)) {
+    (set node.state.image (text (font typography.font) (size (* typography.size ui.scale))
+      (width raster-width) (wrap false) (fill typography.color)
+      (offset (vec2 (- raster-scroll) 0)) (span node.props.value)))
+    (set node.state.text-key key)
+  })
+  (let origin (vec2 clip.x
+    (+ clip.y (- (/ clip.w 2) (/ (+ node.state.image.ink.top node.state.image.ink.bottom) (* 2 ui.scale))))))
+  (if (not (= edit.anchor edit.head)) {
+    (let start (+ (- origin.x (/ raster-scroll ui.scale)) (* (min edit.anchor edit.head) node.state.cell)))
+    (let width (* (abs (- edit.head edit.anchor)) node.state.cell))
+    (__ui-rectangle__ context (* (vec4 start clip.y width clip.w) ui.scale) (* clip ui.scale) node.props.selection-color)
+  })
+  (ui-image context node.state.image.texture origin clip ui.scale)
+  (if node.state.focused {
+    (let position (ui-pixel-position (* (vec2 (+ (- origin.x (/ raster-scroll ui.scale)) head) clip.y) ui.scale)))
+    (__ui-rectangle__ context (vec4 position ui.scale (* clip.w ui.scale)) (* clip ui.scale) typography.color)
+    (TextProxy.caret node.state.proxy position (* clip.w ui.scale))
+    (__ui-outline__ context node.bounds node.clip node.props.focus-color ui.scale node.props.border-width)
+  })))
+(let ui-textbox-component (dict "mount" __ui-textbox-mount__ "unmount" __ui-textbox-unmount__
+  "measure" __ui-textbox-measure__ "event" __ui-textbox-event__ "paint" __ui-textbox-paint__))
+(let ui-textbox (fn (value &rest options)
+  (ui-node ui-textbox-component (dict "value" (value : str) "font" "monospace" "size" 14
+    "padding" 6 "grow" 1 "h" 32 "focusable" true "cursor" "text"
+    "color" (vec4 0.9 0.93 1 1) "background" (vec4 0.08 0.1 0.14 1)
+    "focus-color" (vec4 0.42 0.7 1 1) "border-width" 2 "selection-color" (vec4 0.4 0.7 1 0.3)) options)))
 
 (let __ui-container-measure__ (fn (ui node)
   (let width 0)
@@ -184,15 +442,14 @@
   (let gap (* (max 0 (- count 1)) node.props.gap))
   (if (= node.props.axis "x") (set width (+ width gap)))
   (if (= node.props.axis "y") (set height (+ height gap)))
-  (vec2 (+ width (* 2 node.props.padding)) (+ height (* 2 node.props.padding)))))
+  (+ (vec2 width height) (* 2 (Layout.padding node.props.padding)))))
 
 (let __ui-container-arrange__ (fn (ui node)
-  (let padding node.props.padding)
-  (let bounds (vec4 (+ node.bounds.x padding) (+ node.bounds.y padding)
-    (max 0 (- node.bounds.z (* 2 padding))) (max 0 (- node.bounds.w (* 2 padding)))))
+  (let bounds (Layout.inset node.bounds node.props.padding))
   (let axis node.props.axis)
   (if (= axis nil) {
-    (for child node.children (ui-arrange ui child bounds node.clip))
+    (for child node.children (ui-arrange ui child
+      (Layout.align bounds child.measured (or node.props.h-align "stretch") (or node.props.v-align "stretch")) node.clip))
     (return)
   })
   (let used 0)
@@ -207,15 +464,19 @@
   })
   (set used (+ used (* (max 0 (- count 1)) node.props.gap)))
   (let spare (max 0 (- (if (= axis "x") bounds.z bounds.w) used)))
-  (let position (if (= axis "x") bounds.x bounds.y))
+  (let alignment (if (= axis "x") (or node.props.h-align "left") (or node.props.v-align "top")))
+  (let position (+ (if (= axis "x") bounds.x bounds.y)
+    (if (> grow 0) 0 (Layout.offset (if (= axis "x") bounds.z bounds.w) used alignment))))
   (for child node.children {
     (if (= child.props.visible false) (continue))
     (let extra (if (> grow 0) (* spare (/ (max 0 (or child.props.grow 0)) grow)) 0))
     (let extent (if (> (or child.props.grow 0) 0) extra
       (if (= axis "x") child.measured.x child.measured.y)))
-    (ui-arrange ui child
-      (if (= axis "x") (vec4 position bounds.y extent bounds.w)
-        (vec4 bounds.x position bounds.z extent)) node.clip)
+    (let slot (if (= axis "x") (vec4 position bounds.y extent bounds.w)
+      (vec4 bounds.x position bounds.z extent)))
+    (ui-arrange ui child (Layout.align slot child.measured
+      (if (= axis "x") "stretch" (or node.props.h-align "stretch"))
+      (if (= axis "y") "stretch" (or node.props.v-align "stretch"))) node.clip)
     (set position (+ position extent node.props.gap))
   })))
 
@@ -236,15 +497,23 @@
   (set node.state.scale ui.scale)
   (let props node.props)
   (let appearance (list ui.scale props.visible props.w props.h props.grow props.padding props.gap
-    props.disabled props.title (re-copy props.background) (re-copy props.hover)
+    props.disabled props.title props.h-align props.v-align props.scroll-indicator-width props.scroll-indicator-size
+    (re-copy props.scroll-indicator-color) props.scroll-x props.scroll-y props.scrollbar-size
+    props.scrollbar-min-thumb props.wheel-line (re-copy props.scroll-state)
+    (re-copy props.scrollbar-track) (re-copy props.scrollbar-color) (re-copy props.scrollbar-active-color)
+    (re-copy props.background) (re-copy props.hover)
     (re-copy props.pressed) (re-copy props.focus-color) props.border-width
     (re-copy props.border-color) (re-copy props.border-hover-color) (re-copy props.border-active-color)))
   (if (not (= appearance node.state.appearance)) {
     (set node.state.appearance appearance)
     (ui-invalidate ui)
   })
-  (if (= node.props.visible false) { (set node.measured (vec2)) (return) })
+  (if (= node.props.visible false) {
+    (if (and ui.focus (ui-path node ui.focus)) (ui-focus ui (list)))
+    (set node.measured (vec2)) (return)
+  })
   (let measured (if node.component.measure (node.component.measure ui node) (vec2)))
+  (for overlay node.overlays (ui-measure ui overlay))
   (set node.measured (vec2
     (max 0 (if (= node.props.w nil) measured.x node.props.w))
     (max 0 (if (= node.props.h nil) measured.y node.props.h))))))
@@ -270,6 +539,7 @@
   (if (or (= node.props.visible false) (= node.props.hit false)
     (not (ui-contains node.bounds x y)) (not (ui-contains node.clip x y))) (return nil))
   (let path (list node))
+  (if (= node.props.hit-children false) (return path))
   (for offset (len node.children) {
     (let child (get node.children.(- (len node.children) offset 1)))
     (let found (ui-hit child x y))
@@ -311,6 +581,7 @@
     (let handlers (get node.handlers.(get name)))
     (if handlers (for handler (copy handlers) {
       (handler event)
+      (set event.handled true)
       (ui-invalidate ui)
       (if event.stop (break))
     }))
@@ -337,11 +608,30 @@
       (break)
     })
   })
-  ; Keyboard focus reveals overflowed strip items without moving other panes.
-  (for ancestor (or ui.focus-path (list)) {
+  ; Reveal inner viewports before their ancestors so nested focus stays visible.
+  (let focused-path (or ui.focus-path (list)))
+  (for offset (len focused-path) {
+    (let ancestor (get focused-path.(- (len focused-path) offset 1)))
+    (if (and (same? ancestor.component ui-scroll-component) (not (same? ancestor ui.focus))) {
+      (let viewport ancestor.state.viewport)
+      (let position (copy ancestor.state.offset))
+      ; Wide rows cannot fit horizontally; preserve the user's horizontal offset.
+      (if (<= ui.focus.bounds.z viewport.z) {
+        (if (< ui.focus.bounds.x viewport.x)
+          (set position.x (+ position.x (- ui.focus.bounds.x viewport.x)))
+          elif (> (+ ui.focus.bounds.x ui.focus.bounds.z) (+ viewport.x viewport.z))
+          (set position.x (+ position.x (- (+ ui.focus.bounds.x ui.focus.bounds.z) (+ viewport.x viewport.z)))))
+      })
+      (if (< ui.focus.bounds.y viewport.y)
+        (set position.y (+ position.y (- ui.focus.bounds.y viewport.y)))
+        elif (> (+ ui.focus.bounds.y ui.focus.bounds.w) (+ viewport.y viewport.w))
+        (set position.y (+ position.y (- (+ ui.focus.bounds.y ui.focus.bounds.w) (+ viewport.y viewport.w)))))
+      (ui-scroll-to ui ancestor position)
+    })
     (if (or (same? ancestor.component ui-strip-component) (same? ancestor.component ui-taskbar-component)) {
-      (let left (+ ancestor.bounds.x ancestor.props.padding))
-      (let right (- (+ ancestor.bounds.x ancestor.bounds.z) ancestor.props.padding))
+      (let viewport (or ancestor.state.viewport (Layout.inset ancestor.bounds ancestor.props.padding)))
+      (let left viewport.x)
+      (let right (+ viewport.x viewport.z))
       (let scroll (or ancestor.state.scroll 0))
       (if (< ui.focus.bounds.x left) (set scroll (+ scroll (- ui.focus.bounds.x left))))
       (if (> (+ ui.focus.bounds.x ui.focus.bounds.z) right)
@@ -356,12 +646,23 @@
   (let current (copy path))
   (insert current node)
   (if (and node.props.focusable (not node.props.disabled)) (insert result current))
-  (for child node.children (__ui-focus-paths__ child current result))))
+  (if (not (= node.props.hit-children false))
+    (for child node.children (__ui-focus-paths__ child current result)))))
 
 (let ui-input (fn (ui name source)
   (if (not ui.mounted) (return))
   (let original source)
   (set source (copy source))
+  (if (and ui.drag (= name "keydown") (= source.code "Escape")) {
+    (let id ui.drag.id)
+    (ui-dock-drag ui "pointercancel" (dict "id" id))
+    (__ui-release-pointer__ ui id)
+    (set original.handled true)
+    (set original.prevent-default true)
+    (ui-update-cursor ui)
+    (ui-invalidate ui)
+    (return)
+  })
   (if (not (= source.x nil)) {
     (set source.x (/ source.x ui.scale))
     (set source.y (/ source.y ui.scale))
@@ -370,6 +671,7 @@
   })
   (if (= name "pointerleave") (set ui.pointer nil))
   (if (and ui.drag (not (= source.id nil)) (= ui.drag.id source.id)) {
+    (set original.handled true)
     (ui-dock-drag ui name source)
     (ui-update-cursor ui)
     (ui-reflow ui)
@@ -378,6 +680,7 @@
   (if (and (= name "pointerdown") (= source.button 0)
     (not (and ui.popup (ui-hit ui.popup.node source.x source.y)))
     (ui-dock-grip ui source)) {
+      (set original.handled true)
       (if ui.popup (ui-close-popup ui))
       (ui-update-cursor ui)
       (return)
@@ -465,6 +768,9 @@
   (if (= source.code "Escape") (ui-close-popup ui))
   (if (and event event.prevent-default) (set source.prevent-default true))
   (if source.prevent-default (set original.prevent-default true))
+  (if (or captured (and target target.props.focusable)
+    (and event (or event.handled event.stop event.prevent-default)))
+    (set original.handled true))
   (ui-update-cursor ui)
   (if (not (= name "pointermove")) (ui-invalidate ui))))
 
@@ -476,6 +782,7 @@
     (if callback (callback ui node))
   })
   (for child node.children (__ui-lifecycle__ ui child operation))
+  (for overlay node.overlays (__ui-lifecycle__ ui overlay operation))
   (if (and (= operation "unmount") node.state.mounted) {
     (if callback (callback ui node))
     (set node.state.mounted false)
@@ -486,20 +793,62 @@
 
 ; Scrollable strips support menus, toolbars, and the minimized-pane tray.
 (let __ui-strip-measure__ (fn (ui node)
+  (for overlay node.overlays {
+    (if (not overlay.state.configured.size) (set overlay.props.size node.props.scroll-indicator-size))
+    (if (not overlay.state.configured.color) (set overlay.props.color node.props.scroll-indicator-color))
+  })
   (let measured (__ui-container-measure__ ui node))
   (vec2 0 measured.y)))
 (let __ui-strip-arrange__ (fn (ui node)
+  (let inner (Layout.inset node.bounds node.props.padding))
   (let width 0)
   (for child node.children (set width (+ width child.measured.x)))
   (set width (+ width (* (max 0 (- (len node.children) 1)) node.props.gap)))
-  (set node.state.max-scroll (max 0 (- width (max 0 (- node.bounds.z (* 2 node.props.padding))))))
+  (let available inner.z)
+  ; Reserve both indicator gutters while overflowing, so scrolling cannot shift layout.
+  (let gutter (if (> width available) (max 0 (min (/ available 2) node.props.scroll-indicator-width)) 0))
+  (set node.state.indicator-gutter gutter)
+  (set node.state.viewport (vec4 (+ inner.x gutter) inner.y (max 0 (- available (* 2 gutter))) inner.w))
+  (set node.state.max-scroll (max 0 (- width node.state.viewport.z)))
   (set node.state.scroll (clamp (or node.state.scroll 0) 0 node.state.max-scroll))
-  (let x (- (+ node.bounds.x node.props.padding) node.state.scroll))
+  (let x (- node.state.viewport.x node.state.scroll))
+  (let clip (ui-intersect node.clip node.state.viewport))
   (for child node.children {
-    (ui-arrange ui child (vec4 x (+ node.bounds.y node.props.padding)
-      child.measured.x (max 0 (- node.bounds.w (* 2 node.props.padding)))) node.clip)
+    (ui-arrange ui child (vec4 x node.state.viewport.y
+      child.measured.x node.state.viewport.w) clip)
     (set x (+ x child.measured.x node.props.gap))
+  })
+  (let size (min (min gutter inner.w) node.props.scroll-indicator-size))
+  (for i (len node.overlays) {
+    (let indicator (get node.overlays.(get i)))
+    (set indicator.props.visible (and (> size 0)
+      (if (= i 0) (> node.state.scroll 0) (< node.state.scroll node.state.max-scroll))))
+    (let x (if (= i 0) (+ inner.x (/ (- gutter size) 2))
+      (- (+ inner.x inner.z) (/ (+ gutter size) 2))))
+    (ui-arrange ui indicator (vec4 x (+ inner.y (/ (- inner.w size) 2)) size size) node.clip)
   })))
+
+(let __ui-scroll-chevron-shader__ (sh (bounds:vec4 color:vec4 direction:f32 thickness:f32)
+  (let p (- xy (+ bounds.xy (/ bounds.zw 2))))
+  (let y (abs p.y))
+  (let edge (- p.x (* direction (- (* bounds.z 0.15) y))))
+  (if (and (<= y (* bounds.w 0.3))
+    (<= (abs edge) thickness))
+    (return color))
+  (vec4)))
+(let __ui-chevron-component__ (dict
+  "measure" (fn (ui node) (vec2 node.props.size))
+  "paint" (fn (ui node context)
+    (if node.props.color
+      (layer context (* node.clip ui.scale) __ui-scroll-chevron-shader__
+        (* node.bounds ui.scale) node.props.color node.props.direction ui.scale)))))
+(let __ui-strip-indicators__ (fn (node)
+  (set node.overlays (list
+    (ui-node __ui-chevron-component__ (dict "size" 16 "direction" -1 "hit" false))
+    (ui-node __ui-chevron-component__ (dict "size" 16 "direction" 1 "hit" false))))
+  node))
+(let __ui-strip-overlay__ (fn (ui node context)
+  (for overlay node.overlays (ui-paint ui overlay context))))
 (let __ui-strip-event__ (fn (ui node name event)
   (if (= name "wheel") {
     (let delta (if (= event.dx 0) event.dy event.dx))
@@ -511,11 +860,169 @@
     (ui-invalidate ui)
   })))
 (let ui-strip-component (dict "measure" __ui-strip-measure__
-  "arrange" __ui-strip-arrange__ "paint" __ui-container-paint__ "event" __ui-strip-event__))
+  "arrange" __ui-strip-arrange__ "paint" __ui-container-paint__ "event" __ui-strip-event__
+  "overlay" __ui-strip-overlay__))
 (let ui-bar (fn (&rest items)
-  (ui-node ui-strip-component (dict "axis" "x" "padding" 6 "gap" 6 "h" 40
-    "background" (vec4 0.1 0.12 0.16 1)) items)))
+  (__ui-strip-indicators__ (ui-node ui-strip-component (dict "axis" "x" "padding" 6 "gap" 6 "h" 40
+    "scroll-indicator-width" 20 "scroll-indicator-size" 16 "scroll-indicator-color" (vec4 0.85 0.9 1 1)
+    "background" (vec4 0.1 0.12 0.16 1)) items))))
 (let ui-menu (fn (&rest items) (ui-bar items)))
+
+; A viewport composes ordinary content and non-interactive scrollbar rectangles.
+; The viewport owns scrollbar input; its children retain normal hit/focus routing.
+(let __ui-scroll-measure__ (fn (ui node)
+  (let content node.state.content)
+  (set content.props.axis node.props.axis)
+  (set content.props.gap node.props.gap)
+  (ui-measure ui content)
+  (+ (* 2 (Layout.padding node.props.padding))
+    (vec2 (if node.props.scroll-x 0 content.measured.x)
+      (if node.props.scroll-y 0 content.measured.y)))))
+
+(let __ui-scroll-arrange__ (fn (ui node)
+  (let inner (Layout.inset node.bounds node.props.padding))
+  (let measured node.state.content.measured)
+  (let thickness (max 0 node.props.scrollbar-size))
+  (let show-x false)
+  (let show-y false)
+  ; One scrollbar may reduce the other axis enough to require its scrollbar.
+  (for pass 2 {
+    (set show-x (and node.props.scroll-x (> measured.x (- inner.z (if show-y thickness 0)))))
+    (set show-y (and node.props.scroll-y (> measured.y (- inner.w (if show-x thickness 0)))))
+  })
+  (let viewport (vec4 inner.xy
+    (max 0 (- inner.z (if show-y thickness 0)))
+    (max 0 (- inner.w (if show-x thickness 0)))))
+  (let extent (vec2 (if node.props.scroll-x (max measured.x viewport.z) viewport.z)
+    (if node.props.scroll-y (max measured.y viewport.w) viewport.w)))
+  (set node.state.viewport viewport)
+  (set node.state.max-offset (max (vec2) (- extent viewport.zw)))
+  ; Retain the requested position while asynchronously populated content is empty.
+  (if node.props.scroll-state
+    (set node.state.offset (vec2 (or node.props.scroll-state.x 0) (or node.props.scroll-state.y 0))))
+  (set node.state.offset (vec2
+    (clamp node.state.offset.x 0 node.state.max-offset.x)
+    (clamp node.state.offset.y 0 node.state.max-offset.y)))
+  (ui-arrange ui node.state.content (vec4 (- viewport.xy node.state.offset) extent)
+    (ui-intersect node.clip viewport))
+  (let track-x (vec4 viewport.x (+ viewport.y viewport.w) viewport.z (if show-x (min thickness inner.w) 0)))
+  (let track-y (vec4 (+ viewport.x viewport.z) viewport.y (if show-y (min thickness inner.z) 0) viewport.w))
+  (let thumb-w (min track-x.z (max node.props.scrollbar-min-thumb
+    (* track-x.z (/ viewport.z (if (> extent.x 0) extent.x 1))))))
+  (let thumb-h (min track-y.w (max node.props.scrollbar-min-thumb
+    (* track-y.w (/ viewport.w (if (> extent.y 0) extent.y 1))))))
+  (let thumb-x (vec4 (+ track-x.x (* (- track-x.z thumb-w)
+    (/ node.state.offset.x (if (> node.state.max-offset.x 0) node.state.max-offset.x 1)))) track-x.y thumb-w track-x.w))
+  (let thumb-y (vec4 track-y.x (+ track-y.y (* (- track-y.w thumb-h)
+    (/ node.state.offset.y (if (> node.state.max-offset.y 0) node.state.max-offset.y 1)))) track-y.z thumb-h))
+  (set node.state.track-x track-x) (set node.state.track-y track-y)
+  (set node.state.thumb-x thumb-x) (set node.state.thumb-y thumb-y)
+  (let rectangles (list track-x thumb-x track-y thumb-y))
+  (for i 4 {
+    (let overlay (get node.overlays.(get i)))
+    (let horizontal (< i 2))
+    (set overlay.props.visible (if horizontal show-x show-y))
+    (set overlay.props.background (if (= (% i 2) 0) node.props.scrollbar-track
+      (if (and node.state.drag (= node.state.drag.axis (if horizontal "x" "y")))
+        node.props.scrollbar-active-color node.props.scrollbar-color)))
+    (ui-arrange ui overlay (get rectangles.(get i)) node.clip)
+  })))
+
+(let ui-scroll-to (fn (ui node position)
+  (set position (position : vec2))
+  (let next (vec2 (clamp position.x 0 node.state.max-offset.x)
+    (clamp position.y 0 node.state.max-offset.y)))
+  (if node.props.scroll-state {
+    (set node.props.scroll-state.x next.x) (set node.props.scroll-state.y next.y)
+  })
+  (if (= next node.state.offset) (return false))
+  (set node.state.offset next)
+  (__ui-scroll-arrange__ ui node)
+  (ui-repaint ui)
+  true))
+
+(let __ui-scroll-drag__ (fn (ui node event)
+  (let horizontal (= node.state.drag.axis "x"))
+  (let track (if horizontal node.state.track-x node.state.track-y))
+  (let thumb (if horizontal node.state.thumb-x node.state.thumb-y))
+  (let travel (if horizontal (- track.z thumb.z) (- track.w thumb.w)))
+  (let point (- (if horizontal event.x event.y) (if horizontal track.x track.y) node.state.drag.grab))
+  (let position (copy node.state.offset))
+  (let value (* (clamp (/ point (if (> travel 0) travel 1)) 0 1)
+    (if horizontal node.state.max-offset.x node.state.max-offset.y)))
+  (if horizontal (set position.x value) else (set position.y value))
+  (ui-scroll-to ui node position)))
+
+(let __ui-scroll-event__ (fn (ui node name event)
+  (if node.props.disabled (return))
+  (if (and (= name "pointerdown") (= event.button 0)) {
+    (let horizontal (ui-contains node.state.track-x event.x event.y))
+    (let vertical (ui-contains node.state.track-y event.x event.y))
+    (if (or horizontal vertical) {
+      (let thumb (if horizontal node.state.thumb-x node.state.thumb-y))
+      (let inside (ui-contains thumb event.x event.y))
+      (set node.state.drag (dict "id" event.id "axis" (if horizontal "x" "y")
+        "grab" (if inside (- (if horizontal event.x event.y) (if horizontal thumb.x thumb.y))
+          (/ (if horizontal thumb.z thumb.w) 2))))
+      (__ui-scroll-drag__ ui node event)
+      (__ui-scroll-arrange__ ui node)
+      (ui-repaint ui)
+      (set event.stop true) (set event.prevent-default true)
+      (return)
+    })
+  })
+  (if (and node.state.drag (= event.id node.state.drag.id)) {
+    (if (= name "pointermove") (__ui-scroll-drag__ ui node event))
+    (if (or (= name "pointerup") (= name "pointercancel")) {
+      (set node.state.drag nil)
+      (__ui-scroll-arrange__ ui node) (ui-repaint ui)
+    })
+    (set event.stop true) (set event.prevent-default true)
+    (return)
+  })
+  (if event.prevent-default (return))
+  (if (= name "wheel") {
+    (let dx (or event.dx 0)) (let dy (or event.dy 0))
+    (if event.shift { (if (= dx 0) (set dx dy)) (set dy 0) })
+    (if (= event.mode 1) { (set dx (* dx node.props.wheel-line)) (set dy (* dy node.props.wheel-line)) })
+    (if (= event.mode 2) { (set dx (* dx node.state.viewport.z)) (set dy (* dy node.state.viewport.w)) })
+    (if (ui-scroll-to ui node (+ node.state.offset (vec2 dx dy))) {
+      (set event.prevent-default true) (set event.stop true)
+    })
+  })
+  (if (and (= name "keydown") (same? event.target node)) {
+    (let position (copy node.state.offset))
+    (if (= event.code "ArrowDown") (set position.y (+ position.y node.props.wheel-line))
+      elif (= event.code "ArrowUp") (set position.y (- position.y node.props.wheel-line))
+      elif (= event.code "ArrowRight") (set position.x (+ position.x node.props.wheel-line))
+      elif (= event.code "ArrowLeft") (set position.x (- position.x node.props.wheel-line))
+      elif (= event.code "PageDown") (set position.y (+ position.y node.state.viewport.w))
+      elif (= event.code "PageUp") (set position.y (- position.y node.state.viewport.w))
+      elif (= event.code "Home") {
+        (if (or event.ctrl (not node.props.scroll-y)) (set position.x 0))
+        (set position.y 0)
+      } elif (= event.code "End") {
+        (if (or event.ctrl (not node.props.scroll-y)) (set position.x node.state.max-offset.x))
+        (set position.y node.state.max-offset.y)
+      } else (return))
+    (ui-scroll-to ui node position)
+    (set event.prevent-default true) (set event.stop true)
+  })))
+
+(let ui-scroll-component (dict "measure" __ui-scroll-measure__ "arrange" __ui-scroll-arrange__
+  "event" __ui-scroll-event__ "paint" __ui-container-paint__ "overlay" __ui-strip-overlay__))
+(let ui-scroll (fn (&rest items)
+  (let node (ui-node ui-scroll-component (dict "axis" "y" "padding" 0 "gap" 8 "grow" 1
+    "focusable" true "scroll-x" false "scroll-y" true "scrollbar-size" 8 "scrollbar-min-thumb" 20 "wheel-line" 20
+    "scrollbar-track" (vec4 0.08 0.1 0.14 1) "scrollbar-color" (vec4 0.4 0.45 0.55 1)
+    "scrollbar-active-color" (vec4 0.6 0.78 1 1)) items))
+  (set node.state.content (ui-vbox node.children))
+  (set node.children (list node.state.content))
+  (set node.state.offset (vec2)) (set node.state.max-offset (vec2))
+  (set node.state.viewport (vec4))
+  (set node.overlays (list (ui-box) (ui-box) (ui-box) (ui-box)))
+  (for overlay node.overlays (set overlay.props.hit false))
+  node))
 
 (let ui-close-popup (fn (ui)
   (if ui.popup {
@@ -533,10 +1040,22 @@
   (if paths (ui-focus ui (get paths.0)))
   (ui-invalidate ui)))
 (let ui-dropdown (fn (title &rest items)
-  (let popup (ui-vbox (ui-style (dict "padding" 6 "gap" 2
-    "background" (vec4 0.13 0.16 0.21 1))) items))
-  (button title (ui-on "click" (fn (event)
-    (ui-open-popup event.ui popup event.current-target))))))
+  (let children (list))
+  (let options (list))
+  (let collect (fn (items)
+    (for item items {
+      (if (list? item) (collect item)
+        elif (and (dict? item) (or (= item.kind "config") (= item.kind "style") (= item.kind "handler"))) (insert options item)
+        else (insert children item))
+    })))
+  (collect items)
+  (let popup (ui-vbox (padding 6)
+    (gap 2)
+    (background (vec4 0.13 0.16 0.21 1)) children))
+  (let node (ui-button title options (ui-on "click" (fn (event)
+    (ui-open-popup event.ui popup event.current-target)))))
+  (set node.state.popup-node popup)
+  node))
 
 ; Docking is an editable split tree, owned by a workspace instance.
 (let __ui-dock-active__ (fn (tree)
@@ -599,8 +1118,10 @@
   (if (= workspace.props.layout nil) (return))
   (let layout workspace.props.layout)
   (set layout.tree (__ui-dock-tree-data__ workspace.state.tree))
+  (set layout.order (list))
   (set layout.panes (list))
   (for pane workspace.state.panes {
+    (insert layout.order pane.props.id)
     (let bounds pane.state.rect)
     (insert layout.panes (dict "id" pane.props.id "floating" pane.state.floating
       "minimized" pane.state.minimized "closed" pane.state.closed
@@ -664,16 +1185,21 @@
   (set workspace.state.tree nil)
   (set workspace.state.version 0)
   (let count 0)
+  (let docked 0)
   (for pane workspace.children {
     (set pane.state.workspace workspace)
     (set pane.state.dock-id count)
-    (set pane.state.floating false)
+    (set pane.state.floating (bool pane.props.floating))
     (set pane.state.minimized false)
-    (set pane.state.closed false)
+    (set pane.state.closed (bool pane.props.closed))
+    (if pane.state.closed (set pane.props.visible false))
     (set pane.state.rect (vec4 20 20 pane.props.float-w pane.props.float-h))
-    (set workspace.state.tree (if (= count 0) pane
-      (dict "kind" "split" "axis" "x" "ratio" (/ count (+ count 1))
-        "first" workspace.state.tree "second" pane)))
+    (if (not (or pane.state.floating pane.state.closed)) {
+      (set workspace.state.tree (if (= docked 0) pane
+        (dict "kind" "split" "axis" "x" "ratio" (/ docked (+ docked 1))
+          "first" workspace.state.tree "second" pane)))
+      (set docked (+ docked 1))
+    })
     (set count (+ count 1))
   })
   (let layout workspace.props.layout)
@@ -694,6 +1220,15 @@
       (if (not found) (set pane.state.floating true))
     })
     (set workspace.state.tree (__ui-dock-tree-restore__ workspace layout.tree))
+    (if layout.order {
+      (let ordered (list))
+      (for id layout.order (for pane workspace.state.panes {
+        (if (= pane.props.id id) { (insert ordered pane) (break) })
+      }))
+      (for pane workspace.state.panes
+        (if (= (__ui-index__ ordered pane) nil) (insert ordered pane)))
+      (set workspace.state.panes ordered)
+    })
   })
   (ui-dock-save workspace)))
 
@@ -762,12 +1297,17 @@
   (if (= stroke 0) (return))
   (__ui-border__ context (* bounds scale) (* clip scale) color (* stroke scale))))
 
+(let __ui-dock-ready__ (fn (drag)
+  (let delay drag.workspace.props.dwell-delay)
+  (>= drag.elapsed (+ (max 0 (if (= delay nil) 0.15 delay))
+    (max 0.001 drag.workspace.props.dwell)))))
+
 (let __ui-dock-overlay__ (fn (ui workspace context)
   (if (or (= ui.drag nil) (= ui.drag.preview nil)) (return))
   (let preview ui.drag.preview)
   (if (not (same? ui.drag.workspace workspace)) (return))
   (let progress (clamp (or ui.drag.progress 0) 0 1))
-  (let ready (>= ui.drag.elapsed (max 0.001 workspace.props.dwell)))
+  (let ready (__ui-dock-ready__ ui.drag))
   (__ui-rectangle__ context (* preview.bounds ui.scale) (* workspace.clip ui.scale)
     workspace.props.preview-background)
   (__ui-rectangle__ context
@@ -781,8 +1321,9 @@
   "paint" __ui-dock-paint__ "overlay" __ui-dock-overlay__))
 
 (let ui-dock (fn (&rest panes)
-  (ui-node ui-dock-component (dict "grow" 1 "divider" 6 "dwell" 0.6 "dwell-decay" 0.2 "hold-radius" 6
-    "drag-threshold" 6 "undock-shrink" 32
+  (ui-node ui-dock-component (dict "grow" 1 "divider" 0 "dwell" 0.6 "dwell-delay" 0.15
+    "dwell-decay" 0.2 "hold-radius" 6
+    "drag-threshold" 6 "undock-shrink" 32 "undock-shrink-bottom" 64
     "background" (vec4 0.06 0.07 0.09 1) "divider-color" (vec4 0.38 0.44 0.54 1)
     "divider-hover-color" (vec4 0.6 0.78 1 1)
     "preview-background" (vec4 0.3 0.5 0.8 0.12) "preview-outline" (vec4 0.45 0.7 1 1)
@@ -806,7 +1347,26 @@
   (ui-dock-save workspace)
   (ui-invalidate ui)))
 
+(let ui-pane-open (fn (ui pane)
+  (let workspace pane.state.workspace)
+  (if (= workspace nil) (return))
+  (let closed pane.state.closed)
+  (set pane.state.closed false)
+  (set pane.state.minimized false)
+  (set pane.props.visible true)
+  (if closed (set pane.state.floating true))
+  (let index (where workspace.children pane))
+  (if (not (= index nil)) (remove workspace.children index))
+  (insert workspace.children pane)
+  (if closed (__ui-lifecycle__ ui pane "mount"))
+  (if (and (not pane.state.floating) (not (__ui-dock-has__ workspace.state.tree pane)))
+    (set workspace.state.tree (__ui-dock-insert__ workspace.state.tree nil pane "right")))
+  (set workspace.state.version (+ workspace.state.version 1))
+  (ui-dock-save workspace)
+  (ui-invalidate ui)))
+
 (let ui-pane-restore (fn (ui pane)
+  (if pane.state.closed (return (ui-pane-open ui pane)))
   (let workspace pane.state.workspace)
   (if (or (= workspace nil) pane.state.closed (not pane.state.minimized)) (return))
   (set pane.state.minimized false)
@@ -838,7 +1398,12 @@
 (let __ui-pane-arrange__ (fn (ui pane)
   (__ui-container-arrange__ ui pane)))
 (let __ui-pane-measure__ (fn (ui pane)
-  (set pane.children.0.children.0.props.value $":: {pane.props.title}")
+  (if pane.state.title-node {
+    (if (not (= pane.props.title pane.state.title-value))
+      (set pane.state.title-node.props.value pane.props.title)
+      else (set pane.props.title pane.state.title-node.props.value))
+    (set pane.state.title-value pane.props.title)
+  })
   (__ui-container-measure__ ui pane)))
 (let __ui-pane-overlay__ (fn (ui pane context)
   (let color pane.props.border-color)
@@ -847,28 +1412,61 @@
   (if (and ui.drag (same? ui.drag.pane pane)
     (or (= ui.drag.mode "resize") (= ui.drag.mode "move")))
     (set color pane.props.border-active-color))
-  (__ui-outline__ context pane.bounds pane.clip color ui.scale pane.props.border-width)))
+  (let width pane.props.border-width)
+  (let edges (vec4 width))
+  (if (and (not pane.state.floating) (= pane.state.workspace.props.divider 0)) {
+    (let area pane.state.workspace.bounds)
+    (if (> pane.bounds.x area.x) (set edges.x (/ width 2)))
+    (if (> pane.bounds.y area.y) (set edges.y (/ width 2)))
+    (if (< (+ pane.bounds.x pane.bounds.z) (+ area.x area.z)) (set edges.z (/ width 2)))
+    (if (< (+ pane.bounds.y pane.bounds.w) (+ area.y area.w)) (set edges.w (/ width 2)))
+  })
+  (__ui-border__ context (* pane.bounds ui.scale) (* pane.clip ui.scale)
+    color (* width ui.scale) (* edges ui.scale))))
 (let ui-pane-component (dict "measure" __ui-pane-measure__
   "arrange" __ui-pane-arrange__ "paint" __ui-container-paint__ "overlay" __ui-pane-overlay__))
 
+(let __ui-find-component__ (fn (node component)
+  (if (same? node.component component) (return node))
+  (for child node.children {
+    (let found (__ui-find-component__ child component))
+    (if found (return found))
+  })
+  nil))
+
 (let ui-pane (fn (title &rest items)
+  (let title-custom (not (str? title)))
+  (let title-content (if title-custom title (ui-label title (ui-prop "marquee" true) (ui-prop "title-width" 160))))
+  (let title-node (__ui-find-component__ title-content ui-label-component))
+  (if (not (in "grow" title-content.props)) (set title-content.props.grow 1))
+  (if title-node {
+    (if (not (in "marquee" title-node.props)) (set title-node.props.marquee true))
+    (if (not (in "title-width" title-node.props)) (set title-node.props.title-width 160))
+  })
+  (let title-value (if title-custom (or (if title-node title-node.props.value nil) "Pane") title))
   (let pane (ui-node ui-pane-component
-    (dict "title" (title : str) "id" title "axis" "y" "gap" 0 "padding" 2
+    (dict "title" title-value "id" title-value "axis" "y" "gap" 0 "padding" 2
       "min-w" 220 "min-h" 100 "float-w" 420 "float-h" 320
       "border-width" 2 "border-color" (vec4 0.43 0.5 0.62 1)
       "border-hover-color" (vec4 0.65 0.82 1 1) "border-active-color" (vec4 0.45 0.72 1 1)
       "background" (vec4 0.09 0.11 0.15 1))))
-  (let body (ui-vbox (ui-style (dict "grow" 1 "padding" 10)) items))
-  ; Pane-level style options also configure docking/minimum-size behavior.
-  (for item items (if (and (dict? item) (= item.kind "style"))
-    (for key (keys item.props) (put pane.props key (get item.props.(get key))))))
-  (let header (ui-hbox (ui-style (dict "h" 32 "padding" 3 "gap" 3
-    "cursor" "grab"
-    "background" (vec4 0.14 0.17 0.22 1)))
-    (label $":: {title}" (ui-style (dict "grow" 1 "size" 13 "padding" 5)))
-    (button "_" (ui-style (dict "chrome-button" true "padding" 5 "w" 26))
+  (__ui-options__ pane items)
+  (let body (ui-vbox (grow 1) (padding 10) pane.children))
+  (set pane.children (list))
+  (let header (ui-hbox (height 32)
+    (padding 3)
+    (gap 3)
+    (ui-prop "cursor" "grab")
+    (background (vec4 0.14 0.17 0.22 1))
+    (ui-hbox (grow 1) (gap 4) (v-align "center") (padding 5)
+      (ui-label "::") title-content)
+    (ui-button "_" (ui-prop "chrome-button" true)
+      (padding 5)
+      (width 26)
       (ui-on "click" (fn (event) (ui-pane-minimize event.ui pane))))
-    (button "x" (ui-style (dict "chrome-button" true "padding" 5 "w" 26))
+    (ui-button "x" (ui-prop "chrome-button" true)
+      (padding 5)
+      (width 26)
       (ui-on "click" (fn (event) (ui-pane-close event.ui pane))))
     (ui-on "pointerdown" (fn (event)
       (if (and (= event.button 0) (not event.target.props.chrome-button)) {
@@ -877,6 +1475,12 @@
       })))))
   (insert pane.children header)
   (insert pane.children body)
+  (set pane.state.title-content (get header.children.0))
+  (set pane.state.title-node title-node)
+  (set pane.state.title-custom title-custom)
+  (set pane.state.title-value title-value)
+  (set pane.state.title-icon (__ui-find-component__ title-content ui-icon-component))
+  (if title-node (set title-node.state.hover-owner header))
   pane))
 
 ; Readiness restarts immediately; the visible fill drains in ui-update.
@@ -904,8 +1508,9 @@
   (set drag.start bounds)
   (if (not pane.state.floating) {
     (let shrink (max 0 (if (= workspace.props.undock-shrink nil) 32 workspace.props.undock-shrink)))
-    (let width (max (max 1 pane.props.min-w) (- bounds.z shrink)))
-    (let height (max (max 1 pane.props.min-h) (- bounds.w shrink)))
+    (let width (max 1 pane.props.min-w (- bounds.z (* 2 shrink))))
+    (let height (max 1 pane.props.min-h (- bounds.w
+      (if (= workspace.props.undock-shrink-bottom nil) (* shrink 2) workspace.props.undock-shrink-bottom))))
     ; Center the width reduction around the grab, retaining the title's vertical offset.
     (set drag.offset (vec2
       (clamp (- drag.offset.x (/ (- bounds.z width) 2)) 0 (- width 1))
@@ -1002,13 +1607,75 @@
       (return nil)
     })
     (for divider workspace.state.dividers {
-      (if (ui-contains divider.bounds x y) {
+      (let bounds divider.bounds)
+      (let grip (if (= divider.tree.axis "x")
+        (vec4 (- bounds.x 4) bounds.y (+ bounds.z 8) bounds.w)
+        (vec4 bounds.x (- bounds.y 4) bounds.z (+ bounds.w 8))))
+      (if (ui-contains grip x y) {
         (return (dict "mode" "split" "workspace" workspace "split" divider.tree
+          "divider-bounds" divider.bounds
           "cursor" (if (= divider.tree.axis "x") "col-resize" "row-resize")))
       })
     })
   })
   nil))
+
+; Resize a shared edge while holding every other parallel divider in place.
+(let __ui-resize-snapshot__ (fn (tree)
+  (if (= tree nil) (return))
+  (set tree.__resize_bounds__ (copy tree.bounds))
+  (if (= tree.kind "split") {
+    (set tree.__resize_ratio__ tree.ratio)
+    (__ui-resize-snapshot__ tree.first)
+    (__ui-resize-snapshot__ tree.second)
+  })))
+(let __ui-resize-finish__ (fn (tree cancel)
+  (if (= tree nil) (return))
+  (set tree.__resize_bounds__ nil)
+  (if (= tree.kind "split") {
+    (if cancel (set tree.ratio tree.__resize_ratio__))
+    (set tree.__resize_ratio__ nil)
+    (__ui-resize-finish__ tree.first cancel)
+    (__ui-resize-finish__ tree.second cancel)
+  })))
+(let __ui-edge-minimum__ (fn (tree axis side gap)
+  (if (not (__ui-dock-active__ tree)) (return 0))
+  (if (= tree.kind "node") (return (if (= axis "x") tree.props.min-w tree.props.min-h)))
+  (if (not (__ui-dock-active__ tree.first))
+    (return (__ui-edge-minimum__ tree.second axis side gap)))
+  (if (not (__ui-dock-active__ tree.second))
+    (return (__ui-edge-minimum__ tree.first axis side gap)))
+  (if (= tree.axis axis) {
+    (let fixed (if (= side "end") tree.first.__resize_bounds__ tree.second.__resize_bounds__))
+    (return (+ gap (if (= axis "x") fixed.z fixed.w)
+      (__ui-edge-minimum__ (if (= side "end") tree.second tree.first) axis side gap)))
+  })
+  (max (__ui-edge-minimum__ tree.first axis side gap)
+    (__ui-edge-minimum__ tree.second axis side gap))))
+(let __ui-edge-stretch__ (fn (tree bounds axis side gap)
+  (if (or (not (__ui-dock-active__ tree)) (= tree.kind "node")) (return))
+  (if (not (__ui-dock-active__ tree.first)) {
+    (__ui-edge-stretch__ tree.second bounds axis side gap) (return)
+  })
+  (if (not (__ui-dock-active__ tree.second)) {
+    (__ui-edge-stretch__ tree.first bounds axis side gap) (return)
+  })
+  (let horizontal (= tree.axis "x"))
+  (let extent (max 1 (- (if horizontal bounds.z bounds.w) gap)))
+  (let first tree.first.__resize_bounds__)
+  (let split (if horizontal first.z first.w))
+  (if (and (= tree.axis axis) (= side "start")) {
+    (let original tree.__resize_bounds__)
+    (set split (+ split (- (if horizontal bounds.z bounds.w)
+      (if horizontal original.z original.w))))
+  })
+  (set tree.ratio (clamp (/ split extent) 0 1))
+  (__ui-edge-stretch__ tree.first
+    (if horizontal (vec4 bounds.x bounds.y split bounds.w)
+      (vec4 bounds.x bounds.y bounds.z split)) axis side gap)
+  (__ui-edge-stretch__ tree.second
+    (if horizontal (vec4 (+ bounds.x split gap) bounds.y (- extent split) bounds.w)
+      (vec4 bounds.x (+ bounds.y split gap) bounds.z (- extent split))) axis side gap)))
 
 (let ui-dock-grip (fn (ui event)
   (let hit (ui-dock-hit ui event.x event.y))
@@ -1017,7 +1684,14 @@
   (if (= hit.mode "resize") {
     (set hit.start (copy hit.pane.bounds))
     (set hit.anchor (vec2 event.x event.y))
-  } else (set hit.ratio hit.split.ratio))
+  } else {
+    (set hit.ratio hit.split.ratio)
+    (set hit.anchor (vec2 event.x event.y))
+    (set hit.position (if (= hit.split.axis "x")
+      (- hit.divider-bounds.x hit.split.bounds.x)
+      (- hit.divider-bounds.y hit.split.bounds.y)))
+    (__ui-resize-snapshot__ hit.split)
+  })
   (set ui.drag hit)
   true))
 
@@ -1037,7 +1711,7 @@
       (if (or (= ui.drag.mode "resize") (= ui.drag.mode "split")) {
         (set hit ui.drag)
         (set value ui.drag.cursor)
-      } else (set value (if (= ui.drag.mode "move") "grabbing" "grab")))
+      } else (set value (if (or (= ui.drag.mode "move") (= ui.drag.mode "taskbar")) "grabbing" "grab")))
     } elif ui.pressed {
       (set value (__ui-path-cursor__ (get ui.pressed.(- (len ui.pressed) 1)).path))
     } elif ui.pointer {
@@ -1062,6 +1736,9 @@
 
 (let ui-dock-drag (fn (ui name event)
   (let drag ui.drag)
+  (if (or (= drag.mode "taskbar-pending") (= drag.mode "taskbar")) {
+    (__ui-taskbar-drag__ ui name event) (return)
+  })
   (let workspace drag.workspace)
   (if (= drag.mode "pending") {
     (if (or (= name "pointerup") (= name "pointercancel")) {
@@ -1077,8 +1754,14 @@
     (__ui-dock-begin-drag__ ui drag)
   })
   (if (= name "pointercancel") {
-    (if (= drag.mode "split") (set drag.split.ratio drag.ratio))
+    (if (= drag.mode "split") (__ui-resize-finish__ drag.split true))
     (if (= drag.mode "resize") (set drag.pane.state.rect drag.start))
+    (if drag.restore-minimized {
+      (set drag.pane.state.minimized true)
+      (set drag.pane.props.visible false)
+      (set workspace.state.panes drag.original-order)
+      (set workspace.state.version (+ workspace.state.version 1))
+    })
     (if (= drag.mode "move") {
       (set workspace.state.tree drag.tree)
       (set drag.pane.state.floating drag.floating)
@@ -1089,14 +1772,25 @@
   })
   (if (= name "pointermove") {
     (if (= drag.mode "split") {
-      (let bounds drag.split.bounds)
-      (let extent (max 1 (- (if (= drag.split.axis "x") bounds.z bounds.w) workspace.props.divider)))
-      (let position (if (= drag.split.axis "x") (- event.x bounds.x) (- event.y bounds.y)))
-      (let first (__ui-dock-minimum__ drag.split.first workspace.props.divider))
-      (let second (__ui-dock-minimum__ drag.split.second workspace.props.divider))
-      (let low (/ (if (= drag.split.axis "x") first.x first.y) extent))
-      (let high (- 1 (/ (if (= drag.split.axis "x") second.x second.y) extent)))
-      (if (<= low high) (set drag.split.ratio (clamp (/ position extent) low high)))
+      (let bounds drag.split.__resize_bounds__)
+      (let horizontal (= drag.split.axis "x"))
+      (let gap workspace.props.divider)
+      (let extent (max 1 (- (if horizontal bounds.z bounds.w) gap)))
+      (let position (+ drag.position (if horizontal
+        (- event.x drag.anchor.x) (- event.y drag.anchor.y))))
+      (let low (/ (__ui-edge-minimum__ drag.split.first drag.split.axis "end" gap) extent))
+      (let high (- 1 (/ (__ui-edge-minimum__ drag.split.second drag.split.axis "start" gap) extent)))
+      (if (<= low high) {
+        (set position (* extent (clamp (/ position extent) low high)))
+        (set drag.split.ratio (/ position extent))
+        (__ui-edge-stretch__ drag.split.first
+          (if horizontal (vec4 bounds.x bounds.y position bounds.w)
+            (vec4 bounds.x bounds.y bounds.z position)) drag.split.axis "end" gap)
+        (__ui-edge-stretch__ drag.split.second
+          (if horizontal (vec4 (+ bounds.x position gap) bounds.y (- extent position) bounds.w)
+            (vec4 bounds.x (+ bounds.y position gap) bounds.z (- extent position)))
+          drag.split.axis "start" gap)
+      })
     } elif (= drag.mode "resize") {
       (let pane drag.pane)
       (let bounds drag.start)
@@ -1132,8 +1826,8 @@
     })
   })
   (if (= name "pointerup") {
-    (if (and (= drag.mode "move") drag.preview
-      (>= drag.elapsed (max 0.001 workspace.props.dwell))) {
+    (if (= drag.mode "split") (__ui-resize-finish__ drag.split false))
+    (if (and (= drag.mode "move") drag.preview (__ui-dock-ready__ drag)) {
       (set workspace.state.tree (__ui-dock-insert__ workspace.state.tree
         drag.preview.target drag.pane drag.preview.edge))
       (set drag.pane.state.floating false)
@@ -1144,11 +1838,102 @@
   (if (not ui.measure-dirty) (set ui.layout-target workspace))
   (ui-reflow ui)))
 
+(let __ui-index__ (fn (items value)
+  (for i (len items) (if (same? (get items.(get i)) value) (return i)))
+  nil))
+(let __ui-release-pointer__ (fn (ui id)
+  (for offset (len ui.pressed) {
+    (let i (- (len ui.pressed) offset 1))
+    (let press (get ui.pressed.(get i)))
+    (if (= press.id id) {
+      (set (get press.path.(- (len press.path) 1)).state.pressed-id nil)
+      (remove ui.pressed i)
+    })
+  })))
+(let __ui-taskbar-event__ (fn (ui node name event)
+  (__ui-strip-event__ ui node name event)
+  (if (and (= name "pointerdown") (= event.button 0) event.target.props.pane) {
+    (let pane event.target.props.pane)
+    (set ui.drag (dict "mode" "taskbar-pending" "id" event.id "pane" pane
+      "workspace" node.props.workspace "taskbar" node "button" event.target
+      "anchor" (vec2 event.x event.y) "order" (copy node.props.workspace.state.panes)))
+    (set event.stop true)
+  })))
+(let __ui-taskbar-drag__ (fn (ui name event)
+  (let drag ui.drag)
+  (let workspace drag.workspace)
+  (let node drag.taskbar)
+  (if (= name "pointercancel") {
+    (set workspace.state.panes drag.order)
+    (set workspace.state.version (+ workspace.state.version 1))
+    (__ui-release-pointer__ ui drag.id)
+    (set ui.drag nil)
+    (ui-dock-save workspace)
+    (ui-invalidate ui)
+    (return)
+  })
+  (if (= name "pointerup") {
+    (__ui-release-pointer__ ui drag.id)
+    (set ui.drag nil)
+    (if (= drag.mode "taskbar-pending") (ui-pane-restore ui drag.pane))
+    (ui-dock-save workspace)
+    (ui-invalidate ui)
+    (return)
+  })
+  (if (not (= name "pointermove")) (return))
+  (let dx (- event.x drag.anchor.x))
+  (let dy (- event.y drag.anchor.y))
+  (let threshold workspace.props.drag-threshold)
+  (if (and (= drag.mode "taskbar-pending")
+    (<= (+ (* dx dx) (* dy dy)) (* threshold threshold))) (return))
+  (set drag.mode "taskbar")
+  (if (or (< event.y (- node.clip.y 8)) (> event.y (+ node.clip.y node.clip.w 8))) {
+    ; Moving out of the tray restores the pane directly into a floating title drag.
+    (__ui-release-pointer__ ui drag.id)
+    (set drag.restore-minimized true)
+    (set drag.original-order drag.order)
+    (set drag.pane.state.minimized false)
+    (set drag.pane.props.visible true)
+    (set drag.mode "pending")
+    (set drag.offset (vec2 (/ drag.pane.bounds.z 2) 16))
+    (set drag.point (vec2 event.x event.y))
+    (__ui-dock-begin-drag__ ui drag)
+    (set workspace.state.version (+ workspace.state.version 1))
+    (ui-dock-drag ui "pointermove" event)
+    (ui-invalidate ui)
+    (return)
+  })
+  (let before nil)
+  (let last nil)
+  (for child node.children {
+    (if (or (= child.props.pane nil) (same? child.props.pane drag.pane)) (continue))
+    (set last child.props.pane)
+    (if (< event.x (+ child.bounds.x (/ child.bounds.z 2))) {
+      (set before child.props.pane) (break)
+    })
+  })
+  (if (or before last) {
+    (let ordered (copy workspace.state.panes))
+    (remove ordered (__ui-index__ ordered drag.pane))
+    (let index (if before (__ui-index__ ordered before) (+ (__ui-index__ ordered last) 1)))
+    (insert ordered drag.pane index)
+    (let changed false)
+    (for i (len ordered) (if (not (same? (get ordered.(get i))
+      (get workspace.state.panes.(get i)))) (set changed true)))
+    (if changed {
+      (set workspace.state.panes ordered)
+      (set workspace.state.version (+ workspace.state.version 1))
+      (ui-dock-save workspace)
+      (ui-invalidate ui)
+    })
+  })))
+
 (let __ui-taskbar-measure__ (fn (ui node)
   (let workspace node.props.workspace)
   (let signature (list workspace.state.version))
   (for pane workspace.state.panes (insert signature
-    (list pane.props.title pane.state.minimized pane.state.closed)))
+    (list pane.props.title pane.state.minimized pane.state.closed
+      (if pane.state.title-icon pane.state.title-icon.props.source nil))))
   (if (not (= node.state.signature signature)) {
     (if (and ui.focus (ui-path node ui.focus)) (ui-focus ui (list)))
     (for child node.children {
@@ -1156,9 +1941,22 @@
     })
     (set node.children (copy node.state.items))
     (for pane workspace.state.panes {
-      (if (and pane.state.minimized (not pane.state.closed))
-        (insert node.children (button pane.props.title
-          (ui-on "click" (fn (event) (ui-pane-restore event.ui pane))))))
+      (if (and pane.state.minimized (not pane.state.closed)) {
+        (let visual (or node.props.item-style (dict)))
+        (insert node.children (ui-button
+          (ui-hbox (gap 4) (v-align "center")
+            (if pane.state.title-icon (ui-icon pane.state.title-icon.props.source
+              (size pane.state.title-icon.props.size) (fill pane.state.title-icon.props.color)) nil)
+            (ui-label pane.props.title
+              (font (or visual.font "sans-serif")) (size (or visual.size 16))
+              (fill (if (in "color" visual) visual.color (vec4 0.87 0.9 0.95 1)))
+              (ui-prop "marquee" true) (ui-prop "title-width" (or node.props.title-width 160))))
+          (ui-config visual)
+          (ui-prop "pane" pane)
+          (ui-prop "cursor" "grab")
+          (h-align "left")
+          (ui-on "click" (fn (event) (ui-pane-restore event.ui pane)))))
+      })
     })
     (set node.state.version workspace.state.version)
     (set node.state.signature signature)
@@ -1167,12 +1965,14 @@
   })
   (__ui-strip-measure__ ui node)))
 (let ui-taskbar-component (dict "measure" __ui-taskbar-measure__
-  "arrange" __ui-strip-arrange__ "paint" __ui-container-paint__ "event" __ui-strip-event__))
+  "arrange" __ui-strip-arrange__ "paint" __ui-container-paint__ "event" __ui-taskbar-event__
+  "overlay" __ui-strip-overlay__))
 (let ui-taskbar (fn (workspace &rest items)
   (let node (ui-node ui-taskbar-component (dict "workspace" workspace "axis" "x"
+    "scroll-indicator-width" 20 "scroll-indicator-size" 16 "scroll-indicator-color" (vec4 0.85 0.9 1 1)
     "padding" 6 "gap" 6 "h" 40 "background" (vec4 0.1 0.12 0.16 1)) items))
   (set node.state.items (copy node.children))
-  node))
+  (__ui-strip-indicators__ node)))
 
 (let ui-new (fn (root)
   (dict "root" (root : dict) "dirty" true "mounted" false "w" 0 "h" 0
@@ -1186,12 +1986,16 @@
 (let ui-mount (fn (ui)
   (if ui.mounted (return ui))
   (set ui.mounted true)
+  (set ui.input-release (listen-input (fn (name event)
+    (if (in name __ui-input-names__) (ui-input ui name event)))))
   (__ui-lifecycle__ ui ui.root "mount")
   (ui-invalidate ui)
   ui))
 
 (let ui-unmount (fn (ui)
   (if (not ui.mounted) (return))
+  (if ui.input-release (ui.input-release))
+  (set ui.input-release nil)
   (__ui-lifecycle__ ui ui.root "unmount")
   (ui-close-popup ui)
   (set ui.mounted false)
@@ -1210,11 +2014,13 @@
     (let drag ui.drag)
     (let dt (max 0 context.dt))
     (let dwell (max 0.001 drag.workspace.props.dwell))
+    (let delay drag.workspace.props.dwell-delay)
+    (set delay (max 0 (if (= delay nil) 0.15 delay)))
     (if drag.preview {
-      (if (not drag.reset) (set drag.elapsed (min dwell (+ drag.elapsed dt))))
+      (if (not drag.reset) (set drag.elapsed (min (+ delay dwell) (+ drag.elapsed dt))))
     } else (set drag.elapsed 0))
     (set drag.reset false)
-    (let target (clamp (/ drag.elapsed dwell) 0 1))
+    (let target (clamp (/ (- drag.elapsed delay) dwell) 0 1))
     (let progress (or drag.progress 0))
     (let decay (max 0.001 (or drag.workspace.props.dwell-decay 0.2)))
     (set drag.progress (if (> progress target) (max target (- progress (/ dt decay))) target))
@@ -1223,8 +2029,10 @@
   ; Context is supplied explicitly to update handlers.
   (let visit (fn (node)
     (if node.component.tick (node.component.tick ui node context))
-    (for child node.children (visit child))))
-  (visit ui.root)))
+    (for child node.children (visit child))
+    (for overlay node.overlays (visit overlay))))
+  (visit ui.root)
+  (if ui.popup (visit ui.popup.node))))
 
 (let ui-render (fn (ui context)
   (if (not ui.mounted) (return))
@@ -1248,11 +2056,11 @@
       (ui.layout-target.component.arrange ui ui.layout-target)
       else (ui-arrange ui ui.root (vec4 0 0 width height) (vec4 0 0 width height)))
     (if ui.popup {
-    (let anchor ui.popup.anchor.bounds)
-    (let measured ui.popup.node.measured)
-    (let x (clamp anchor.x 0 (max 0 (- width measured.x))))
-    (let y (+ anchor.y anchor.w))
-    (if (> (+ y measured.y) height) (set y (max 0 (- anchor.y measured.y))))
+      (let anchor ui.popup.anchor.bounds)
+      (let measured ui.popup.node.measured)
+      (let x (clamp anchor.x 0 (max 0 (- width measured.x))))
+      (let y (+ anchor.y anchor.w))
+      (if (> (+ y measured.y) height) (set y (max 0 (- anchor.y measured.y))))
       (ui-arrange ui ui.popup.node (vec4 x y measured) (vec4 0 0 width height))
     })
     (set ui.measure-dirty false)

@@ -5,9 +5,9 @@ import { Data } from './data.js';
 function __createTextProxy__(
   canvas,
   callback,
-  { toOuter = (x, y) => ({ x, y }), onEdit = () => {} } = {},
+  { toOuter = (x, y) => ({ x, y }), onEdit = () => {}, onError = console.error } = {},
 ) {
-  const service = { canvas, callback, toOuter, onEdit };
+  const service = { canvas, callback, toOuter, onEdit, onError, failed: false };
   if (typeof service.callback !== 'function')
     throw new TypeError('text-proxy expects an edit callback');
   service.document = service.canvas.ownerDocument;
@@ -65,6 +65,22 @@ function __check__(service) {
   if (service.disposed) throw new Error('Text proxy has been disposed');
 }
 
+function __invoke__(service, callback, argument) {
+  if (service.disposed || service.failed) return;
+  const fail = (error) => {
+    if (service.disposed || service.failed) return;
+    service.failed = true;
+    service.target.readOnly = true;
+    service.onError(error);
+  };
+  try {
+    const result = callback(argument);
+    if (result?.then) result.catch(fail);
+  } catch (error) {
+    fail(error);
+  }
+}
+
 function __boundary__(service, index) {
   index = Math.max(0, Math.min(service.content.length, index));
   if (index === service.content.length) return index;
@@ -79,12 +95,16 @@ function __indexLines__(service) {
   if (service.indexedContent !== service.content) {
     service.indexedContent = service.content;
     const starts = [0];
+    let maxColumns = 0;
     for (
       let at = service.content.indexOf('\n');
       at !== -1;
       at = service.content.indexOf('\n', at + 1)
-    )
+    ) {
+      maxColumns = Math.max(maxColumns, at - starts[starts.length - 1]);
       starts.push(at + 1);
+    }
+    service.maxColumns = Math.max(maxColumns, service.content.length - starts[starts.length - 1]);
     service.offsets = Uint32Array.from(starts);
   }
   return service.offsets;
@@ -216,6 +236,8 @@ function __snapshot__(service) {
     h,
     'lines',
     rows,
+    'max-columns',
+    service.maxColumns,
     'composing',
     service.composing,
   );
@@ -234,7 +256,7 @@ function __notify__(service) {
   service.lastAnchor = service.anchor;
   service.lastHead = service.head;
   service.lastComposing = service.composing;
-  service.callback(__snapshot__(service));
+  __invoke__(service, service.callback, __snapshot__(service));
 }
 
 function __state__(service) {
@@ -359,6 +381,36 @@ function __setSelection__(service, next, extend) {
 
 function __keydown__(service, event) {
   if (service.composing) return;
+  if (service.__keyHandler__) {
+    const input = Data.dict(
+      'key',
+      event.key,
+      'code',
+      event.code,
+      'shift',
+      !!event.shiftKey,
+      'ctrl',
+      !!event.ctrlKey,
+      'alt',
+      !!event.altKey,
+      'meta',
+      !!event.metaKey,
+      'repeat',
+      !!event.repeat,
+      'prevent-default',
+      false,
+    );
+    __invoke__(service, service.__keyHandler__, input);
+    if (service.failed) {
+      event.preventDefault();
+      return;
+    }
+    if (input['prevent-default']) {
+      event.preventDefault();
+      return;
+    }
+    if (service.disposed) return;
+  }
   __readSelection__(service);
   if (service.customHistory && (event.ctrlKey || event.metaKey) && !event.altKey) {
     if (event.key.toLowerCase() === 'a') {
@@ -540,6 +592,7 @@ function __caret__(service, position, height) {
 function __dispose__(service) {
   if (service.disposed) return;
   service.disposed = true;
+  service.__keyHandler__ = null;
   for (const [name, handler] of Object.entries(service.listeners))
     service.target.removeEventListener(name, handler);
   service.__onDispose__?.();
@@ -552,11 +605,31 @@ export const TextProxy = {
   sync: __sync__,
   snapshot: __snapshot__,
   focus: __focus__,
+  focused(service) {
+    return !service.disposed && service.document.activeElement === service.target;
+  },
   blur(service) {
     __check__(service);
-    if (service.target.ownerDocument.activeElement === service.target) service.target.blur();
+    if (service.target.ownerDocument.activeElement === service.target) {
+      service.target.blur();
+      service.canvas.focus?.({ preventScroll: true });
+    }
   },
   select: __select__,
   caret: __caret__,
+  readOnly(service, value) {
+    __check__(service);
+    if (typeof value !== 'boolean') throw new TypeError('readOnly expects a boolean');
+    service.target.readOnly = value;
+    return value;
+  },
+  listenKeys(service, callback) {
+    __check__(service);
+    if (typeof callback !== 'function') throw new TypeError('listenKeys expects a callback');
+    service.__keyHandler__ = callback;
+    return () => {
+      if (service.__keyHandler__ === callback) service.__keyHandler__ = null;
+    };
+  },
   dispose: __dispose__,
 };

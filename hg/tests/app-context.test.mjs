@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AppCore } from "../app.js";
+import { App, AppCore } from "../app.js";
 import { Scheduler } from "../scheduler.js";
 import { Data } from "../data.js";
 
@@ -55,7 +55,7 @@ test('self reload checks the first render and restores the working editor on com
   } finally { AppCore.destroy(runtime); }
 });
 
-test('untraced self reload installs normally and allows a render failure to stop the scheduler', async () => {
+test('untraced self reload rejects a bad first render and keeps the working editor scheduled', async () => {
   const errors = [];
   let frame;
   const runtime = AppCore.new({ trace: false, baseURL: 'https://example.test/editor/main.lisp', onError: error => errors.push(error) });
@@ -66,13 +66,67 @@ test('untraced self reload installs normally and allows a render failure to stop
   try {
     AppCore.setScene(runtime,'(on render (context))');
     const previous = runtime.scene;
-    await AppCore.reload(runtime,'(let value 0) (on render (context) (text (resolution value) "hello"))', 'https://example.test/editor/main.lisp');
-    assert.notEqual(runtime.scene, previous);
+    await assert.rejects(AppCore.reload(runtime,'(let value 0) (on render (context) (text (resolution value) "hello"))', 'https://example.test/editor/main.lisp'), /resolution expects a positive finite/);
+    assert.equal(runtime.scene, previous);
+    assert.equal(runtime.attaching, false);
     assert.equal(errors.length, 0);
     frame(0);
-    assert.equal(runtime.failed, true);
-    assert.equal(errors.length, 1);
-    assert.match(errors[0].message, /resolution expects a positive finite/);
-    assert.equal(errors[0].lisp, undefined);
+    assert.equal(runtime.failed, false);
+    assert.equal(errors.length, 0);
+    assert.notEqual(runtime.frameId, null);
   } finally { AppCore.destroy(runtime); }
 });
+
+for (const trace of [true, false]) {
+  test(`failed patch preserves live binding references and can be corrected (trace=${trace})`, async () => {
+    const runtime = AppCore.new({ trace });
+    const frames = new Map();
+    let nextFrame = 0;
+    runtime.graphics = {};
+    runtime.services.graphics = { resetScene() {}, destroy() {}, render: (graphics, callback) => callback(Data.dict()) };
+    runtime.requestFrame = callback => { frames.set(++nextFrame, callback); return nextFrame; };
+    runtime.cancelFrame = id => frames.delete(id);
+    try {
+      await App.loadSource(runtime, '(let count 7) (on render (context))');
+      const previous = runtime.scene;
+      const reference = App.inspect(runtime).count;
+      await assert.rejects(App.patchSource(runtime, '(let count 99) (let value 0) (on render (context) (/ count value))'), /finite number/);
+      assert.equal(runtime.scene, previous);
+      assert.equal(App.read(runtime, reference), 7);
+      assert.equal(runtime.failed, false);
+      assert.equal(runtime.attaching, false);
+      assert.equal(frames.size, 1);
+      await App.patchSource(runtime, '(let count 99) (on render (context))');
+      assert.notEqual(runtime.scene, previous);
+      assert.equal(App.inspect(runtime).count, reference);
+      assert.equal(App.read(runtime, reference), 7);
+      assert.equal(frames.size, 1);
+    } finally { AppCore.destroy(runtime); }
+  });
+
+  test(`failed module reload restores imports as well as the working scene (trace=${trace})`, async () => {
+    let broken = false;
+    const runtime = AppCore.new({ trace, baseURL: 'https://example.test/main.lisp', fetch: async url => ({
+      ok: true, status: 200, text: async () => url.endsWith('/module.lisp')
+        ? `(let value ${broken ? 0 : 2})`
+        : '(let module (await (import "./module.lisp"))) (on render (context) (/ 1 module.value))',
+    }) });
+    runtime.graphics = {};
+    runtime.services.graphics = { resetScene() {}, destroy() {}, render: (graphics, callback) => callback(Data.dict()) };
+    runtime.requestFrame = () => 1;
+    runtime.cancelFrame = () => {};
+    try {
+      await App.load(runtime, './main.lisp');
+      const previous = runtime.scene, cache = runtime.modules.cache;
+      broken = true;
+      await assert.rejects(App.reloadModules(runtime), /finite number/);
+      assert.equal(runtime.scene, previous);
+      assert.equal(runtime.modules.cache, cache);
+      assert.equal(runtime.failed, false);
+      broken = false;
+      await App.reloadModules(runtime);
+      assert.notEqual(runtime.scene, previous);
+      assert.notEqual(runtime.modules.cache, cache);
+    } finally { AppCore.destroy(runtime); }
+  });
+}

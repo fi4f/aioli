@@ -7,8 +7,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 const { PNG } = require('pngjs');
+const testURL = new URL('/hg/tests/browser.html', process.env.AIOLI_URL || 'http://localhost:3000').href;
 
-test('the editor displays import syntax failures and standalone imports expose callable names', { timeout: 30000 }, async () => {
+test('source loads report import syntax failures and standalone imports expose callable names', { timeout: 30000 }, async () => {
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
@@ -19,7 +20,7 @@ test('the editor displays import syntax failures and standalone imports expose c
       return route.fulfill({ status: 200, contentType: 'text/plain',
         body: bad ? '(let test (fn ()' : '(let test (fn () (return 1)))' });
     });
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -30,21 +31,26 @@ test('the editor displays import syntax failures and standalone imports expose c
         window[name] = (await import(`/hg/${file}.js`))[name];
       }
     });
-    await page.waitForFunction(() => !document.getElementById('run').disabled);
-    await page.locator('#source').fill('(await (import "./import-ui/bad.lisp"))\n(test)');
-    await page.locator('#run').click();
-    await page.waitForFunction(() => document.getElementById('error').textContent.includes('/import-ui/bad.lisp:'));
-    const error = await page.locator('#error').textContent();
+    const error = await page.evaluate(async () => {
+      const { App } = await import('/hg/app.js');
+      window.importTestApp = App.new({ c: 'canvas' });
+      try {
+        await App.loadSource(importTestApp, '(await (import "./import-ui/bad.lisp"))\n(test)', { sourceURL: new URL('/main.lisp', location.href).href });
+      } catch (failure) { return failure.message; }
+    });
     assert.match(error, /SyntaxError/);
-    assert.match(error, /Called from source:1:/);
+    assert.match(error, /\/import-ui\/bad.lisp:/);
+    assert.match(error, /Called from .*\/main.lisp:1:/);
     assert.match(error, /\(await \(import/);
-    await page.evaluate(() => { const canvas = document.getElementById('canvas'); canvas.width = 4; canvas.height = 4; });
-    await page.locator('#source').fill('(await (import "./import-ui/good.lisp"))\n(on render (context) (clear (test)))');
-    await page.locator('#run').click();
-    await page.waitForTimeout(150);
-    assert.equal(await page.locator('#error').textContent(), '');
+    await page.evaluate(async () => {
+      const { App } = await import('/hg/app.js');
+      const canvas = document.getElementById('canvas');
+      canvas.width = 4; canvas.height = 4;
+      await App.loadSource(importTestApp, '(await (import "./import-ui/good.lisp"))\n(on render (context) (clear (test)))', { sourceURL: new URL('/main.lisp', location.href).href });
+    });
     const image = PNG.sync.read(await page.locator('#canvas').screenshot());
     assert.deepEqual([...image.data.subarray(0,4)], [255,255,255,255]);
+    await page.evaluate(async () => { const { App } = await import('/hg/app.js'); App.dispose(importTestApp); });
     assert.deepEqual(unhandled, []);
   } finally { await browser.close(); }
 });
@@ -62,7 +68,7 @@ test('dynamic imports share writable namespaces and loaded scenes use imported G
       const source = sources[new URL(route.request().url()).pathname];
       return route.fulfill({ status: source === undefined ? 404 : 200, contentType: 'text/plain', body: source ?? 'missing' });
     });
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -108,7 +114,7 @@ test('inner canvas centers nearest-neighbor pixels, maps outer input and emits r
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -166,7 +172,7 @@ test('shader while, until and for execute ranges and collections with loop contr
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -211,7 +217,7 @@ test('blend handles colors and textures in either position with before as the de
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -303,7 +309,7 @@ test('context before advances through shader and clear calls with rollback and r
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -388,7 +394,7 @@ test('automatic pixel, UV, and dimension inputs work in helpers and selectors af
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -436,7 +442,7 @@ test('shader text hoists named and inline resources alongside explicit texture, 
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -493,7 +499,7 @@ test('immediate text renders multicolor lines through persistent cached textures
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -569,7 +575,7 @@ test('2d and 3d transforms agree across CPU matrices, shader helpers, and skew a
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -625,7 +631,7 @@ test('WGSL zero, splat, mixed vector, and column/scalar matrix constructors rend
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -670,7 +676,7 @@ test('every f32, i32, and u32 vector dimension crosses uniforms with family-pres
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -712,7 +718,7 @@ test('full-width signed and unsigned scalars, vectors, and mixed structs render 
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -765,7 +771,7 @@ test('local bool fields and nested collections render with numeric GPU inputs', 
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -823,7 +829,7 @@ test('many growth, removal, lengths, and bounded local shader edits render on We
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -879,7 +885,7 @@ test('bounded arrays nested in structs render padding, lengths, local writes, an
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -936,7 +942,7 @@ test('shader if elif else renders scoped branches, early returns, and optional f
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -986,7 +992,7 @@ test('numeric vector and matrix dot reads and writes render on real WebGPU', { t
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -1033,7 +1039,7 @@ test('lifecycle context dictionaries expose timing and resized canvas dimensions
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -1074,7 +1080,7 @@ test('struct arrays render quoted fields, dot assignments, and per-call snapshot
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -1136,7 +1142,7 @@ test('numeric shader selectors render lazy results with captured locals and help
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -1181,7 +1187,7 @@ test('boolean logic and scalar remainder validate and render on real WebGPU', { 
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -1225,7 +1231,7 @@ test('all vector swizzles validate in real WebGPU and dot access renders reorder
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -1270,7 +1276,7 @@ test('mutable square matrices cross into real WebGPU with column padding and cac
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -1328,7 +1334,7 @@ test('real WebGPU gradients, cached shaders, uniforms, and automatic presentatio
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -1339,11 +1345,6 @@ test('real WebGPU gradients, cached shaders, uniforms, and automatic presentatio
         window[name] = (await import(`/hg/${file}.js`))[name];
       }
     });
-    await page.waitForFunction(() => !document.getElementById('run').disabled || document.getElementById('error').textContent);
-    assert.equal(await page.locator('#error').textContent(), '');
-    await page.locator('#run').click();
-    await page.waitForTimeout(150);
-    assert.equal(await page.locator('#error').textContent(), '');
     await page.evaluate(async () => {
       const { AppCore } = await import('/hg/app.js'); const { Scheduler } = await import('/hg/scheduler.js'); Object.assign(window, { AppCore, Scheduler });
       const make = id => {
@@ -1406,7 +1407,7 @@ test('typed texture/vector parameters compose GPU passes and reject stale or for
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(process.env.AIOLI_URL || 'http://localhost:3000/index.html');
+    await page.goto(testURL);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];

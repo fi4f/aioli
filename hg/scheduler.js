@@ -78,6 +78,13 @@ export const Scheduler = {
     app.__attachmentGeneration__++;
   },
 
+  fail(app, error) {
+    if (app.destroyed || app.failed) return;
+    app.failed = true;
+    Scheduler.stop(app);
+    app.onError(error);
+  },
+
   pause(app) {
     app.paused = true;
     __stopFrames__(app);
@@ -94,7 +101,8 @@ export const Scheduler = {
     Scheduler.schedule(app);
   },
 
-  replace(app, scene) {
+  // Install a prepared scene without invoking its attach hook again.
+  install(app, scene) {
     Scheduler.stop(app);
     const previous = app.scene;
     app.scene = null;
@@ -107,7 +115,13 @@ export const Scheduler = {
     app.accumulator = 0;
     app.elapsed = 0;
     app.updateElapsed = 0;
-    if (!scene) return;
+    app.scene = app.destroyed ? null : scene;
+    Scheduler.schedule(app);
+  },
+
+  replace(app, scene) {
+    Scheduler.install(app, null);
+    if (!scene || app.destroyed) return;
     app.scene = scene;
     try {
       const attached = scene.attach?.();
@@ -155,9 +169,7 @@ export const Scheduler = {
     if (result?.then)
       result.catch((error) => {
         if (app.scene !== scene || app.__attachmentGeneration__ !== generation) return;
-        app.failed = true;
-        Scheduler.stop(app);
-        app.onError(error);
+        Scheduler.fail(app, error);
       });
     return result;
   },
@@ -179,9 +191,7 @@ export const Scheduler = {
       try {
         Scheduler.frame(app, time);
       } catch (error) {
-        app.failed = true;
-        Scheduler.stop(app);
-        app.onError(error);
+        Scheduler.fail(app, error);
         return;
       }
       if (app.scene && generation === app.generation) Scheduler.schedule(app);
@@ -217,9 +227,7 @@ export const Scheduler = {
         if (request.generation !== app.generation || request.scene !== app.scene) return;
         Scheduler.render(app, app.scene.render, 0, app.elapsed);
       } catch (error) {
-        app.failed = true;
-        Scheduler.stop(app);
-        app.onError(error);
+        Scheduler.fail(app, error);
       }
     });
   },

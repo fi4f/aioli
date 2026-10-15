@@ -42,6 +42,7 @@ function __compileShader__(node, source, { structDefinitions = new Map(), hoistT
     'resolve',
     'reject',
     'sample',
+    'sample-nearest',
     'copy',
     'get',
     'type',
@@ -68,7 +69,20 @@ function __compileShader__(node, source, { structDefinitions = new Map(), hoistT
   reserved.add('3d');
   reserved.add('text');
   reserved.add('blend');
-  for (const name of ['min', 'max', 'clamp', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sqrt'])
+  for (const name of [
+    'abs',
+    'min',
+    'max',
+    'clamp',
+    'sin',
+    'cos',
+    'tan',
+    'asin',
+    'acos',
+    'atan',
+    'sqrt',
+    'log2',
+  ])
     reserved.add(name);
   for (const name of ['<', '>', '<=', '>=']) reserved.add(name);
   for (const name of ['while', 'until', 'for', 'break', 'continue']) reserved.add(name);
@@ -407,16 +421,35 @@ function __compileShader__(node, source, { structDefinitions = new Map(), hoistT
     if (['type', 'async', 'promise', 'await', 'resolve', 'reject'].includes(name))
       fail(`${name} is only supported in host code`, node);
     if (
-      ['min', 'max', 'clamp', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sqrt'].includes(name)
+      [
+        'abs',
+        'min',
+        'max',
+        'clamp',
+        'sin',
+        'cos',
+        'tan',
+        'asin',
+        'acos',
+        'atan',
+        'sqrt',
+        'log2',
+      ].includes(name)
     ) {
       const unary = !['min', 'max', 'clamp'].includes(name),
         arity = unary ? 1 : name === 'clamp' ? 3 : 2;
-      if (args.length !== arity) fail(`${name} expects exactly ${arity} numeric operands`, node);
+      const floatOnly = unary && name !== 'abs';
+      const variadic = name === 'min' || name === 'max';
+      if (variadic ? args.length < 1 : args.length !== arity)
+        fail(
+          `${name} expects ${variadic ? 'one or more' : `exactly ${arity}`} numeric operands`,
+          node,
+        );
       const values = args.map(numericExpression),
         shapes = values.map((value) => shape(value.type));
-      if (shapes.some((info) => !info) || (unary && shapes[0].scalar !== 'f32'))
+      if (shapes.some((info) => !info) || (floatOnly && shapes[0].scalar !== 'f32'))
         fail(
-          `${name} requires ${unary ? 'float scalars or vectors' : 'numeric scalars or vectors'}`,
+          `${name} requires ${floatOnly ? 'float scalars or vectors' : 'numeric scalars or vectors'}`,
           node,
         );
       const target = shapes.reduce((a, b) => (b.size > a.size ? b : a));
@@ -437,7 +470,12 @@ function __compileShader__(node, source, { structDefinitions = new Map(), hoistT
       const codes = values.map((value, i) =>
         target.size > 1 && shapes[i].size === 1 ? `${typeName(type)}(${value.code})` : value.code,
       );
-      return { code: `${name}(${codes.join(', ')})`, type };
+      return {
+        code: variadic
+          ? codes.reduce((left, right) => `${name}(${left}, ${right})`)
+          : `${name}(${codes.join(', ')})`,
+        type,
+      };
     }
     if (['<', '>', '<=', '>='].includes(name)) {
       if (args.length !== 2) fail(`${name} expects exactly two numeric scalars`, node);
@@ -968,22 +1006,35 @@ return selected;
       const background = sampleColor(colors[1] ?? { code: 'before', type: 'texture2d' });
       return { code: `blendColors(${foreground}, ${background})`, type: 4 };
     }
-    if (name === 'sample') {
-      if (args.length < 1 || args.length > 2)
-        fail('sample expects a texture2d or text and optional vec2f UV coordinates', node);
+    if (name === 'sample' || name === 'sample-nearest') {
+      const nearest = name === 'sample-nearest';
+      if (args.length < 1 || args.length > (nearest ? 2 : 3))
+        fail(
+          nearest
+            ? 'sample-nearest expects a texture2d or text and optional vec2f UV coordinates'
+            : 'sample expects a texture2d or text, optional vec2f UV coordinates, and optional f32 mip level',
+          node,
+        );
       const image = expression(args[0]);
       if (image.type !== 'texture2d' && image.type?.kind !== 'text')
-        fail('sample expects a texture2d or text', args[0]);
+        fail(`${name} expects a texture2d or text`, args[0]);
       const uv =
-        args.length === 2
+        args.length >= 2
           ? numericExpression(args[1])
           : image.type?.kind === 'text'
             ? textField(image, 'uv', node)
             : textureField(image, 'uv', node);
-      if (uv.type !== 2) fail('sample expects vec2f UV coordinates', node);
+      if (uv.type !== 2) fail(`${name} expects vec2f UV coordinates`, node);
+      if (nearest) {
+        const dimensions = `textureDimensions(${image.code}, 0)`;
+        const pixel = `min(vec2i(clamp(${uv.code}, vec2f(0f), vec2f(1f)) * vec2f(${dimensions})), vec2i(${dimensions}) - vec2i(1))`;
+        return { code: `textureLoad(${image.code}, ${pixel}, 0)`, type: 4 };
+      }
+      const level = args.length === 3 ? numericExpression(args[2]) : { code: '0.0f', type: 1 };
+      if (level.type !== 1) fail('sample mip level must be f32', node);
       needsSampler = true;
       return {
-        code: `textureSampleLevel(${image.code}, shaderSampler, ${uv.code}, 0.0f)`,
+        code: `textureSampleLevel(${image.code}, shaderSampler, ${uv.code}, ${level.code})`,
         type: 4,
       };
     }

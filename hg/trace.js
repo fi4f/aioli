@@ -1,4 +1,5 @@
 import { Errors } from './errors.js';
+import { Contracts } from './contracts.js';
 
 function __locate__(error, source, start, end = start + 1) {
   if (Errors.isError(error)) error = Errors.toNative(error);
@@ -82,7 +83,7 @@ function __at__(service, start, end, evaluate) {
   }
 }
 
-function __call__(service, start, end, fn, args) {
+function __call__(service, start, end, fn, args, origin = service.sourceURL) {
   if (typeof fn !== 'function') {
     const type = fn === null ? 'nil' : typeof fn;
     const value = type === 'string' ? ` ${JSON.stringify(fn)}` : '';
@@ -96,7 +97,7 @@ function __call__(service, start, end, fn, args) {
     );
   }
   try {
-    return fn(...args);
+    return Contracts.call(fn, args, origin);
   } catch (error) {
     const alreadyLocated = error instanceof Error && error.lisp;
     error = __annotate__(service, error, start, end);

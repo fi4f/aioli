@@ -30,8 +30,8 @@ resources, avoiding duplicate loops and paused-time catch-up. Explicit pause sur
 `load` and `patch`; reflection and explicit calls remain available. See
 [pausing and starting](./APP.md#pausing-and-starting).
 
-Current pass: implement the plain Mercury App core and vanilla textarea/canvas
-staging environment. Embedded child creation, program exports, diagnostic delivery,
+Current application: the plain Mercury App core and Mercury canvas editor, hosted
+by `index.html` and `index.js`. Embedded child creation, program exports, diagnostic delivery,
 and text-proxy replacement are deferred by the project owner. `si` retains the
 former scale-step behavior. See [implemented App contract](./APP.md).
 

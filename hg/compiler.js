@@ -250,6 +250,7 @@ function __compileProgram__(
         mutable: false,
         namedArguments: Transforms.isTransformConstructor(bindings[name]),
         configurationArguments: Contracts.isConfigureBinding(bindings[name]),
+        originArguments: Contracts.isOriginBinding(bindings[name]),
       },
     ]),
   );
@@ -566,8 +567,8 @@ function __compileProgram__(
       if (!variable.mutable) throw new SyntaxError(`Cannot assign host binding: ${name}`);
       return variable.identifier;
     },
-    block(nodes) {
-      return `{\n${sequence(nodes)}\n}`;
+    block(nodes, returnLast = false) {
+      return `{\n${sequence(nodes, returnLast)}\n}`;
     },
     loop(name, args) {
       if (name === 'break' || name === 'continue') {
@@ -735,9 +736,9 @@ function __compileProgram__(
       return typeof result === 'string' ? `${result};` : result.statement;
     },
   };
-  const emit = (node, statement = false) => {
+  const emit = (node, statement = false, returnLast = false) => {
     try {
-      const result = emitRaw(node, statement);
+      const result = emitRaw(node, statement, returnLast);
       return trace && typeof result === 'string'
         ? hasAwait(node)
           ? `(await $trace.asyncAt($tracer, ${node.start}, ${node.end}, async () => (${result})))`
@@ -761,7 +762,7 @@ function __compileProgram__(
       return node.parts.some((part) => part.kind === 'interpolation' && hasAwait(part.expression));
     return false;
   }
-  const emitRaw = (node, statement = false) => {
+  const emitRaw = (node, statement = false, returnLast = false) => {
     const importing = statement && __standaloneImport__(node);
     if (importing) {
       const target = importScopes.get(scopes.at(-1));
@@ -851,6 +852,7 @@ function __compileProgram__(
         node,
         inStatement: statement,
         inFunction: functionDepth > 0,
+        returnLast,
       });
       if (!statement && typeof result !== 'string')
         throw new SyntaxError(`${head.name} requires statement position`);
@@ -869,9 +871,12 @@ function __compileProgram__(
           : emit(arg),
       )
       .join(', ');
+    const direct = head.kind === 'symbol' && lookup(head.name).originArguments === false;
     return trace
-      ? `$nil($trace.call($tracer, ${node.start}, ${node.end}, ${callee}, [${argumentsCode}]))`
-      : `$nil((${callee})(${argumentsCode}))`;
+      ? `$nil($trace.call($tracer, ${node.start}, ${node.end}, ${callee}, [${argumentsCode}], $origin))`
+      : direct
+        ? `$nil((${callee})(${argumentsCode}))`
+        : `$nil($call(${callee}, [${argumentsCode}], $origin))`;
   };
   function sequence(nodes, returnLast = false, scope = new Map()) {
     scopes.push(scope);
@@ -931,11 +936,12 @@ function __compileProgram__(
         prefix +
         nodes
           .map((node, index) => {
-            const result = emit(node, true);
+            const returning = returnLast && index === nodes.length - 1;
+            const result = emit(node, true, returning);
             const statement =
               typeof result !== 'string'
                 ? result.statement
-                : `${returnLast && index === nodes.length - 1 ? 'return ' : ''}${result};`;
+                : `${returning ? 'return ' : ''}${result};`;
             return injection && scopes.length === 2
               ? `$memory.assertActive($sceneMemory);\n${statement}`
               : statement;
@@ -1013,6 +1019,8 @@ function __compileProgram__(
         '$imports',
         '$memory',
         '$sceneMemory',
+        '$call',
+        '$origin',
         javascript,
       )
     : new Execute(
@@ -1036,6 +1044,8 @@ function __compileProgram__(
         '$imports',
         '$memory',
         '$sceneMemory',
+        '$call',
+        '$origin',
         javascript,
       );
   const tracer = trace ? Trace.new(source, names, sourceURL) : undefined;
@@ -1083,6 +1093,8 @@ function __execute__(program, shaderValues, memory) {
     Modules.imports,
     SceneMemory,
     memory,
+    Contracts.call,
+    program.sourceURL,
   );
   return program.asynchronous ? Promises.runtime.mark(result) : result;
 }

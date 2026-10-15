@@ -619,6 +619,12 @@ function __keys__(value) {
 }
 
 const __dataBindings__ = {
+  'remove-key': (value, key) => {
+    if (__dataKind__(value) !== 'dict' || __bindingCells__.has(value) || typeof key !== 'string')
+      throw new TypeError('remove-key expects a plain dictionary and a string key');
+    delete value[key];
+    return value;
+  },
   list: __list__,
   dict: __dict__,
   put: __put__,

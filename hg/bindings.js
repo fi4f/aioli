@@ -7,10 +7,13 @@ import { Colors } from './colors.js';
 import { Maths } from './math.js';
 import { Promises } from './promises.js';
 import { Events } from './events.js';
+import { Layout } from './layout.js';
 
 // Add application functions or values here; no compiler changes needed.
 const __bindings__ = {
   Events,
+  Layout,
+  Colors,
   ...Arithmetic.bindings,
   ...Types.vectorBindings,
   ...Types.matrixBindings,

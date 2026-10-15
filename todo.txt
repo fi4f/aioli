@@ -1,4 +1,0 @@
-- The edges on docked panels are too thick. Make them match the border width on floating panels.
-- Create a separate theme.lisp file for editor constants, and update the look and feel of the editor to be similar to monokai.
-- undocking a panel is still too tall. If the left and right sides of the panel come in 32px, then the bottom needs to come in 64px. 
-- update min and max to accept multiple values (one or more)

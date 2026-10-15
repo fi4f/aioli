@@ -36,8 +36,8 @@ New top-level bindings persist and share normal reflection and replacement rules
 execution does not edit the stored source. Temporary locals use ordinary lexical
 scope. See [top-level execution](./APP.md#top-level-execution).
 
-Current pass: implement the plain Mercury App core and vanilla textarea/canvas
-staging environment. Embedded child creation, program exports, diagnostic delivery,
+Current application: the plain Mercury App core and Mercury canvas editor, hosted
+by `index.html` and `index.js`. Embedded child creation, program exports, diagnostic delivery,
 and text-proxy replacement are deferred by the project owner. `si` retains the
 former scale-step behavior. See [implemented App contract](./APP.md).
 

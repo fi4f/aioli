@@ -73,6 +73,7 @@ async function __createGraphics__(
   service.__views__ = new WeakMap();
   service.__presentGroups__ = new WeakMap();
   service.textCache = new Map();
+  service.__images__ = new Map();
   service.persistentTextures = new Set();
   service.textCacheBytes = 0;
   service.textLineCache = { measure: new Map(), paint: new Map() };
@@ -82,7 +83,11 @@ async function __createGraphics__(
     service.persistentTextures.delete(texture);
     if (!service.destroyed) texture.destroy();
   });
-  service.sampler = service.device.createSampler({ minFilter: 'linear', magFilter: 'linear' });
+  service.sampler = service.device.createSampler({
+    minFilter: 'linear',
+    magFilter: 'linear',
+    mipmapFilter: 'linear',
+  });
   service.stats = { shaderCompilations: 0, textRasterizations: 0 };
   service.device.lost.then((info) => {
     service.lost = true;
@@ -705,6 +710,8 @@ function __createText__(service, text) {
     Data.vector(2, [raster.width, raster.height]),
     'baseline',
     raster.baseline,
+    'ink',
+    Data.dict('top', raster.inkTop, 'bottom', raster.inkBottom),
     'origin',
     Data.dict('x', raster.offsetX, 'y', raster.offsetY),
     'lines',
@@ -726,6 +733,118 @@ function __createText__(service, text) {
   return Data.reCopy(Data.dict(...fields));
 }
 
+async function __imageMips__(service, texture) {
+  if (texture.mipLevelCount <= 1) return;
+  // Average the exact source footprint, including odd dimensions and transparent texels.
+  service.__imageMipPipeline__ ??= service.device.createRenderPipelineAsync({
+    layout: 'auto',
+    vertex: { module: service.presentModule, entryPoint: 'vertex' },
+    fragment: {
+      module: service.device.createShaderModule({
+        code: `
+        @group(0) @binding(0) var source: texture_2d<f32>;
+        @fragment fn fragment(@builtin(position) p: vec4f) -> @location(0) vec4f {
+          let dimensions = textureDimensions(source, 0);
+          let ratio = vec2f(dimensions) / vec2f(max(dimensions / vec2u(2u), vec2u(1u)));
+          let low = floor(p.xy) * ratio;
+          let high = low + ratio;
+          let start = vec2i(floor(low));
+          var color = vec4f(0f);
+          for (var y = 0i; y < 3i; y++) {
+            for (var x = 0i; x < 3i; x++) {
+              let index = start + vec2i(x, y);
+              let coverage = max(vec2f(0f), min(high, vec2f(index) + vec2f(1f)) - max(low, vec2f(index)));
+              let weight = coverage.x * coverage.y;
+              if (weight > 0f) {
+                let pixel = textureLoad(source, index, 0);
+                color += vec4f(pixel.rgb * pixel.a, pixel.a) * weight;
+              }
+            }
+          }
+          if (color.a > 0f) { return vec4f(color.rgb / color.a, color.a / (ratio.x * ratio.y)); }
+          return vec4f(0f);
+        }`,
+      }),
+      entryPoint: 'fragment',
+      targets: [{ format: 'rgba8unorm' }],
+    },
+  });
+  const pipeline = await service.__imageMipPipeline__;
+  __available__(service);
+  const encoder = service.device.createCommandEncoder();
+  for (let level = 1; level < texture.mipLevelCount; level++) {
+    const group = service.device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: texture.createView({ baseMipLevel: level - 1, mipLevelCount: 1 }) },
+      ],
+    });
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: texture.createView({ baseMipLevel: level, mipLevelCount: 1 }),
+          loadOp: 'clear',
+          storeOp: 'store',
+          clearValue: [0, 0, 0, 0],
+        },
+      ],
+    });
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, group);
+    pass.draw(3);
+    pass.end();
+  }
+  service.device.queue.submit([encoder.finish()]);
+}
+
+function __loadImage__(service, url, fetchSource = (...args) => globalThis.fetch(...args)) {
+  __available__(service);
+  if (typeof url !== 'string') throw new TypeError('image expects a URL string');
+  if (service.__images__.has(url)) return service.__images__.get(url);
+  const pending = (async () => {
+    const response = await fetchSource(url);
+    if (!response.ok) throw new Error(`Image request failed (${response.status}): ${url}`);
+    const bitmap = await createImageBitmap(await response.blob(), { premultiplyAlpha: 'none' });
+    try {
+      __available__(service);
+      if (Math.max(bitmap.width, bitmap.height) > service.device.limits.maxTextureDimension2D)
+        throw new RangeError('Image exceeds GPU texture dimension limit');
+      const texture = service.device.createTexture({
+        size: [bitmap.width, bitmap.height],
+        mipLevelCount: 1 + Math.floor(Math.log2(Math.max(bitmap.width, bitmap.height))),
+        format: 'rgba8unorm',
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      try {
+        service.device.queue.copyExternalImageToTexture(
+          { source: bitmap },
+          { texture, premultipliedAlpha: false },
+          [bitmap.width, bitmap.height],
+        );
+        await __imageMips__(service, texture);
+      } catch (error) {
+        texture.destroy();
+        throw error;
+      }
+      const handle = Types.textureHandle(bitmap.width, bitmap.height);
+      service.handles.set(handle, { texture, persistent: true });
+      service.persistentTextures.add(texture);
+      service.textureFinalizer.register(handle, texture);
+      return handle;
+    } finally {
+      bitmap.close();
+    }
+  })();
+  service.__images__.set(url, pending);
+  pending.catch(() => {
+    if (service.__images__.get(url) === pending) service.__images__.delete(url);
+  });
+  return pending;
+}
+
 function __resetScene__(service) {
   for (const slot of service.slots) slot.groups.clear();
 }
@@ -734,6 +853,7 @@ function __destroy__(service) {
   if (service.destroyed) return;
   service.destroyed = true;
   service.textCache.clear();
+  service.__images__.clear();
   service.textCacheBytes = 0;
   service.textLineCache.measure.clear();
   service.textLineCache.paint.clear();
@@ -753,6 +873,7 @@ export const Graphics = {
   new: __createGraphics__,
   createShader: __createShader__,
   createText: __createText__,
+  loadImage: __loadImage__,
   render: __render__,
   resetScene: __resetScene__,
   destroy: __destroy__,

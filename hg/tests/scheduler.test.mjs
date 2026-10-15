@@ -172,6 +172,40 @@ test('callback failures stop frames and report once', () => {
   assert.equal(stage.scene, null);
 });
 
+test('install accepts an already attached immutable scene without calling attach again', () => {
+  const { stage, frames } = harness();
+  const events = [];
+  Scheduler.replace(stage, { detach: () => events.push('old detach') });
+  const scene = Object.freeze({ attach: () => events.push('new attach'), render() {} });
+  scene.attach();
+  Scheduler.install(stage, scene);
+  assert.equal(stage.scene, scene);
+  assert.deepEqual(events, ['new attach', 'old detach']);
+  assert.equal(frames.size, 1);
+  Scheduler.replace(stage, null);
+});
+
+test('runtime failure cancels queued rendering, reports once, and replacement recovers', async () => {
+  const { stage, frames, errors } = harness();
+  let renders = 0;
+  Scheduler.replace(stage, { render() { renders++; } });
+  Scheduler.requestRender(stage);
+  const error = new Error('native input failed');
+  Scheduler.fail(stage, error);
+  Scheduler.fail(stage, new Error('secondary failure'));
+  await Promise.resolve();
+  assert.deepEqual(errors, [error]);
+  assert.equal(renders, 0);
+  assert.equal(frames.size, 0);
+  Scheduler.replace(stage, { render() { renders++; } });
+  Scheduler.requestRender(stage);
+  await Promise.resolve();
+  assert.equal(stage.failed, false);
+  assert.equal(renders, 1);
+  assert.equal(frames.size, 1);
+  Scheduler.replace(stage, null);
+});
+
 test('invalid timing settings are rejected', () => {
   for (const updateHz of [0, -1, Infinity, NaN, '60']) assert.throws(() => harness({ updateHz }), TypeError);
   assert.throws(() => harness({ maxUpdatesPerFrame: 0 }), TypeError);

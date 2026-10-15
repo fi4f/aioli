@@ -2,7 +2,7 @@
 
 ### JavaScript
 
-- Keep engine/compiler/library modules in `hg/`, automation in `hg/tools/`, tests in `hg/tests/`, documentation in `docs/`, examples and additional hosts in `examples/`, and editor Lisp files in `editor/`; retain the staging `index.html` and `index.js` and editor host `editor.html` and `editor.js` at the repository root
+- Keep the public library entry point `hg.js` at the repository root, engine/compiler/library implementation modules in `hg/`, automation in `hg/tools/`, tests in `hg/tests/`, documentation in `docs/`, examples and additional hosts in `examples/`, and editor Lisp files in `editor/`; keep the primary editor entry point `index.html` and host `index.js` at the repository root
 - Prefer `const` over `let`
 - Avoid `var` and unscoped declarations
 - Prefer dunder names to indicate private fields and methods; use both a double-underscore prefix and suffix, e.g. `__name__`
@@ -16,6 +16,13 @@
 - Use registered JS object identity for resource and binding handles; do not add a generic ref registry, UUID reference table, or generic acquire/resolve/release operations
 - Scene `on` declarations define named runtime hooks; use the independent `Events` dispatcher for generic subscriptions
 - Build UI components, layout, painting, focus, input routing, docking, and resizing in ordinary editable Lisp; keep component namespaces separate from persistent plain node state
+- Compose icons as `ui-icon` nodes and interpret UI strings as `ui-label` children; buttons and titles arrange ordinary child rectangles rather than special icon slots
+- Configure persistent UI rectangles with local Lisp configuration values such as `padding`, `gap`, `width`, and `height`; keep every property, including typography, local and explicit
+- Share padding and alignment geometry between text and UI through `Layout`; keep text shaping as leaf measurement and flow/component policy in editable Lisp
+- Build filesystem paths, file operations, resource fallback, project snapshots, saved-state hooks, and editor restoration policy in editable editor Lisp; native services provide generic storage transactions, fetch, byte/string conversion, and file transfer
+- A project packages both `/editor` and `/project`, including its customized editor; saved editor files remain authoritative and default-editor replacement is explicit
+- Use native JSON project snapshots with text/base64 file contents and explicitly selected saved state; rebuild runtime resources from source and explicit restore hooks
+- Keep F2 recovery in the host before project Lisp starts; use independent default resources and skip failed Lisp lifecycle callbacks when abandoning a broken editor
 - In value position, `on` creates a component handler through the lexical Lisp `ui-on` function; scene hook declarations retain their statement contract
 - Keep namespace APIs explicit about their instance; selected Lisp forms may imply their owning app through compiler/runtime capture, without a global current-app variable or dynamically switching ownership at a call site
 - Implement Lisp `pause`, `start`, `load-source`, `patch-source`, `load`, `patch`, and `exec` as ordinary callable bindings capturing their compiled program's owning app, including in modules, injections, nested functions, and async continuations

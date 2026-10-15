@@ -1,6 +1,26 @@
 import { Data } from './data.js';
 import { Types } from './types.js';
 
+function __rgba__(...channels) {
+  if (channels.length === 1 && Data.dataKind(channels[0]) === 'list')
+    channels = [...Data.values(channels[0])];
+  if (channels.length === 1) {
+    const value = channels[0];
+    if (value === null) return null;
+    if (typeof value === 'number') channels = [value, value, value];
+    else if (['vec3f', 'vec4f', 'list'].includes(Data.dataKind(value)))
+      channels = [...Data.values(value)];
+  }
+  if (
+    ![3, 4].includes(channels.length) ||
+    channels.some((value) => !Number.isFinite(value) || value < 0 || value > 1)
+  )
+    throw new TypeError(
+      'fill expects a scalar, vec3, vec4, three or four channels, or nil; channels must be between 0 and 1',
+    );
+  return Data.vector(4, channels.length === 3 ? [...channels, 1] : channels);
+}
+
 // Straight-alpha source-over: foreground is composited over background.
 function __blend__(...colors) {
   if (colors.length < 1 || colors.length > 2)
@@ -39,4 +59,4 @@ const __blendWGSL__ = `fn blendColors(foreground: vec4f, background: vec4f) -> v
   return vec4f((foreground.xyz * sourceAlpha + background.xyz * remaining) / alpha, alpha);
 }`;
 
-export const Colors = { blend: __blend__, blendWGSL: __blendWGSL__ };
+export const Colors = { rgba: __rgba__, blend: __blend__, blendWGSL: __blendWGSL__ };

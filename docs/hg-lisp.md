@@ -163,6 +163,11 @@ Control forms preserve their specified selection and early-exit behavior: unsele
 
 A function implicitly returns its final statement's value when that statement produces one. An empty function, or a function whose final statement produces no value, returns `nil` unless an explicit return has already completed it.
 
+When the final statement is an `if`, its selected single-expression branch supplies
+the implicit result, including nested conditionals and `elif`/`else` chains.
+An unmatched conditional returns `nil`. Brace-block branches retain their
+non-value statement semantics; explicit `return` inside them still exits the function.
+
 Calling either function below returns `nil`:
 
 ```lisp

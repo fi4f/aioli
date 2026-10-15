@@ -22,20 +22,20 @@ async function main() {
   try {
     const page = await browser.newPage({
       viewport: { width: 1100, height: 800 },
-      deviceScaleFactor: Number(process.env.MAYO_DPR || 1.25),
+      deviceScaleFactor: Number(process.env.MERCURY_DPR || 1.25),
     });
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     page.on('console', (message) => {
       if (message.type() === 'error') errors.push(message.text());
     });
-    await page.route('**/editor.js', async (route) => {
+    await page.route('**/index.js', async (route) => {
       const response = await route.fetch();
       let source = await response.text();
-      if (process.env.MAYO_TRACE !== undefined)
+      if (process.env.MERCURY_TRACE !== undefined)
         source = source.replace(
           /const app = hg.App.new\([\s\S]*?\);/,
-          `const app = hg.App.new({ trace: ${process.env.MAYO_TRACE === '1'}, c: canvas });`,
+          `const app = hg.App.new({ trace: ${process.env.MERCURY_TRACE === '1'}, c: canvas });`,
         );
       source = source.replace(
         "app.state['pixel-ratio'] = ratio;",
@@ -74,7 +74,7 @@ async function main() {
         true,
       );
     });
-    if (process.env.MAYO_GPU_PROFILE === '1')
+    if (process.env.MERCURY_GPU_PROFILE === '1')
       await page.addInitScript(() => {
         const request = GPUAdapter.prototype.requestDevice;
         GPUAdapter.prototype.requestDevice = function (descriptor = {}) {
@@ -92,7 +92,7 @@ async function main() {
         };
       });
     const base = process.env.AIOLI_URL || `http://127.0.0.1:${server.address().port}`;
-    await page.goto(new URL('/editor.html', base).href);
+    await page.goto(new URL('/index.html', base).href);
     try {
       await page.waitForFunction(
         () =>
@@ -142,8 +142,7 @@ async function main() {
         };
         app.scene.update = timed('update', app.scene.update);
         app.scene.render = timed('render', app.scene.render);
-        for (const name of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'keyup'])
-          app.scene[name] = timed('input', app.scene[name]);
+        app.input.emit = timed('input', app.input.emit);
         for (const proxy of app.textProxies) proxy.callback = timed('input', proxy.callback);
         const device = app.graphics.device;
         const create = device.createCommandEncoder.bind(device);
@@ -230,11 +229,11 @@ async function main() {
         };
         window.profileDesktop = App.read(app, App.inspect(app).desktop);
       },
-      Number(process.env.MAYO_EXTRA_LINES || 0),
+      Number(process.env.MERCURY_EXTRA_LINES || 0),
     );
     await page.waitForTimeout(1500);
     const profiler =
-      process.env.MAYO_CPU_PROFILE === '1' ? await page.context().newCDPSession(page) : null;
+      process.env.MERCURY_CPU_PROFILE === '1' ? await page.context().newCDPSession(page) : null;
     if (profiler) {
       await profiler.send('Profiler.enable');
       await profiler.send('Profiler.start');
@@ -270,19 +269,19 @@ async function main() {
       for (let i = 0; i < 60; i++) await page.mouse.move(60 + i * 10, 16);
     });
     await page.mouse.click(70, 120);
-    if (process.env.MAYO_START_ROW)
+    if (process.env.MERCURY_START_ROW)
       await page.evaluate(async (row) => {
         const { TextProxy } = await import('/hg/text-proxy.js');
         const proxy = [...profileApp.textProxies][0];
         TextProxy.select(proxy, row, 0);
         TextProxy.focus(proxy);
-      }, Number(process.env.MAYO_START_ROW));
+      }, Number(process.env.MERCURY_START_ROW));
     else await page.keyboard.press('Control+Home');
     await phase('typing', async () => {
       await page.keyboard.type('; typing latency sample abcdefghijklmnopqrstuvwxyz\n', {
-        delay: Number(process.env.MAYO_KEY_DELAY || 35),
+        delay: Number(process.env.MERCURY_KEY_DELAY || 35),
       });
-      if (process.env.MAYO_BACKSPACE === '1')
+      if (process.env.MERCURY_BACKSPACE === '1')
         for (let i = 0; i < 30; i++) await page.keyboard.press('Backspace');
       await page.waitForTimeout(100);
     });
@@ -293,6 +292,137 @@ async function main() {
       await page.waitForTimeout(700);
       await page.mouse.up();
     });
+    if (process.env.MERCURY_UI_WORKLOAD === '1') {
+      await page.evaluate(async () => {
+        const { App } = await import('/hg/app.js');
+        await App.exec(
+          profileApp,
+          '(ui-focus desktop (ui-path desktop.root workspace.state.panes.0.children.1.children.0))',
+        );
+      });
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('Shift+ArrowRight');
+      const caret = () =>
+        page.evaluate(() => {
+          const proxy = [...profileApp.textProxies][0];
+          return {
+            anchor: profileApp.state.editor.anchor,
+            head: profileApp.state.editor.head,
+            scroll: profileApp.state.editor.scroll,
+            focused: document.activeElement === proxy.target,
+          };
+        });
+      results.reload = { before: await caret() };
+      const reloadStart = Date.now();
+      await page.evaluate(async () => {
+        const { App } = await import('/hg/app.js');
+        await App.patchSource(profileApp, profileApp.state.editor.source);
+      });
+      results.reload.commitMs = Date.now() - reloadStart;
+      await page.waitForTimeout(60);
+      results.reload.durationMs = Date.now() - reloadStart;
+      results.reload.after = await caret();
+      results.reload.inputRoutes = await page.evaluate(() => profileApp.__inputRoutes__.size);
+      await page.evaluate(async () => {
+        const { App } = await import('/hg/app.js');
+        await App.exec(
+          profileApp,
+          '(for pane workspace.state.panes (ui-pane-minimize desktop pane))',
+        );
+      });
+      await page.waitForTimeout(60);
+      async function tray() {
+        return page.evaluate(async () => {
+          const { App } = await import('/hg/app.js');
+          const ui = App.read(profileApp, App.inspect(profileApp).desktop);
+          return ui.root.children[2].children
+            .filter((node) => node.props.pane)
+            .map((node) => ({ id: node.props.pane.props.id, bounds: node.bounds }));
+        });
+      }
+      results.taskbar = { before: await tray() };
+      const first = results.taskbar.before[0].bounds;
+      const last = results.taskbar.before.at(-1).bounds;
+      await page.mouse.move(first.x + first.z / 2, first.y + first.w / 2);
+      await page.mouse.down();
+      await page.mouse.move(last.x + last.z - 4, last.y + last.w / 2, { steps: 15 });
+      await page.mouse.up();
+      await page.waitForTimeout(60);
+      results.taskbar.after = await tray();
+      const tile = results.taskbar.after.find((item) => item.id === 'Bindings').bounds;
+      await page.mouse.move(tile.x + tile.z / 2, tile.y + tile.w / 2);
+      await page.mouse.down();
+      await page.mouse.move(tile.x + tile.z / 2, tile.y - 100, { steps: 10 });
+      await page.mouse.up();
+      await page.waitForTimeout(60);
+      results.taskbar.undocked = await page.evaluate(async () => {
+        const { App } = await import('/hg/app.js');
+        const workspace = App.read(profileApp, App.inspect(profileApp).workspace);
+        return workspace.state.panes.map((pane) => ({
+          id: pane.props.id,
+          minimized: pane.state.minimized,
+          floating: pane.state.floating,
+          bounds: pane.bounds,
+        }));
+      });
+      await page.evaluate(async () => {
+        const { App } = await import('/hg/app.js');
+        profileApp.state.layout = {};
+        await App.patchSource(profileApp, profileApp.source);
+      });
+      await page.waitForTimeout(60);
+      const dockGeometry = () =>
+        page.evaluate(async () => {
+          const { App } = await import('/hg/app.js');
+          const workspace = App.read(profileApp, App.inspect(profileApp).workspace);
+          return {
+            panes: workspace.state.panes.map((pane) => ({
+              id: pane.props.id,
+              bounds: pane.bounds,
+            })),
+            dividers: workspace.state.dividers.map((divider) => ({
+              axis: divider.tree.axis,
+              bounds: divider.bounds,
+            })),
+          };
+        });
+      results.resize = { before: await dockGeometry() };
+      const divider = results.resize.before.dividers[0];
+      const grip = divider.bounds;
+      await page.mouse.move(grip.x + grip.z / 2, grip.y + grip.w / 2);
+      await page.mouse.down();
+      await page.mouse.move(grip.x + grip.z / 2 + 40, grip.y + grip.w / 2, { steps: 15 });
+      await page.mouse.up();
+      await page.waitForTimeout(60);
+      results.resize.after = await dockGeometry();
+      await page.evaluate(async () => {
+        const { App } = await import('/hg/app.js');
+        await App.exec(
+          profileApp,
+          '(set workspace.state.panes.0.props.title "A very long source pane title that should scroll across the handle") (ui-invalidate desktop)',
+        );
+      });
+      await page.waitForTimeout(60);
+      const title = await page.evaluate(async () => {
+        const { App } = await import('/hg/app.js');
+        return App.read(profileApp, App.inspect(profileApp).workspace).state.panes[0].state[
+          'title-node'
+        ].bounds;
+      });
+      await page.mouse.move(title.x + 40, title.y + title.w / 2);
+      await page.waitForTimeout(1000);
+      const marquee = () =>
+        page.evaluate(async () => {
+          const { App } = await import('/hg/app.js');
+          return App.read(profileApp, App.inspect(profileApp).workspace).state.panes[0].state[
+            'title-node'
+          ].state.marquee;
+        });
+      results.marquee = { hoveredOffset: await marquee() };
+      await page.mouse.move(12, 12);
+      await page.waitForTimeout(60);
+      results.marquee.leftOffset = await marquee();
+    }
     if (profiler) {
       const { profile } = await profiler.send('Profiler.stop');
       const nodes = new Map(profile.nodes.map((node) => [node.id, node.callFrame])),
@@ -321,9 +451,9 @@ async function main() {
       sourceLength: profileApp.state.editor.source.length,
     }));
     results.errors = errors;
-    if (process.env.MAYO_SCREENSHOT) await page.screenshot({ path: process.env.MAYO_SCREENSHOT });
+    if (process.env.MERCURY_SCREENSHOT) await page.screenshot({ path: process.env.MERCURY_SCREENSHOT });
     const output = JSON.stringify(results, null, 2);
-    if (process.env.MAYO_OUTPUT) await fs.writeFile(process.env.MAYO_OUTPUT, output + '\n');
+    if (process.env.MERCURY_OUTPUT) await fs.writeFile(process.env.MERCURY_OUTPUT, output + '\n');
     console.log(output);
     if (errors.length || results.environment.failed) process.exitCode = 1;
   } finally {

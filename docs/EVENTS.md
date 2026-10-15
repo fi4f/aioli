@@ -18,7 +18,7 @@ their identities. Instances and the namespace are ordinary registered host recor
 dispatch state uses private dunder fields. They are not JSON snapshots.
 
 ```js
-import hg from '../hg/hg.js';
+import hg from '../hg.js';
 const events = hg.Events.new();
 const handler = hg.Events.on(events, 'changed', (value) => console.log(value));
 hg.Events.emit(events, 'changed', 42);

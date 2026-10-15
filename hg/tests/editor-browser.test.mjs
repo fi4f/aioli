@@ -8,7 +8,7 @@ test('large text-proxy documents preserve global edits, selections, history, and
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(new URL('/index.html', process.env.AIOLI_URL || 'http://localhost:3000').href);
+    await page.goto(new URL('/hg/tests/browser.html', process.env.AIOLI_URL || 'http://localhost:3000').href);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -102,20 +102,19 @@ test('large text-proxy documents preserve global edits, selections, history, and
   } finally { await browser.close(); }
 });
 
-test('Mayo renders its own editor on canvas and reloads itself after Lisp debounce', { timeout: 60000 }, async () => {
+test('Mercury opens at index.html and preserves editing through autosave and reload failures', { timeout: 60000 }, async () => {
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
-    await page.goto(new URL('/editor.html', process.env.AIOLI_URL || 'http://localhost:3000').href);
-    await page.evaluate(async () => {
-      for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
-        window[name] = (await import(`/hg/${file}.js`))[name];
-      }
+    await page.route('**/index.js', async route => {
+      const response = await route.fetch();
+      await route.fulfill({ response, body: (await response.text()).replace('host.app = app;', 'host.app = app; window.editorTestApp = app;') });
     });
-    await page.waitForSelector('[data-hg-text-proxy]', { state: 'attached' });
+    await page.goto(new URL('/index.html', process.env.AIOLI_URL || 'http://localhost:3000').href);
+    await page.waitForFunction(() => window.editorTestApp?.scene && !editorTestApp.attaching);
     const dimensions = await page.locator('canvas').evaluate(element => {
       const bounds = element.getBoundingClientRect();
       return [element.width, element.height, Math.round(bounds.width), Math.round(bounds.height)];
@@ -126,56 +125,32 @@ test('Mayo renders its own editor on canvas and reloads itself after Lisp deboun
       const canvas = document.getElementById('canvas');
       return canvas.width === 1024 && canvas.height === 768;
     });
-    const proxy = page.locator('[data-hg-text-proxy]');
+    const proxyCount = await page.locator('[data-hg-text-proxy]').count();
+    const sourceIndex = await page.evaluate(() => [...document.querySelectorAll('[data-hg-text-proxy]')]
+      .findIndex(element => element.value === editorTestApp.state.editor.source));
+    assert.ok(sourceIndex >= 0);
+    const proxy = page.locator('[data-hg-text-proxy]').nth(sourceIndex);
     const original = await proxy.inputValue();
-    assert.match(original, /\(let title "Mayo"\)/);
+    assert.match(original, /\(let model state.editor\)/);
     assert.equal(await page.locator('body > canvas').count(), 1);
     assert.equal(await page.locator('body textarea:not([data-hg-text-proxy])').count(), 0);
     assert.equal(await proxy.evaluate(element => getComputedStyle(element).opacity), '0');
     const old = await proxy.elementHandle();
-    assert.equal(await old.evaluate((element, value) => {
-      element.value = value;
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-      return element.isConnected;
-    }, original.replace('(let title "Mayo")', '(let title "Mayo live")')), true);
+    await proxy.fill(original + '\n; Mercury live');
     await page.waitForFunction(element => !element.isConnected, old);
-    assert.match(await proxy.inputValue(), /Mayo live/);
-    await page.waitForTimeout(200);
-    const working = await page.locator('canvas').screenshot();
+    assert.match(await proxy.inputValue(), /Mercury live$/);
+    await page.evaluate(() => { window.workingEditorScene = editorTestApp.scene; });
     const current = await proxy.elementHandle();
     await proxy.fill('(let broken');
-    await page.waitForTimeout(800);
+    await page.waitForFunction(() => editorTestApp.state.editor.status === 'Saved; reload failed');
     assert.equal(await current.evaluate(element => element.isConnected), true);
-    assert.notDeepEqual(await page.locator('canvas').screenshot(), working);
+    assert.equal(await page.evaluate(() => editorTestApp.scene === workingEditorScene && !editorTestApp.failed), true);
+    assert.match(await page.evaluate(() => editorTestApp.state.editor.error), /SyntaxError/);
     await proxy.fill(original);
     await page.waitForFunction(element => !element.isConnected, current);
-    assert.equal(await proxy.count(), 1);
+    assert.equal(await page.locator('[data-hg-text-proxy]').count(), proxyCount);
     assert.equal(await proxy.inputValue(), original);
-    // A malformed text operation inside render must fail before scene replacement.
-    const editing = await proxy.elementHandle();
-    const missingResolution = original.replace('(wrap false)', '(wrap false) (resolution)');
-    await proxy.fill(missingResolution);
-    await page.waitForTimeout(750);
-    assert.equal(await editing.evaluate(element => element.isConnected), true);
-    assert.equal(await proxy.inputValue(), missingResolution);
-    const zeroResolution = original.replace('(wrap false)', '(wrap false) (resolution 0)');
-    await proxy.fill(zeroResolution);
-    await page.waitForTimeout(750);
-    assert.equal(await editing.evaluate(element => element.isConnected), true);
-    assert.equal(await proxy.inputValue(), zeroResolution);
-    // Computed invalid values are checked by the candidate's first render.
-    await proxy.fill(original.replace('(wrap false)', '(wrap false) (resolution (- 1 1))'));
-    await page.waitForFunction(element => !element.isConnected, editing);
-    await page.waitForTimeout(200);
-    const recovered = await proxy.elementHandle();
-    assert.equal(await proxy.count(), 1);
-    assert.match(await proxy.inputValue(), /resolution \(- 1 1\)/);
-    await proxy.fill(original.replace('(wrap false)', '(wrap false) (resolution 2)'));
-    await page.waitForFunction(element => !element.isConnected, recovered);
-    const validResolution = await proxy.elementHandle();
-    await proxy.fill(original);
-    await page.waitForFunction(element => !element.isConnected, validResolution);
-    // Native typing reaches the invisible adapter and changes the Lisp draft.
+    await proxy.focus();
     await page.keyboard.press('Control+End');
     await page.keyboard.type('\n; native input');
     assert.match(await proxy.inputValue(), /native input$/);
@@ -183,8 +158,8 @@ test('Mayo renders its own editor on canvas and reloads itself after Lisp deboun
     const selection = await typed.evaluate(element => element.selectionStart);
     await page.waitForFunction(element => !element.isConnected, typed);
     assert.equal(await proxy.evaluate(element => element.selectionStart), selection);
-    // Composition keeps the current editor installed until the native commit.
     const composing = await proxy.elementHandle();
+    await proxy.focus();
     await proxy.dispatchEvent('compositionstart');
     await page.keyboard.insertText(' composing');
     await page.waitForTimeout(700);
@@ -192,23 +167,17 @@ test('Mayo renders its own editor on canvas and reloads itself after Lisp deboun
     await proxy.dispatchEvent('compositionend');
     await page.waitForFunction(element => !element.isConnected, composing);
     assert.match(await proxy.inputValue(), /native input composing$/);
-    // Pointer coordinates are resolved by Lisp, then mirrored into native input.
-    await page.locator('canvas').click({ position: { x: 24, y: 67 } });
-    assert.equal(await proxy.evaluate(element => element.selectionStart === element.selectionEnd), true);
-    assert.equal(await proxy.evaluate(element => document.activeElement === element), true);
     assert.deepEqual(errors, []);
-  } finally {
-    await browser.close();
-  }
+  } finally { await browser.close(); }
 });
 
-test('Mayo preserves small wheel deltas, clamps fast scrolling, and respects wheel units', { timeout: 30000 }, async () => {
+test('Mercury preserves small wheel deltas, clamps fast scrolling, and respects wheel units', { timeout: 30000 }, async () => {
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.goto(new URL('/index.html', process.env.AIOLI_URL || 'http://localhost:3000').href);
+    await page.goto(new URL('/hg/tests/browser.html', process.env.AIOLI_URL || 'http://localhost:3000').href);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -227,7 +196,7 @@ test('Mayo preserves small wheel deltas, clamps fast scrolling, and respects whe
       const createText = runtime.services.graphics.createText;
       const batches = [];
       runtime.services.graphics = { ...runtime.services.graphics, createText: (graphics, snapshot) => {
-        if (snapshot.wrap === false && snapshot.runs.some(run => run.text === '; Welcome to Mayo. This is the source of the editor you are using right now.')) {
+        if (snapshot.wrap === false && snapshot.runs.some(run => run.text === '; Welcome to Mercury. This is the source of the editor you are using right now.')) {
           batches.push(snapshot.runs.map(run => ({ text: run.text, fill: run.fill })));
         }
         return createText(graphics, snapshot);
@@ -250,7 +219,7 @@ test('Mayo preserves small wheel deltas, clamps fast scrolling, and respects whe
     assert.equal(await page.evaluate(() => scrollTest.idlePasses), 0);
     const firstBatch = await page.evaluate(() => scrollTest.batches[0]);
     const firstLine = firstBatch.map(run => run.text).join('').split('\n')[0];
-    assert.match(firstLine, /^\s+1  ; Welcome to Mayo/);
+    assert.match(firstLine, /^\s+1  ; Welcome to Mercury/);
     assert.ok(new Set(firstBatch.map(run => JSON.stringify(run.fill))).size >= 4);
     await page.waitForTimeout(150);
     const before = await page.locator('#scroll-test').screenshot();
@@ -290,7 +259,7 @@ test('text-proxy suppresses redundant notifications and keeps grapheme selection
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(new URL('/index.html', process.env.AIOLI_URL || 'http://localhost:3000').href);
+    await page.goto(new URL('/hg/tests/browser.html', process.env.AIOLI_URL || 'http://localhost:3000').href);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];
@@ -330,7 +299,7 @@ test('cached highlighted text matches uncached pixels across edits', { timeout: 
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(new URL('/index.html', process.env.AIOLI_URL || 'http://localhost:3000').href);
+    await page.goto(new URL('/hg/tests/browser.html', process.env.AIOLI_URL || 'http://localhost:3000').href);
     await page.evaluate(async () => {
       for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
         window[name] = (await import(`/hg/${file}.js`))[name];

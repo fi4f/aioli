@@ -9,9 +9,13 @@ import { Modules } from './modules.js';
 import { Promises } from './promises.js';
 import { Data } from './data.js';
 import { TextProxy } from './text-proxy.js';
+import { Resources, resourceResponse } from './resources.js';
+import { Strings } from './strings.js';
+import { Storage } from './storage.js';
 import { Trace } from './trace.js';
 import { Tokenizer } from './tokenize.js';
 import { SceneMemory } from './scene-memory.js';
+import { Preview } from './preview.js';
 
 const __owners__ = new WeakMap();
 
@@ -23,7 +27,7 @@ function __appData__({
   ups = updateHz,
   maxUpdatesPerFrame = 8,
   innerCanvas = {},
-  baseURL = globalThis.document?.baseURI ?? new URL('./hg.js', import.meta.url).href,
+  baseURL = globalThis.document?.baseURI ?? new URL('../hg.js', import.meta.url).href,
   fetch: fetchSource,
 } = {}) {
   const app = {};
@@ -32,11 +36,13 @@ function __appData__({
   app.onError = onError;
   app.bindings = { ...Bindings, ...bindings };
   app.textProxies = new Set();
+  app.__inputRoutes__ = new Set();
   app.__tokenizer__ = Tokenizer.new();
   app.outerCanvas = null;
   app.graphics = null;
   app.source = '';
   app.sourceURL = '';
+  app.filesystem = null;
   app.state = Data.dict();
   app.__reflection__ = SceneMemory.reflection();
   app.destroyed = false;
@@ -61,6 +67,9 @@ function __appData__({
   });
   app.bindings.App = App;
   app.bindings.TextProxy = Data.registerHostData(TextProxy);
+  app.bindings.Resources = Resources;
+  app.bindings.Strings = Strings;
+  app.bindings.Storage = Storage;
   return Data.registerHostData(app);
 }
 
@@ -81,7 +90,7 @@ export const AppCore = {
           app.ownedCanvas === outerCanvas
             ? app.services.display.displaySize
             : app.services.display.bitmapSize,
-        onError: app.onError,
+        onError: (error) => Scheduler.fail(app, error),
         onConfigure: (options, patch) => {
           app.innerOptions = { ...options };
           if (Object.hasOwn(patch, 'width')) app.w = options.width;
@@ -94,11 +103,15 @@ export const AppCore = {
         },
       });
       app.display = display;
-      const graphics = await app.services.graphics.new(display.innerCanvas, app.onError, {
-        prepare: (limit) => AppCore.syncInnerCanvas(app, limit),
-        present: () => app.services.display.paint(display),
-        needsPresent: () => app.services.display.needsPresent(display),
-      });
+      const graphics = await app.services.graphics.new(
+        display.innerCanvas,
+        (error) => Scheduler.fail(app, error),
+        {
+          prepare: (limit) => AppCore.syncInnerCanvas(app, limit),
+          present: () => app.services.display.paint(display),
+          needsPresent: () => app.services.display.needsPresent(display),
+        },
+      );
       if (app.destroyed) {
         app.services.graphics.destroy(graphics);
         throw new Error('Mercury runtime was destroyed during initialization.');
@@ -109,12 +122,15 @@ export const AppCore = {
         emit: (name, event) => {
           if (app.inputFailed || app.failed || app.attaching) return;
           try {
-            Scheduler.invoke(app, app.scene?.[name], event);
+            for (const callback of [...app.__inputRoutes__].reverse()) {
+              Scheduler.invoke(app, (value) => callback(name, value), event);
+              if (event.handled) break;
+            }
+            if (!event.handled) Scheduler.invoke(app, app.scene?.[name], event);
             Scheduler.requestRender(app);
           } catch (error) {
             app.inputFailed = true;
-            Scheduler.stop(app);
-            app.onError(error);
+            Scheduler.fail(app, error);
           }
         },
       });
@@ -125,6 +141,7 @@ export const AppCore = {
         const proxy = TextProxy.new(
           outerCanvas,
           (edit) => {
+            if (app.destroyed || app.failed) return;
             const result = callback(edit);
             Scheduler.requestRender(app);
             return result;
@@ -132,6 +149,10 @@ export const AppCore = {
           {
             toOuter: (x, y) => app.services.display.toOuter(display, x, y),
             onEdit: (edit) => Tokenizer.noteEdit(app.__tokenizer__, edit),
+            onError: (error) => {
+              app.inputFailed = true;
+              Scheduler.fail(app, error);
+            },
           },
         );
         app.textProxies.add(proxy);
@@ -186,25 +207,10 @@ export const AppCore = {
   },
   executePatch(app, program) {
     // Pause callbacks while new bindings initialize, including across awaits.
-    const previous = app.scene;
-    const generation = app.loadGeneration;
-    const preparation = { previous, dispose() {} };
-    app.reloadPreparation = preparation;
+    app.reloadPreparation.suspended = true;
     Scheduler.stop(app);
     app.attaching = true;
-    const failed = (error) => {
-      if (app.reloadPreparation === preparation) {
-        app.reloadPreparation = null;
-        if (!app.destroyed && generation === app.loadGeneration) Scheduler.replace(app, previous);
-      }
-      throw error;
-    };
-    try {
-      const result = AppCore.execute(app, program, previous);
-      return result?.then ? result.catch(failed) : result;
-    } catch (error) {
-      return failed(error);
-    }
+    return AppCore.execute(app, program, app.reloadPreparation.previous);
   },
 
   configureInnerCanvas(app, options) {
@@ -239,106 +245,56 @@ export const AppCore = {
   },
 
   patch(app, source, sourceURL) {
-    return AppCore.reload(app, source, sourceURL, AppCore.executePatch, SceneMemory.patch);
+    return AppCore.reload(app, source, sourceURL, AppCore.executePatch);
   },
 
   cancelPreparation(app) {
     const preparation = app.reloadPreparation;
     if (!preparation) return;
     app.reloadPreparation = null;
-    preparation.dispose();
-    Scheduler.replace(app, preparation.previous);
+    __detachCandidate__(app, preparation);
+    if (preparation.suspended && !app.destroyed) Scheduler.replace(app, preparation.previous);
   },
 
-  reload(
-    app,
-    source,
-    sourceURL,
-    executeScene = AppCore.execute,
-    commitBindings = SceneMemory.load,
-  ) {
+  reload(app, source, sourceURL, executeScene = AppCore.execute) {
     return Promises.registerPromise(
       Promise.resolve()
         .then(async () => {
           // Also supersede pending initialization when the next draft fails to compile.
           const generation = ++app.loadGeneration;
           AppCore.cancelPreparation(app);
-          // Untraced applications keep the ordinary execution/failure behavior.
           const program = AppCore.compileScene(app, source, { sourceURL });
-          const scene = await executeScene(app, program);
-          if (generation !== app.loadGeneration || app.destroyed) return;
-          if (!app.trace) {
-            app.reloadPreparation = null;
-            app.services.graphics.resetScene(app.graphics);
-            Scheduler.replace(app, scene);
-            if (generation !== app.loadGeneration || app.destroyed || app.scene !== scene) return;
-            commitBindings(app.__reflection__, scene);
-            app.source = program.source;
-            app.sourceURL = program.sourceURL;
-            app.inputFailed = false;
-            return scene;
-          }
-          const previous = app.scene;
-          let attached = false;
-          const disposeCandidate = () => {
-            if (!attached) return;
-            attached = false;
-            try {
-              const result = scene.detach?.();
-              if (result?.then) result.catch(app.onError);
-            } catch (error) {
-              app.onError(error);
-            }
-          };
-          const preparation = { previous, dispose: disposeCandidate };
+          const preparation = { previous: app.scene, scene: null, attached: false, suspended: false };
           app.reloadPreparation = preparation;
-          Scheduler.stop(app);
-          app.attaching = true;
           try {
-            attached = true;
+            const scene = await executeScene(app, program);
+            if (generation !== app.loadGeneration || app.destroyed) return;
+            preparation.scene = scene;
+            preparation.suspended = true;
+            Scheduler.stop(app);
+            app.attaching = true;
+            preparation.attached = true;
             await scene.attach?.();
-            if (generation !== app.loadGeneration || app.destroyed) {
-              disposeCandidate();
-              if (app.reloadPreparation === preparation) {
-                app.reloadPreparation = null;
-                if (!app.destroyed && app.scene === previous) Scheduler.replace(app, previous);
-              }
-              return;
-            }
+            if (generation !== app.loadGeneration || app.destroyed) return;
             // Exercise render-time expressions while the working scene is retained.
             // Graphics discards failed command recording and preserves its last image.
             app.services.graphics.render(app.graphics, (context) => scene.render?.(context), 0, 0);
-            if (generation !== app.loadGeneration || app.destroyed) {
-              disposeCandidate();
-              if (app.reloadPreparation === preparation) {
-                app.reloadPreparation = null;
-                if (!app.destroyed && app.scene === previous) Scheduler.replace(app, previous);
-              }
-              return;
-            }
-            app.reloadPreparation = null;
+            if (generation !== app.loadGeneration || app.destroyed) return;
             app.services.graphics.resetScene(app.graphics);
-            const attach = scene.attach;
-            const hasAttach = Object.hasOwn(scene, 'attach');
-            scene.attach = undefined;
-            try {
-              Scheduler.replace(app, scene);
-              if (generation !== app.loadGeneration || app.destroyed || app.scene !== scene) return;
-              commitBindings(app.__reflection__, scene);
-            } finally {
-              if (hasAttach) scene.attach = attach;
-              else delete scene.attach;
-            }
+            Scheduler.install(app, scene);
+            if (generation !== app.loadGeneration || app.destroyed || app.scene !== scene) return;
+            // Fresh scenes have no predecessor; patches retain same-name references.
+            SceneMemory.patch(app.__reflection__, scene);
             app.source = program.source;
             app.sourceURL = program.sourceURL;
             app.inputFailed = false;
+            preparation.attached = false;
+            app.reloadPreparation = null;
             return scene;
           } catch (error) {
-            disposeCandidate();
-            if (app.reloadPreparation === preparation) app.reloadPreparation = null;
-            if (generation !== app.loadGeneration || app.destroyed) return;
-            Scheduler.replace(app, previous);
-            throw error;
+            if (generation === app.loadGeneration && !app.destroyed) throw error;
+          } finally {
+            if (app.reloadPreparation === preparation) AppCore.cancelPreparation(app);
           }
         })
         .catch((error) => {
@@ -373,22 +329,24 @@ export const AppCore = {
     return AppCore.activate(app, AppCore.compileScene(app, source, options));
   },
 
-  destroy(app) {
+  destroy(app, callbacks = true) {
     if (app.destroyed) return;
     app.destroyed = true;
     SceneMemory.clear(app.__reflection__);
     const preparation = app.reloadPreparation;
     app.reloadPreparation = null;
-    preparation?.dispose();
+    if (callbacks) __detachCandidate__(app, preparation);
     app.modules.cache.clear();
     app.loadGeneration++;
     app.input == null ? undefined : app.services.input.destroy(app.input);
     for (const proxy of [...app.textProxies]) TextProxy.dispose(proxy);
     try {
+      if (!callbacks) app.scene = null;
       Scheduler.replace(app, null);
     } catch (error) {
       app.onError(error);
     }
+    app.__inputRoutes__.clear();
     const wasAttached = Boolean(app.graphics);
     app.graphics == null ? undefined : app.services.graphics.destroy(app.graphics);
     app.display == null ? undefined : app.services.display.destroy(app.display);
@@ -406,10 +364,46 @@ export const AppCore = {
 
 // Public operations take ordinary app data explicitly. Readiness is per app.
 export const App = Data.registerHostData({
+  abandon(app) {
+    if (!__isApp__(app)) throw new TypeError('Expected an app');
+    AppCore.destroy(app, false);
+  },
+  setFilesystem(app, filesystem, api) {
+    if (!__isApp__(app) || app.destroyed) throw new TypeError('Expected a live app');
+    if (
+      !filesystem ||
+      typeof filesystem.baseURL !== 'string' ||
+      typeof Data.get(api, 'fetch') !== 'function'
+    )
+      throw new TypeError('Expected filesystem state and an explicit operation namespace');
+    app.filesystem = filesystem;
+    app.__filesystemApi__ = api;
+    app.bindings.Vfs = api;
+    app.modules.baseURL = filesystem.baseURL;
+    app.modules.fetch = async (url, options) =>
+      resourceResponse(await Data.get(api, 'fetch')(filesystem, url, options ?? null));
+    return app;
+  },
+  listenInput(app, callback) {
+    if (!__isApp__(app) || app.destroyed) throw new TypeError('listenInput expects a live app');
+    if (typeof callback !== 'function') throw new TypeError('listenInput expects a function');
+    app.__inputRoutes__.add(callback);
+    return () => {
+      app.__inputRoutes__.delete(callback);
+    };
+  },
   new(options = {}) {
     if (!options || typeof options !== 'object' || Array.isArray(options))
       throw new TypeError('App.new expects options');
-    const { c = null, w = null, h = null, si = null, is = false, ups = 60, trace = true } = options;
+    const {
+      c = null,
+      w = null,
+      h = null,
+      si = null,
+      is = false,
+      ups = 60,
+      trace = true,
+    } = options;
     for (const key of Object.keys(options))
       if (!['c', 'w', 'h', 'si', 'is', 'ups', 'trace'].includes(key))
         throw new TypeError(`Unknown App option: ${key}`);
@@ -458,6 +452,29 @@ export const App = Data.registerHostData({
   patch(app, url, options = {}) {
     return __urlRequest__(app, url, options, AppCore.patch, 'patch');
   },
+  reloadModules(app, url) {
+    return Promises.registerPromise(
+      Promise.resolve().then(async () => {
+        if (!__isApp__(app) || app.destroyed || !app.sourceURL)
+          throw new TypeError('reloadModules expects a loaded, live app');
+        url ??= app.sourceURL;
+        if (app.__moduleReload__) return app.__moduleReload__;
+        const previous = app.modules.cache;
+        const candidate = new Map();
+        app.modules.cache = candidate;
+        const pending = App.load(app, url).catch((error) => {
+          if (app.modules.cache === candidate) app.modules.cache = previous;
+          throw error;
+        });
+        app.__moduleReload__ = pending;
+        try {
+          return await pending;
+        } finally {
+          app.__moduleReload__ = null;
+        }
+      }),
+    );
+  },
   inspect(app) {
     if (arguments.length !== 1) throw new TypeError('App.inspect expects exactly one app');
     return SceneMemory.inspect(__reflection__(app, 'inspect'));
@@ -466,6 +483,9 @@ export const App = Data.registerHostData({
     if (arguments.length !== 2)
       throw new TypeError('App.read expects an app and binding reference');
     return SceneMemory.read(__reflection__(app, 'read'), reference);
+  },
+  preview(app, reference, path = [], limit = 50, offset = 0) {
+    return Preview.describe(SceneMemory.read(__reflection__(app, 'preview'), reference), path, limit, offset);
   },
   write(app, reference, value) {
     if (arguments.length !== 3)
@@ -515,6 +535,17 @@ export const App = Data.registerHostData({
     return Tokenizer.tokenizeWith(app.__tokenizer__, source);
   },
 });
+
+function __detachCandidate__(app, preparation) {
+  if (!preparation?.attached) return;
+  preparation.attached = false;
+  try {
+    const result = preparation.scene.detach?.();
+    if (result?.then) result.catch((error) => app.onError(error));
+  } catch (error) {
+    app.onError(error);
+  }
+}
 
 function __isApp__(value) {
   return value?.modules?.cache instanceof Map && value?.textProxies instanceof Set;
@@ -610,9 +641,66 @@ function __compileApp__(app, source, compiler, { trace = app.trace, sourceURL, e
   const hasSourceURL = sourceURL !== undefined;
   sourceURL = Modules.resolve(app.modules, sourceURL ?? app.modules.baseURL);
   const traceURL = hasSourceURL ? sourceURL : undefined;
+  const filesystem = () => {
+    if (app.destroyed || !app.__filesystemApi__)
+      throw new Error('This app has no live filesystem');
+    return app.filesystem;
+  };
+  const fileCall = (name, ...args) => {
+    const state = filesystem();
+    return Data.get(app.__filesystemApi__, name)(state, ...args);
+  };
+  const pathCall = (name, ...args) => {
+    filesystem();
+    return Data.get(app.__filesystemApi__, name)(...args);
+  };
   // Callable shorthand retains this owner even when the Lisp app name is shadowed.
   const resourceBindings = {
+    'source-url': (reference = '.') => {
+      if (typeof reference !== 'string') throw new TypeError('source-url expects one string');
+      return Modules.resolve(app.modules, reference, sourceURL);
+    },
+    image: (...args) => {
+      if (args.length !== 1 || typeof args[0] !== 'string')
+        throw new TypeError('image expects one URL string');
+      const url = new URL(args[0], sourceURL);
+      if (app.filesystem && fileCall('ownsURL', url.href)) {
+        const entry = fileCall('stat', decodeURIComponent(url.pathname));
+        if (entry) url.searchParams.set('revision', entry.revision);
+      }
+      return Promises.registerPromise(
+        app.services.graphics.loadImage(app.graphics, url.href, app.modules.fetch),
+      );
+    },
+    'listen-input': (...args) => {
+      if (args.length !== 1) throw new TypeError('listen-input expects one function');
+      return App.listenInput(app, args[0]);
+    },
     app,
+    fetch: (url) => Resources.fetch(new URL(url, sourceURL).href),
+    resource: (url) =>
+      Promises.registerPromise(
+        Promise.resolve().then(() => fileCall('fetch', new URL(url, sourceURL).href, null)),
+      ),
+    'fs-stat': (path) => fileCall('stat', path),
+    'fs-list': (path = '/') => fileCall('list', path),
+    'fs-read-text': (path) => fileCall('readText', path),
+    'fs-read-bytes': (path) => fileCall('readBytes', path),
+    'fs-write-text': (path, content, revision = null) =>
+      fileCall('writeText', path, content, revision),
+    'fs-write-bytes': (path, bytes, mime = 'application/octet-stream', revision = null) =>
+      fileCall('writeBytes', path, bytes, mime, revision),
+    'fs-mkdir': (path) => fileCall('mkdir', path),
+    'fs-move': (from, to) => fileCall('move', from, to),
+    'fs-remove': (path) => fileCall('remove', path),
+    'fs-remove-tree': (path) => fileCall('removeTree', path),
+    'fs-url': (path) => fileCall('url', path),
+    'fs-join': (directory, name) => pathCall('join', directory, name),
+    'fs-parent': (path) => pathCall('parent', path),
+    'fs-name': (path) => pathCall('name', path),
+    'fs-contains': (directory, path) => pathCall('contains', directory, path),
+    'fs-rebase': (path, from, to) => pathCall('rebase', path, from, to),
+    'fs-refresh': () => fileCall('refresh'),
     pause: (...args) => {
       if (args.length !== 0) throw new TypeError('pause expects no arguments');
       return App.pause(app);
