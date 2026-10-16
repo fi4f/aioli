@@ -68,6 +68,24 @@ test('scene vectors can feed typed function parameters', () => {
   assert.throws(() => Types.vectorBindings.vec2f('2', 3), TypeError);
 });
 
+test('vector assertions and swizzle reads still validate every mutable component', () => {
+  for (const [type, invalid] of [['vec4f', 0.1], ['vec4i', 1.5], ['vec4u', -1]]) {
+    const value = Types.vectorBindings[type](1, 2, 3, 4);
+    for (const component of [invalid, NaN, Infinity, '4', undefined]) {
+      value.w = component;
+      assert.throws(() => Types.assertType(value, type), TypeError);
+      assert.throws(() => Types.swizzle(value, 'x'), TypeError);
+    }
+    value.w = 4;
+    assert.equal(Types.swizzle(value, 'x'), 1);
+  }
+  const matrix = Data.matrix(2, [1, 2, 3, 4]);
+  const column = Data.matrixColumn(matrix, 0);
+  assert.equal(Types.assertType(column, 'vec2f'), column);
+  matrix.values[1] = NaN;
+  assert.throws(() => Types.assertType(column, 'vec2f'), TypeError);
+});
+
 test('typed lifecycle callbacks count declarations rather than annotation tokens', () => {
   const seen = [];
   const scene = Compiler.run(Compiler.compileScene('(on update (context : dict) (record context.dt))', { record: dt => seen.push(dt) }, Forms, {  }));

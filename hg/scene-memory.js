@@ -2,13 +2,8 @@ import { Types } from './types.js';
 import { Data } from './data.js';
 import { Modules } from './modules.js';
 
-const __bindings__ = new WeakMap();
-const __previous__ = new WeakMap();
-const __mutable__ = new WeakMap();
-const __definitions__ = new WeakMap();
-const __imports__ = new WeakMap();
-const __sourceURLs__ = new WeakMap();
-const __programs__ = new WeakMap();
+const __scenes__ = new WeakMap();
+const __cells__ = new WeakMap();
 const __references__ = new WeakMap();
 
 function __reference__(reflection, name, cell) {
@@ -18,8 +13,9 @@ function __reference__(reflection, name, cell) {
 }
 
 function __commit__(reflection, scene, previous) {
+  const memory = __scenes__.get(scene);
   const bindings = new Map();
-  for (const [name, cell] of __bindings__.get(scene) ?? []) {
+  for (const [name, cell] of memory?.bindings ?? []) {
     const target = previous.get(name) ?? {
       reflection,
       name,
@@ -36,7 +32,7 @@ function __commit__(reflection, scene, previous) {
     }
   reflection.bindings = bindings;
   reflection.scene = scene;
-  __previous__.delete(scene);
+  if (memory) memory.previousScene = undefined;
 }
 
 function __resolve__(reflection, reference) {
@@ -53,37 +49,39 @@ function __resolve__(reflection, reference) {
 export const SceneMemory = {
   new(previous) {
     return {
-      previous: __bindings__.get(previous),
+      previous: __scenes__.get(previous)?.bindings,
       previousScene: previous,
       bindings: new Map(),
       imports: [],
     };
   },
   environment(scene) {
+    const memory = __scenes__.get(scene);
     return {
       bindings: new Map(
-        [...(__bindings__.get(scene) ?? [])].map(([name, cell]) => [
+        [...(memory?.bindings ?? [])].map(([name, cell]) => [
           name,
-          { cell, mutable: __mutable__.get(cell), definition: __definitions__.get(cell) },
+          { cell, ...__cells__.get(cell) },
         ]),
       ),
-      imports: __imports__.get(scene) ?? [],
+      imports: memory?.imports ?? [],
     };
   },
   sourceURL(scene) {
-    return __sourceURLs__.get(scene);
+    return __scenes__.get(scene)?.sourceURL;
   },
   program(scene) {
-    return __programs__.get(scene);
+    return __scenes__.get(scene)?.program;
   },
   execution(reflection, alive) {
     const scene = reflection.scene;
-    if (!scene || !__bindings__.has(scene))
+    const memory = __scenes__.get(scene);
+    if (!scene || !memory)
       throw new TypeError('App.exec requires an active committed scene');
     return {
       scene,
-      bindings: __bindings__.get(scene),
-      imports: __imports__.get(scene),
+      bindings: memory.bindings,
+      imports: memory.imports,
       reflection,
       alive,
     };
@@ -130,19 +128,20 @@ export const SceneMemory = {
         throw new SyntaxError(`Name already defined: ${name}`);
     }
     const cell = { value };
-    __mutable__.set(cell, mutable);
-    if (definition) __definitions__.set(cell, definition);
+    __cells__.set(cell, { mutable, definition });
     memory.bindings.set(name, cell);
     if (memory.reflection) __reference__(memory.reflection, name, cell);
     return cell;
   },
   finish(memory, scene, imported) {
-    __bindings__.set(scene, memory.bindings);
     if (imported) memory.imports.push(imported);
-    __imports__.set(scene, memory.imports);
-    __sourceURLs__.set(scene, memory.sourceURL);
-    __programs__.set(scene, memory.program);
-    __previous__.set(scene, memory.previousScene);
+    __scenes__.set(scene, {
+      bindings: memory.bindings,
+      imports: memory.imports,
+      sourceURL: memory.sourceURL,
+      program: memory.program,
+      previousScene: memory.previousScene,
+    });
     memory.previous = undefined;
     memory.previousScene = undefined;
     return scene;
@@ -157,7 +156,7 @@ export const SceneMemory = {
     __commit__(
       reflection,
       scene,
-      __previous__.get(scene) === reflection.scene ? reflection.bindings : new Map(),
+      __scenes__.get(scene)?.previousScene === reflection.scene ? reflection.bindings : new Map(),
     );
   },
   clear(reflection) {
@@ -180,7 +179,7 @@ export const SceneMemory = {
   },
   write(reflection, reference, value) {
     const target = __resolve__(reflection, reference);
-    if (!__mutable__.get(target.cell))
+    if (!__cells__.get(target.cell)?.mutable)
       throw new TypeError(`Cannot reassign binding: ${target.name}`);
     const replacement = Data.languageValue(value);
     target.cell.value = replacement;

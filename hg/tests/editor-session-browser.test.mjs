@@ -18,7 +18,9 @@ async function openEditor(page) {
   await ready(page);
 }
 async function ready(page) {
-  await page.waitForFunction(() => window.sessionTestApp?.scene && !sessionTestApp.attaching && !sessionTestApp.failed);
+  await page.waitForFunction(() => (window.sessionTestApp?.scene && !sessionTestApp.attaching && !sessionTestApp.failed) ||
+    !document.querySelector('#host-error').hidden);
+  assert.equal(await page.locator('#host-error').isVisible(), false, await page.locator('#host-diagnostic').textContent());
 }
 
 test('immediate refresh preserves pane positions, draft, selection, view settings, and application data', { timeout: 60000 }, async () => {
@@ -31,24 +33,33 @@ test('immediate refresh preserves pane positions, draft, selection, view setting
     await openEditor(page);
     const header = await page.evaluate(async () => {
       const { App } = await import('/hg/app.js');
+      // Use a document large enough to retain both scroll offsets after refresh.
+      await App.exec(sessionTestApp, '(open-file "/editor/main.lisp")');
       const workspace = App.read(sessionTestApp, App.inspect(sessionTestApp).workspace);
-      const pane = workspace.state.panes.find(pane => pane.props.id === 'Bindings');
+      const pane = workspace.state.panes.find(pane => pane.props.id === 'Files');
       return { x: pane.bounds.x + 80, y: pane.bounds.y + 16 };
     });
     await page.mouse.move(header.x, header.y);
     await page.mouse.down();
     await page.mouse.move(380, 180, { steps: 5 });
     await page.mouse.up();
-    await page.waitForFunction(() => sessionTestApp.state.layout.panes.find(pane => pane.id === 'Bindings').floating);
+    await page.waitForFunction(() => sessionTestApp.state.layout.panes.find(pane => pane.id === 'Files').floating);
     await page.evaluate(async () => {
       const { App } = await import('/hg/app.js');
       await App.exec(sessionTestApp, '(open-file "/editor/icons/code.png")');
+      App.exec(sessionTestApp, '(ui-pane-open desktop bindings-pane)');
       const app = sessionTestApp, refs = App.inspect(app);
       const workspace = App.read(app, refs.workspace), desktop = App.read(app, refs.desktop);
       App.exec(app, 'ui-pane-minimize')(desktop, workspace.state.panes.find(pane => pane.props.id === 'Diagnostics'));
       const path = App.exec(app, '(ui-path desktop.root inspector)');
       const scroll = path.find(node => node.component === App.exec(app, 'ui-scroll-component'));
-      App.exec(app, 'ui-scroll-to')(desktop, scroll, App.exec(app, '(vec2 0 90)'));
+      window.sessionBindingsScroll = scroll;
+    });
+    await page.waitForFunction(() => sessionBindingsScroll.state['max-offset'].y >= 90);
+    await page.evaluate(async () => {
+      const { App } = await import('/hg/app.js');
+      App.exec(sessionTestApp, 'ui-scroll-to')(App.exec(sessionTestApp, 'desktop'),
+        sessionBindingsScroll, App.exec(sessionTestApp, '(vec2 0 90)'));
     });
     // Disable the periodic save to prove the final pagehide checkpoint is enough.
     const expected = await page.evaluate(() => {
@@ -57,7 +68,7 @@ test('immediate refresh preserves pane positions, draft, selection, view setting
       model.source += '\n; unsaved refresh draft';
       model.dirty = true; model.pending = false; model.auto = false;
       model.anchor = 12; model.head = 19; model.scroll = 4; model['scroll-x'] = 40;
-      model.files.selected = '/editor'; model.files.expanded['/project'] = false;
+      model.files.selected = '/editor'; model.files.expanded['/project'] = false; model.files.expanded['/editor'] = true;
       model['preview-view'].pan.x = 23; model['preview-view'].pan.y = -17;
       model['preview-view'].zoom = 2; model['preview-view'].fit = false;
       state.tools.preferences = { scale: 1.5, filter: 'functions' };
@@ -73,7 +84,7 @@ test('immediate refresh preserves pane positions, draft, selection, view setting
       return JSON.parse(JSON.stringify({ layout: state.layout, source: model.source,
         tools: state.tools, project: state.project, path: model.path,
         selection: [model.anchor, model.head], scroll: [model.scroll, model['scroll-x']], auto: model.auto,
-        selected: model.files.selected, expanded: model.files.expanded['/project'],
+        selected: model.files.selected, expanded: model.files.expanded['/project'], editorExpanded: model.files.expanded['/editor'],
         preview: { path: preview.path, pan: [preview.pan.x, preview.pan.y], zoom: preview.zoom, fit: preview.fit, loaded: !!preview.image } }));
     });
     assert.deepEqual({ layout: actual.layout, source: actual.source, tools: actual.tools, project: actual.project, path: actual.path }, expected);
@@ -82,6 +93,7 @@ test('immediate refresh preserves pane positions, draft, selection, view setting
     assert.equal(actual.auto, false);
     assert.equal(actual.selected, '/editor');
     assert.equal(actual.expanded, false);
+    assert.equal(actual.editorExpanded, true);
     assert.deepEqual(actual.preview, { path: '/editor/icons/code.png', pan: [23, -17], zoom: 2, fit: false, loaded: true });
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }

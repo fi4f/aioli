@@ -177,7 +177,7 @@ export const Scheduler = {
   schedule(app) {
     if (
       !app.scene ||
-      app.paused ||
+      app.paused || app.hidden ||
       app.attaching ||
       app.failed ||
       app.destroyed ||
@@ -186,7 +186,7 @@ export const Scheduler = {
       return;
     const generation = app.generation;
     app.frameId = app.requestFrame((time) => {
-      if (generation !== app.generation || app.paused || app.destroyed) return;
+      if (generation !== app.generation || app.paused || app.hidden || app.destroyed) return;
       app.frameId = null;
       try {
         Scheduler.frame(app, time);
@@ -201,7 +201,7 @@ export const Scheduler = {
   requestRender(app) {
     if (
       !app.scene ||
-      app.paused ||
+      app.paused || app.hidden ||
       app.destroyed ||
       app.attaching ||
       app.failed ||
@@ -216,7 +216,7 @@ export const Scheduler = {
       if (
         request.generation !== app.generation ||
         request.scene !== app.scene ||
-        app.paused ||
+        app.paused || app.hidden ||
         app.destroyed ||
         app.attaching ||
         app.failed
@@ -235,7 +235,7 @@ export const Scheduler = {
   frame(app, time) {
     const scene = app.scene;
     const generation = app.generation;
-    if (!scene || app.paused || app.destroyed || app.attaching || app.failed) return;
+    if (!scene || app.paused || app.hidden || app.destroyed || app.attaching || app.failed) return;
     if (app.ups !== app.appliedUps) app.requestedUps = __validateUps__(app.ups);
     app.ups = __validateUps__(app.requestedUps);
     app.appliedUps = app.ups;

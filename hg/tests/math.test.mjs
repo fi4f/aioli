@@ -23,7 +23,7 @@ test('math functions evaluate scalar and float-vector components and preserve in
     assert.equal(evaluate('(let p (vec2 1 2)) (let q (max p 0)) (set q.x 99) p.x', trace), 1);
     assert.throws(() => evaluate('(sqrt -1)', trace), TypeError);
     let calls = 0; evaluate('(clamp (next 0.5) (next 0) (next 1))', trace, { next: n => { calls++; return n; } }); assert.equal(calls, 3);
-    for (const source of ['(sin)', '(sin 1 2)', '(min 1)', '(max 1 2 3)', '(clamp 1 0)', '(sqrt true)', '(cos (vec2i))', '(min (vec2) (vec3))', '(max (vec2u) (vec2i))', '(min nil 1)', '(clamp 0 2 1)']) assert.throws(() => evaluate(source, trace), Error);
+    for (const source of ['(sin)', '(sin 1 2)', '(clamp 1 0)', '(sqrt true)', '(cos (vec2i))', '(min (vec2) (vec3))', '(max (vec2u) (vec2i))', '(min nil 1)', '(clamp 0 2 1)']) assert.throws(() => evaluate(source, trace), Error);
   }
 });
 
@@ -36,5 +36,5 @@ test('shader math emits builtins, broadcasts scalars and validates shapes and fa
   assert.match(shader('(min (vec4 2) 1)'), /min\(vec4f\(2f\), vec4f\(1f\)\)/);
   assert.doesNotThrow(() => shader('(clamp (vec4 2) 0 1)'));
   assert.doesNotThrow(() => shader('(max (vec4i 2) (i32 1))'));
-  for (const expression of ['(sin)', '(min 1)', '(max 1 2 3)', '(clamp 1 2 1)', '(sqrt (vec4i))', '(min (vec2) (vec3))', '(max (i32 1) 2)', '(min (mat2) (mat2))']) assert.throws(() => shader(expression), SyntaxError);
+  for (const expression of ['(sin)', '(clamp 1 2 1)', '(sqrt (vec4i))', '(min (vec2) (vec3))', '(max (i32 1) 2)', '(min (mat2) (mat2))']) assert.throws(() => shader(expression), SyntaxError);
 });

@@ -52,6 +52,21 @@ test('startup reuses downloaded defaults and cached recovery survives unavailabl
     await page.locator('#host-loading').waitFor({ state: 'hidden' });
     assert.equal(await page.locator('#host-error').isVisible(), false);
     assert.equal(await page.locator('#canvas').getAttribute('aria-busy'), 'false');
+    // Cache records written before source URLs were included still support an offline restart.
+    await page.evaluate(async () => {
+      const { Storage } = await import('/hg/storage.js');
+      const store = await Storage.new('mercury-project');
+      try {
+        const records = await Storage.records(store);
+        const defaults = records.defaults.map(({ source, ...file }) => file);
+        await Storage.commit(store, store.version, [{ kind: 'put', key: 'defaults', value: defaults }]);
+      } finally { Storage.close(store); }
+    });
+    await page.route('**/hg/vfs-seed.generated.json', route => route.abort());
+    await page.reload();
+    await page.locator('#host-loading').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#host-error').isVisible(), false);
+    assert.equal(await page.locator('#canvas').getAttribute('aria-busy'), 'false');
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });

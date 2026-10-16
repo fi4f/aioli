@@ -121,7 +121,11 @@ function __values__(value) {
     return __values__(matrix).slice(column * size, (column + 1) * size);
   }
   const vector = NumericTypes.vectorInfo(kind);
-  if (vector) return __componentNames__.slice(0, vector.size).map((key) => value[key]);
+  if (vector) {
+    const components = new Array(vector.size);
+    for (let i = 0; i < vector.size; i++) components[i] = value[__componentNames__[i]];
+    return components;
+  }
   if (value.__struct__)
     return Object.fromEntries(
       value.__struct__.definition.fields.map((field) => [
@@ -140,6 +144,16 @@ function __listGet__(value, key) {
 }
 function __component__(value, index) {
   return __get__(value, index);
+}
+function __vectorMatches__(value, type) {
+  const info = NumericTypes.vectorInfo(type);
+  if (!info || __dataKind__(value) !== type) return false;
+  const components = value.__numericView__ || value.__column__ ? __values__(value) : null;
+  if (components && components.length !== info.size) return false;
+  for (let i = 0; i < info.size; i++)
+    if (!NumericTypes.scalarMatches(components ? components[i] : value[__componentNames__[i]], info.scalar))
+      return false;
+  return true;
 }
 function __dict__(...entries) {
   if (entries.length === 1) {
@@ -175,7 +189,7 @@ function __vector__(size, values, type = `vec${size}f`) {
   if (values.length === 1 && typeof input === 'number')
     return __tagged__(type, Array(size).fill(NumericTypes.convertComponent(input, info.scalar)));
   const components = [];
-  const visiting = new WeakSet();
+  let visiting;
   const append = (value) => {
     if (components.length === size) return;
     if (typeof value === 'number') {
@@ -190,6 +204,7 @@ function __vector__(size, values, type = `vec${size}f`) {
       return;
     }
     if (kind === 'list') {
+      visiting ??= new WeakSet();
       if (visiting.has(value)) throw new TypeError(`${type}: cyclic list input`);
       visiting.add(value);
       try {
@@ -215,15 +230,16 @@ function __vector__(size, values, type = `vec${size}f`) {
 
 function __vectorRecord__(type, components) {
   const { size } = NumericTypes.vectorInfo(type);
-  return {
-    __type__: type,
-    ...Object.fromEntries(__componentNames__.slice(0, size).map((key, i) => [key, components[i]])),
-  };
+  const record = { __type__: type, x: components[0], y: components[1] };
+  if (size > 2) record.z = components[2];
+  if (size > 3) record.w = components[3];
+  return record;
 }
 // Internal numeric constructor. Arithmetic and swizzles supply component arrays
 // explicitly; vectors store named fields, matrices retain their component storage.
 function __numericFromComponents__(type, components) {
-  components.forEach((value) => NumericTypes.assertFinite(value, `${type} component`));
+  for (const value of components)
+    if (!Number.isFinite(value)) NumericTypes.assertFinite(value, `${type} component`);
   const vector = NumericTypes.vectorInfo(type);
   if (vector) return __registerData__(__vectorRecord__(type, components), type);
   return __registerData__({ type, values: components }, type);
@@ -479,19 +495,18 @@ function __equal__(left, right, seen) {
   if (!seen.has(left)) seen.set(left, new Set());
   seen.get(left).add(right);
   if (kind === 'dict' || kind === 'error' || kind === 'struct') {
-    const keys = Object.keys(__values__(left));
+    const a = __values__(left), b = __values__(right), keys = Object.keys(a);
     return (
-      keys.length === Object.keys(__values__(right)).length &&
+      keys.length === Object.keys(b).length &&
       keys.every(
         (key) =>
-          Object.hasOwn(__values__(right), key) &&
-          __equal__(__values__(left)[key], __values__(right)[key], seen),
+          Object.hasOwn(b, key) && __equal__(a[key], b[key], seen),
       )
     );
   }
+  const a = __values__(left), b = __values__(right);
   return (
-    __values__(left).length === __values__(right).length &&
-    __values__(left).every((value, i) => __equal__(value, __values__(right)[i], seen))
+    a.length === b.length && a.every((value, i) => __equal__(value, b[i], seen))
   );
 }
 
@@ -661,6 +676,7 @@ export const Data = {
   lazyList: __lazyList__,
   values: __values__,
   component: __component__,
+  vectorMatches: __vectorMatches__,
   dict: __dict__,
   vector: __vector__,
   numericFromComponents: __numericFromComponents__,

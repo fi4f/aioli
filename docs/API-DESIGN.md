@@ -31,8 +31,9 @@ resources, avoiding duplicate loops and paused-time catch-up. Explicit pause sur
 [pausing and starting](./APP.md#pausing-and-starting).
 
 Current application: the plain Mercury App core and Mercury canvas editor, hosted
-by `index.html` and `index.js`. Embedded child creation, program exports, diagnostic delivery,
-and text-proxy replacement are deferred by the project owner. `si` retains the
+by `index.html` and `index.js`. Embedded child creation is implemented through
+`App.embed` and the Lisp `ui-app` viewport. Program exports, broader diagnostic delivery,
+and text-proxy replacement remain deferred. `si` retains the
 former scale-step behavior. See [implemented App contract](./APP.md).
 
 
@@ -177,10 +178,11 @@ require callers to navigate through `app.stage`. Internal scheduling helpers can
 remain modular without becoming a second public execution object. Other functions
 follow the namespace/data separation; not every data structure needs a namespace.
 
-Embedded creation still needs a contract distinguishing output-to-parent from
-browser-host presentation. An embedded child must not accidentally create a default
-full-screen canvas. GPU sharing and child survival across editor reload also remain
-ownership decisions; they are not implied by the initialization options above.
+Embedded creation uses `App.embed(parent, options)`, distinct from browser-host
+`App.new`. Children share the parent's GPU device and publish an output texture;
+they create no DOM canvas. Parents own their children's lifetime. The editor
+recreates its game child on editor reload while preserving project state.
+See [the implemented contract](./APP.md#embedded-apps).
 
 ## Browser presentation and default canvas
 
@@ -188,7 +190,7 @@ Browser-host initialization without a supplied canvas creates and owns a default
 canvas with CSS width `100dvw` and height `100dvh`. Embedded child initialization has a different presentation
 destination: its output is consumed by the parent, so omitting a canvas there
 must not create a second full-screen surface. `c` is the supplied browser-host
-option; the embedded creation form remains open. Default presentation and embedded
+option; `App.embed` supplies embedded creation. Default presentation and embedded
 output are distinct behaviors.
 
 Keep rendering resources independent of the host surface. An externally supplied

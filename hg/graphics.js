@@ -9,24 +9,33 @@ import { Text } from './text.js';
 async function __createGraphics__(
   innerCanvas,
   reportError = console.error,
-  { prepare, present: painted, needsPresent = () => true } = {},
+  { prepare, present: painted, needsPresent = () => true, shared = null } = {},
 ) {
   const service = { innerCanvas, reportError, prepare, painted, needsPresent };
-  if (!navigator.gpu) throw new Error('WebGPU is required but unavailable in this browser.');
-  service.adapter = await navigator.gpu.requestAdapter();
-  if (!service.adapter) throw new Error('WebGPU could not obtain a GPU adapter.');
-  service.device = await service.adapter.requestDevice();
-  service.context = service.innerCanvas.getContext('webgpu');
-  if (!service.context) {
-    service.device.destroy();
-    throw new Error('Unable to create the WebGPU canvas context.');
+  service.ownsDevice = !shared;
+  if (shared) {
+    __available__(shared);
+    service.adapter = shared.adapter;
+    service.device = shared.device;
+    service.context = null;
+    service.format = shared.format;
+  } else {
+    if (!navigator.gpu) throw new Error('WebGPU is required but unavailable in this browser.');
+    service.adapter = await navigator.gpu.requestAdapter();
+    if (!service.adapter) throw new Error('WebGPU could not obtain a GPU adapter.');
+    service.device = await service.adapter.requestDevice();
+    service.context = service.innerCanvas.getContext('webgpu');
+    if (!service.context) {
+      service.device.destroy();
+      throw new Error('Unable to create the WebGPU canvas context.');
+    }
+    service.format = navigator.gpu.getPreferredCanvasFormat();
+    service.context.configure({
+      device: service.device,
+      format: service.format,
+      alphaMode: 'opaque',
+    });
   }
-  service.format = navigator.gpu.getPreferredCanvasFormat();
-  service.context.configure({
-    device: service.device,
-    format: service.format,
-    alphaMode: 'opaque',
-  });
   service.presentModule = service.device.createShaderModule({
     code: `${Shader.vertexWGSL}
     @group(0) @binding(0) var image: texture_2d<f32>;
@@ -36,7 +45,7 @@ async function __createGraphics__(
   });
   service.presentPipeline = undefined;
   try {
-    service.presentPipeline = await service.device.createRenderPipelineAsync({
+    if (service.context) service.presentPipeline = await service.device.createRenderPipelineAsync({
       layout: 'auto',
       vertex: { module: service.presentModule, entryPoint: 'vertex' },
       fragment: {
@@ -46,8 +55,8 @@ async function __createGraphics__(
       },
     });
   } catch (error) {
-    service.context.unconfigure();
-    service.device.destroy();
+    service.context?.unconfigure();
+    if (service.ownsDevice) service.device.destroy();
     throw error;
   }
   service.destroyed = false;
@@ -89,12 +98,17 @@ async function __createGraphics__(
     mipmapFilter: 'linear',
   });
   service.stats = { shaderCompilations: 0, textRasterizations: 0 };
+  // Device loss is a promise, so clear its subscription target on disposal.
+  // A shared device may outlive many embedded runtimes.
+  const loss = service.loss = { target: service };
   service.device.lost.then((info) => {
-    service.lost = true;
-    if (!service.destroyed)
-      service.reportError(new Error(`WebGPU device lost: ${info.message || info.reason}`));
+    const target = loss.target;
+    if (!target) return;
+    target.lost = true;
+    target.reportError(new Error(`WebGPU device lost: ${info.message || info.reason}`));
   });
-  service.device.addEventListener('uncapturederror', (event) => service.reportError(event.error));
+  service.uncapturedError = (event) => service.reportError(event.error);
+  service.device.addEventListener('uncapturederror', service.uncapturedError);
   service.bindings = {
     clear: (...color) => __clear__(service, ...color),
     layer: (context, bounds, shader, ...values) =>
@@ -183,6 +197,7 @@ function __encoder__(service, frame) {
 }
 
 function __present__(service, encoder, texture) {
+  if (!service.context) return;
   if (texture && !service.__presentGroups__.has(texture))
     service.__presentGroups__.set(
       texture,
@@ -852,6 +867,7 @@ function __resetScene__(service) {
 function __destroy__(service) {
   if (service.destroyed) return;
   service.destroyed = true;
+  service.loss.target = null;
   service.textCache.clear();
   service.__images__.clear();
   service.textCacheBytes = 0;
@@ -865,8 +881,9 @@ function __destroy__(service) {
     slot.buffer.destroy();
     for (const storage of slot.storage.values()) storage.buffer.destroy();
   }
-  service.context.unconfigure();
-  service.device.destroy();
+  service.context?.unconfigure();
+  service.device.removeEventListener('uncapturederror', service.uncapturedError);
+  if (service.ownsDevice) service.device.destroy();
 }
 
 export const Graphics = {
@@ -876,6 +893,13 @@ export const Graphics = {
   loadImage: __loadImage__,
   render: __render__,
   resetScene: __resetScene__,
+  publish(service, destination, handle) {
+    __available__(service);
+    __available__(destination);
+    if (service.device !== destination.device) throw new TypeError('Output requires a shared GPU device');
+    destination.handles.set(handle, { texture: service.completed?.texture || __initialBefore__(service), persistent: true });
+    Data.registerTextureSize(handle, service.width, service.height);
+  },
   destroy: __destroy__,
   clear: __clear__,
   layer: (service, context, bounds, shader, ...values) =>

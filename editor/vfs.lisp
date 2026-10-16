@@ -41,7 +41,7 @@
   })
   (__ensure__ entries ops (parent directory))
   (put entries directory (__entry__ directory "directory" 1))))
-(let new (async (fn (storage asset-url base-url)
+(let new (async (fn (storage local-url base-url)
   (let records (await (Storage.records storage)))
   (let entries (or records.index (dict "/" (__entry__ "/" "directory" 1))))
   (let contents (dict))
@@ -70,7 +70,7 @@
     })
   })
   (dict "storage" storage "entries" entries "__contents__" contents "version" storage.version
-    "baseURL" base-url "assetURL" asset-url "project" (if (dict? records.project) records.project (dict)) "__tail__" (promise nil)))))
+    "baseURL" base-url "localURL" local-url "project" (if (dict? records.project) records.project (dict)) "__tail__" (promise nil)))))
 (let stat (fn (fs path)
   (let entry (get fs.entries.(normalize path))) (if entry (copy entry) nil)))
 (let listFiles (fn (fs directory)
@@ -128,7 +128,7 @@
   (__mutate__ fs (fn (entries contents ops) {
     (set path (normalize path)) (Resources.require (not (in path entries)) $"Path already exists: {path}")
     (Resources.require (= (get entries.(parent path)).kind "directory") "Parent directory does not exist")
-    (let entry (__entry__ path "directory" 1)) (put entries path entry) (copy entry)
+    (let entry (__entry__ path "directory" 1)) (put entries path entry) (return (copy entry))
   }))))
 (let __remove__ (fn (fs path recursive)
   (__mutate__ fs (fn (entries contents ops) {
@@ -138,7 +138,7 @@
       (if (not (contains path key)) (continue))
       (Resources.require (or recursive (= key path)) "Directory is not empty")
       (remove-key entries key) (remove-key contents key) (__remove-op__ ops $"file:{key}")
-    }) path
+    }) (return path)
   }))))
 (let removeFile (fn (fs path) (__remove__ fs path false)))
 (let removeTree (fn (fs path) (__remove__ fs path true)))
@@ -157,11 +157,11 @@
         (put contents next resource) (remove-key contents path)
         (__put-op__ ops $"file:{next}" resource) (__remove-op__ ops $"file:{path}")
       })
-    }) (copy (get entries.(get to)))
+    }) (return (copy (get entries.(get to))))
   }))))
 (let refresh (async (fn (fs)
   (await fs.__tail__)
-  (let current (await (new fs.storage fs.assetURL fs.baseURL)))
+  (let current (await (new fs.storage fs.localURL fs.baseURL)))
   (set fs.entries current.entries) (set fs.version current.version)
   (set fs.project current.project) (set fs.__contents__ current.__contents__)
   fs)))
@@ -181,7 +181,7 @@
     (Resources.require (= entry.kind "file") $"Not a file: {path}")
     (return (get fs.__contents__.(get path)))
   })
-  (let resource (await (Resources.fetch (Resources.resolve (Strings.slice (__encoded__ path) 1 nil) fs.assetURL))))
+  (let resource (await (Resources.fetch (Resources.resolve (Strings.slice (__encoded__ path) 1 nil) fs.localURL))))
   (if resource.ok {
     (let is-text (or (Strings.starts resource.mime "text/") (in (extension path) (list ".lisp" ".js" ".json" ".txt" ".svg"))))
     (await (__mutate__ fs (fn (entries contents ops) {
@@ -191,6 +191,48 @@
     })))
     (return (get fs.__contents__.(get path)))
   }) resource)))
+(let importFiles (fn (fs directory files)
+  (__mutate__ fs (fn (entries contents ops) {
+    (set directory (normalize directory))
+    (let target (get entries.(get directory)))
+    (Resources.require (and target (= target.kind "directory")) "Import destination must be an existing folder")
+    (let imported (list)) (let seen (dict))
+    (for file files {
+      ; Each browser-supplied path is relative, with no aliases or traversal.
+      (let path directory)
+      (for part (Strings.split file.path "/") (set path (join path part)))
+      (Resources.require (not (in path seen)) $"Duplicate imported path: {path}")
+      (put seen path true)
+      (Resources.require (in file.kind (list "file" "directory")) "Invalid imported entry")
+      (if (= file.kind "directory") (__ensure__ entries ops path) else {
+        (Resources.require (not (in path entries)) $"Path already exists: {path}")
+        (__ensure__ entries ops (parent path))
+        (let resource file.resource)
+        (Resources.validate resource)
+        (let is-text (or (Strings.starts resource.mime "text/")
+          (in (extension path) (list ".lisp" ".js" ".mjs" ".json" ".txt" ".md" ".svg" ".wgsl"))))
+        (if is-text (Resources.text resource))
+        (__write__ entries contents ops path resource is-text 0)
+      })
+      (insert imported path)
+    })
+    (return imported)
+  }))))
+(let exportFiles (async (fn (fs path)
+  (await fs.__tail__)
+  (set path (normalize path))
+  (let selected (stat fs path))
+  (Resources.require selected $"Path does not exist: {path}")
+  (let base (if (= path "/") "files" selected.name))
+  (let result (list))
+  (for current (Strings.sorted (keys fs.entries)) {
+    (if (not (contains path current)) (continue))
+    (let entry (get fs.entries.(get current)))
+    (let suffix (if (= path "/") (if (= current "/") "" current) (Strings.slice current (len path) nil)))
+    (insert result (dict "path" $"{base}{suffix}" "kind" entry.kind "modified" entry.modified
+      "resource" (get fs.__contents__.(get current))))
+  })
+  result)))
 (let install (fn (fs files backup)
   (__mutate__ fs (fn (entries contents ops) {
     (let updated (list))
@@ -221,11 +263,11 @@
         (set resource (Resources.fromText (Strings.replace (Resources.text resource) "\"../hg/ui.lisp\"" "\"./ui.lisp\"") resource.mime)))
       (__write__ entries contents ops file.path resource file.text nil)
       (insert updated file.path)
-    }) (dict "updated" updated "backup" backup)
+    }) (return (dict "updated" updated "backup" backup))
   }))))
 (let setProject (fn (fs metadata)
   (promise (__mutate__ fs (fn (entries contents ops) {
-    (__put-op__ ops "project" metadata) metadata
+    (__put-op__ ops "project" metadata) (return metadata)
   })) then (result) { (set fs.project result) result })))
 (let replace (fn (fs entries contents metadata)
   (__mutate__ fs (fn (current data ops) {
@@ -238,10 +280,11 @@
       (put data path (get contents.(get path))) (__put-op__ ops $"file:{path}" (get contents.(get path)))
     })
     (set metadata.generation (+ fs.version 1))
-    (__put-op__ ops "project" metadata) metadata
+    (__put-op__ ops "project" metadata) (return metadata)
   }))))
 (let FileSystem (dict "new" new "normalize" normalize "parent" parent "name" name "extension" extension
   "contains" contains "rebase" rebase "join" join "stat" stat "list" listFiles
   "readText" readText "readBytes" readBytes "writeText" writeText "writeBytes" writeBytes
   "mkdir" mkdir "remove" removeFile "removeTree" removeTree "move" move "refresh" refresh
-  "url" url "ownsURL" ownsURL "fetch" fetch "install" install "replace" replace "setProject" setProject))
+  "url" url "ownsURL" ownsURL "fetch" fetch "importFiles" importFiles "exportFiles" exportFiles
+  "install" install "replace" replace "setProject" setProject))

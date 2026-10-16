@@ -14,7 +14,9 @@ async function ready(page) {
     const app = inspectorTestApp, refs = App.inspect(app);
     const desktop = App.read(app, refs.desktop), node = App.read(app, refs.inspector);
     window.inspectorTest = { App, app, desktop, node };
+    App.exec(app, '(ui-pane-open desktop bindings-pane)');
   });
+  await page.waitForFunction(() => inspectorTest.node.state.mounted && inspectorTest.node.clip.z > 0);
 }
 async function open(page, trace = false) {
   await page.route('**/index.js', async route => {

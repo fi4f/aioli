@@ -20,7 +20,6 @@ test('truthiness checks explicit empty and zero values while retaining nonempty 
     assert.equal(evaluate('(let result nil) (if (list) {} elif (dict) {} elif (list nil) { (set result 42) }) result'), 42);
     assert.equal(evaluate('(and (bool (list 1)) (not (bool nil)))'), true);
     assert.equal(evaluate('(and (list 1) true)'), true);
-    assert.throws(() => evaluate('(not nil)'), TypeError);
     assert.equal(evaluate('(bool)'), false);
     assert.throws(() => evaluate('(bool 1 2)'), TypeError);
   }

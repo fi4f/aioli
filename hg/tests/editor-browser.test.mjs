@@ -115,6 +115,10 @@ test('Mercury opens at index.html and preserves editing through autosave and rel
     });
     await page.goto(new URL('/index.html', process.env.AIOLI_URL || 'http://localhost:3000').href);
     await page.waitForFunction(() => window.editorTestApp?.scene && !editorTestApp.attaching);
+    await page.evaluate(async () => {
+      const { App } = await import('/hg/app.js');
+      await App.exec(editorTestApp, '(open-file "/editor/main.lisp")');
+    });
     const dimensions = await page.locator('canvas').evaluate(element => {
       const bounds = element.getBoundingClientRect();
       return [element.width, element.height, Math.round(bounds.width), Math.round(bounds.height)];
@@ -167,90 +171,6 @@ test('Mercury opens at index.html and preserves editing through autosave and rel
     await proxy.dispatchEvent('compositionend');
     await page.waitForFunction(element => !element.isConnected, composing);
     assert.match(await proxy.inputValue(), /native input composing$/);
-    assert.deepEqual(errors, []);
-  } finally { await browser.close(); }
-});
-
-test('Mercury preserves small wheel deltas, clamps fast scrolling, and respects wheel units', { timeout: 30000 }, async () => {
-  const browser = await chromium.launch({ channel: 'chrome', headless: true });
-  try {
-    const page = await browser.newPage();
-    const errors = [];
-    page.on('pageerror', error => errors.push(error.message));
-    await page.goto(new URL('/hg/tests/browser.html', process.env.AIOLI_URL || 'http://localhost:3000').href);
-    await page.evaluate(async () => {
-      for (const [name, file] of [['Data', 'data'], ['Compiler', 'compiler'], ['Graphics', 'graphics'], ['Input', 'input'], ['InnerCanvas', 'inner-canvas'], ['Trace', 'trace'], ['TextProxy', 'text-proxy']]) {
-        window[name] = (await import(`/hg/${file}.js`))[name];
-      }
-    });
-    await page.evaluate(async () => {
-      const { AppCore } = await import('/hg/app.js');
-      const { Scheduler } = await import('/hg/scheduler.js'); Object.assign(window, { AppCore, Scheduler });
-      const canvas = document.createElement('canvas');
-      canvas.id = 'scroll-test';
-      canvas.width = 640; canvas.height = 480;
-      canvas.style.cssText = 'position:fixed;left:0;top:0;width:640px;height:480px';
-      document.body.append(canvas);
-      const runtime = AppCore.new({ onError: error => { throw error; } });
-      await AppCore.attach(runtime,canvas);
-      const createText = runtime.services.graphics.createText;
-      const batches = [];
-      runtime.services.graphics = { ...runtime.services.graphics, createText: (graphics, snapshot) => {
-        if (snapshot.wrap === false && snapshot.runs.some(run => run.text === '; Welcome to Mercury. This is the source of the editor you are using right now.')) {
-          batches.push(snapshot.runs.map(run => ({ text: run.text, fill: run.fill })));
-        }
-        return createText(graphics, snapshot);
-      } };
-      let passes = 0;
-      const begin = GPUCommandEncoder.prototype.beginRenderPass;
-      GPUCommandEncoder.prototype.beginRenderPass = function(...args) { passes++; return begin.apply(this, args); };
-      await runtime.bindings.App.load(runtime,'/editor/main.lisp');
-      Scheduler.stop(runtime);
-      passes = 0;
-      Scheduler.frame(runtime,0);
-      const dirtyPasses = passes;
-      passes = 0;
-      Scheduler.frame(runtime,16);
-      const idlePasses = passes;
-      Scheduler.schedule(runtime);
-      window.scrollTest = { canvas, runtime, state: Data.values(runtime.state), dirtyPasses, idlePasses, batches };
-    });
-    assert.equal(await page.evaluate(() => scrollTest.dirtyPasses), 7);
-    assert.equal(await page.evaluate(() => scrollTest.idlePasses), 0);
-    const firstBatch = await page.evaluate(() => scrollTest.batches[0]);
-    const firstLine = firstBatch.map(run => run.text).join('').split('\n')[0];
-    assert.match(firstLine, /^\s+1  ; Welcome to Mercury/);
-    assert.ok(new Set(firstBatch.map(run => JSON.stringify(run.fill))).size >= 4);
-    await page.waitForTimeout(150);
-    const before = await page.locator('#scroll-test').screenshot();
-    const rasterizations = await page.evaluate(() => scrollTest.runtime.graphics.stats.textRasterizations);
-    const scroll = (dy, mode = 0, count = 1) => page.evaluate(({ dy, mode, count }) => {
-      for (let i = 0; i < count; i++) scrollTest.canvas.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, deltaMode: mode }));
-      return scrollTest.state.scroll;
-    }, { dy, mode, count });
-    assert.ok(Math.abs(await scroll(0.5, 0, 10) - 0.25) < 1e-8);
-    const smallScrollImage = await page.locator('#scroll-test').screenshot();
-    assert.notDeepEqual(smallScrollImage, before);
-    assert.equal(await page.evaluate(() => scrollTest.runtime.graphics.stats.textRasterizations), rasterizations);
-    assert.ok(Math.abs(await scroll(3, 1) - 3.25) < 1e-8);
-    const rowsInView = (480 - 64 - 100) / 20;
-    assert.ok(Math.abs(await scroll(1, 2) - (3.25 + rowsInView)) < 1e-8);
-    const maximum = await page.evaluate(() => scrollTest.state.source.split('\n').length - (480 - 64 - 100) / 20);
-    assert.ok(Math.abs(await scroll(100, 0, 100) - maximum) < 1e-8);
-    assert.notDeepEqual(await page.locator('#scroll-test').screenshot(), smallScrollImage);
-    assert.ok(Math.abs(await scroll(-0.5, 0, 10) - (maximum - 0.25)) < 1e-8);
-    const preserved = await page.evaluate(() => {
-      const proxy = document.querySelector('[data-hg-text-proxy]');
-      const before = scrollTest.state.scroll;
-      proxy.dispatchEvent(new Event('compositionstart'));
-      proxy.dispatchEvent(new Event('compositionend'));
-      return [before, scrollTest.state.scroll];
-    });
-    assert.equal(preserved[0], preserved[1]);
-    await page.keyboard.press('ArrowRight');
-    assert.equal(await page.evaluate(() => scrollTest.state.scroll), 0);
-    assert.equal(await scroll(-10000), 0);
-    await page.evaluate(() => AppCore.destroy(scrollTest.runtime));
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });

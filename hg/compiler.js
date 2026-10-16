@@ -315,19 +315,34 @@ function __compileProgram__(
     if (!type) throw new SyntaxError(`Unknown struct field type: ${name}`);
     return type;
   };
+  const callbackName = (nameNode, asynchronous = false) => {
+    if (!scene && !module) throw new SyntaxError('on requires scene or module compilation');
+    if (scopes.length !== 2 || functionDepth)
+      throw new SyntaxError('on must be declared at scene top level');
+    const name = symbolName(nameNode);
+    if (asynchronous && ['update', 'render'].includes(name))
+      throw new SyntaxError('update and render callbacks must remain synchronous');
+    if (!['attach', 'detach', 'update', 'render', 'resize', ...Contracts.inputCallbacks].includes(name))
+      throw new SyntaxError(`Unknown callback: ${name}`);
+    if (callbacks.has(name)) throw new SyntaxError(`Duplicate callback: ${name}`);
+    return name;
+  };
+  const parseParameters = (nodes, options = {}) =>
+    Types.parseParameters(nodes, {
+      ...options,
+      fail: (message, node) => {
+        throw Trace.locate(new SyntaxError(message), source, node.start, node.end);
+      },
+    });
+  const traced = (code, node) =>
+    trace && typeof code === 'string'
+      ? hasAwait(node)
+        ? `(await $trace.asyncAt($tracer, ${node.start}, ${node.end}, async () => (${code})))`
+        : `$trace.at($tracer, ${node.start}, ${node.end}, () => (${code}))`
+      : code;
   const context = {
     callbackValue(nameNode, value) {
-      if (!scene && !module) throw new SyntaxError('on requires scene or module compilation');
-      if (scopes.length !== 2 || functionDepth)
-        throw new SyntaxError('on must be declared at scene top level');
-      const name = symbolName(nameNode);
-      if (
-        !['attach', 'detach', 'update', 'render', 'resize', ...Contracts.inputCallbacks].includes(
-          name,
-        )
-      )
-        throw new SyntaxError(`Unknown callback: ${name}`);
-      if (callbacks.has(name)) throw new SyntaxError(`Duplicate callback: ${name}`);
+      const name = callbackName(nameNode);
       callbacks.add(name);
       return `$scene[${JSON.stringify(name)}] = $promises.callback(${emit(value)}, ${JSON.stringify(name)}, ${['attach', 'detach'].includes(name) ? 0 : 1}, ${!['update', 'render'].includes(name)});`;
     },
@@ -479,29 +494,13 @@ function __compileProgram__(
       return `${lookup('ui-on').identifier}(${JSON.stringify(name)}, ${emit(value)})`;
     },
     callback(nameNode, parameters, body, asynchronous = false) {
-      if (!scene && !module) throw new SyntaxError('on requires scene or module compilation');
-      if (scopes.length !== 2 || functionDepth)
-        throw new SyntaxError('on must be declared at scene top level');
-      const name = symbolName(nameNode);
-      if (asynchronous && ['update', 'render'].includes(name))
-        throw new SyntaxError('update and render callbacks must remain synchronous');
-      if (
-        !['attach', 'detach', 'update', 'render', 'resize', ...Contracts.inputCallbacks].includes(
-          name,
-        )
-      )
-        throw new SyntaxError(`Unknown callback: ${name}`);
-      if (callbacks.has(name)) throw new SyntaxError(`Duplicate callback: ${name}`);
+      const name = callbackName(nameNode, asynchronous);
       const receivesTime =
         name === 'update' ||
         name === 'render' ||
         name === 'resize' ||
         Contracts.inputCallbacks.includes(name);
-      const parsed = Types.parseParameters(parameters, {
-        fail: (message, node) => {
-          throw Trace.locate(new SyntaxError(message), source, node.start, node.end);
-        },
-      });
+      const parsed = parseParameters(parameters);
       if (parsed.length > (receivesTime ? 1 : 0)) {
         const argument = `${name}-context`;
         throw new SyntaxError(
@@ -601,19 +600,13 @@ function __compileProgram__(
         scope = new Map([[binding, { identifier: id, mutable: true }]]);
       names.set(id, binding);
       const temp = `$loop${nextLocal++}`;
-      const checked = (code, at) =>
-        trace
-          ? hasAwait(at)
-            ? `(await $trace.asyncAt($tracer, ${at.start}, ${at.end}, async () => (${code})))`
-            : `$trace.at($tracer, ${at.start}, ${at.end}, () => (${code}))`
-          : code;
       let prefix, header, assignment;
       const range = args[0];
       const input =
         range.kind === 'range'
           ? `$loops.range(${emit(range.from)}, ${emit(range.to)})`
           : `$loops.for(${emit(range)})`;
-      prefix = `const ${temp} = ${checked(input, range)};`;
+      prefix = `const ${temp} = ${traced(input, range)};`;
       header = `let ${temp}i = ${temp}.from; ${temp}.step > 0 ? ${temp}i < ${temp}.to : ${temp}i > ${temp}.to; ${temp}i += ${temp}.step`;
       assignment = `let ${id} = ${temp}.range ? ${temp}i : $loops.get(${temp}.value, ${temp}i);`;
       loopDepth++;
@@ -682,12 +675,7 @@ function __compileProgram__(
     function(parameters, body, asynchronous = false, stage = promiseStage) {
       const scope = new Map();
       const checks = [];
-      const parsed = Types.parseParameters(parameters, {
-        rest: true,
-        fail: (message, node) => {
-          throw Trace.locate(new SyntaxError(message), source, node.start, node.end);
-        },
-      });
+      const parsed = parseParameters(parameters, { rest: true });
       for (const parameter of parsed) {
         const name = parameter.name;
         if (
@@ -738,12 +726,7 @@ function __compileProgram__(
   };
   const emit = (node, statement = false, returnLast = false) => {
     try {
-      const result = emitRaw(node, statement, returnLast);
-      return trace && typeof result === 'string'
-        ? hasAwait(node)
-          ? `(await $trace.asyncAt($tracer, ${node.start}, ${node.end}, async () => (${result})))`
-          : `$trace.at($tracer, ${node.start}, ${node.end}, () => (${result}))`
-        : result;
+      return traced(emitRaw(node, statement, returnLast), node);
     } catch (error) {
       throw Trace.locate(error, source, node.start, node.end);
     }

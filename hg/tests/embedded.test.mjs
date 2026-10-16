@@ -1,0 +1,31 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { App, AppCore } from '../app.js';
+import { InnerCanvas } from '../inner-canvas.js';
+
+test('embedded configuration shares canvas geometry rules and disposal cancels pending initialization', async () => {
+  const parent = AppCore.new();
+  let resolve;
+  parent.ready = new Promise(done => { resolve = done; });
+  const child = App.embed(parent, { w: 160, h: 90, si: 1, ups: 30 });
+  assert.equal(parent.__children__.size, 1);
+  App.resize(child, 800, 600);
+  assert.deepEqual(child.view, { w: 160, h: 90, x: 0, y: 75, scale: 5, outerWidth: 800, outerHeight: 600 });
+  assert.deepEqual(InnerCanvas.toInner(child.display, 400, 300), { x: 80, y: 45, w: 160, h: 90, inside: true });
+  child.display.bindings.configure({ w: 320, h: 180, ups: 24, is: true });
+  App.resize(child, 801, 600);
+  assert.deepEqual([child.w, child.h, child.is, child.requestedUps, child.view.scale], [320, 180, true, 24, 2]);
+  assert.throws(() => App.resize(child, 0, 100), /positive integers/);
+  assert.throws(() => App.embed(parent, { c: 'canvas' }), /Unknown embedded/);
+  App.setVisible(child, false);
+  assert.equal(child.hidden, true);
+  assert.equal(child.paused, false);
+  App.pause(child);
+  App.setVisible(child, true);
+  assert.equal(child.paused, true);
+  AppCore.destroy(parent);
+  assert.deepEqual([child.destroyed, child.output, parent.__children__.size], [true, null, 0]);
+  resolve(parent);
+  await assert.rejects(child.ready, /disposed during initialization/);
+  assert.throws(() => App.resize(child, 100, 100), /live embedded app/);
+});

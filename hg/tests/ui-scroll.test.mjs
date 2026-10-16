@@ -10,13 +10,17 @@ const vec2 = (x = 0, y = x) => Data.vector(2, [x, y]);
 const rect = (x, y, w, h) => Data.vector(4, [x, y, w, h]);
 const values = value => Data.values(value);
 
-function harness(t, trace) {
-  const app = AppCore.new({ trace, bindings: {
+async function harness(t, trace) {
+  const app = AppCore.new({ trace, fetch: async url => {
+    assert.equal(url, 'https://ui.test/editor/theme.lisp');
+    return { ok: true, text: async () => readFileSync(new URL('../../editor/theme.lisp', import.meta.url), 'utf8') };
+  }, bindings: {
     layer() {}, 'layer-regions'() {}, 'text-proxy'() {}, cursor() {}, clear() {},
   } });
   app.graphics = {};
-  app.services.graphics = { createShader: () => () => {}, destroy() {} };
-  const module = AppCore.executeModule(app, AppCore.compileModule(app, source));
+  app.services.graphics = { createShader: () => () => {},
+    createText: () => Data.dict('w', 100, 'h', 20), destroy() {} };
+  const module = await AppCore.executeModule(app, AppCore.compileModule(app, source, { sourceURL: 'https://ui.test/hg/ui.lisp' }));
   const call = (name, ...args) => Data.get(module, name)(...args);
   const prop = (key, value) => call('ui-prop', key, value);
   const box = (w, h, ...items) => call('ui-box', call('width', w), call('height', h), ...items);
@@ -44,13 +48,86 @@ function harness(t, trace) {
 
 test('editor and UI Lisp sources remain syntactically valid', () => {
   for (const file of ['../ui.lisp', '../../editor/main.lisp', '../../editor/theme.lisp',
-    '../../editor/project.lisp', '../../editor/vfs.lisp', '../../editor/inspector.lisp', '../../examples/ui.lisp'])
+    '../../editor/project.lisp', '../../editor/vfs.lisp', '../../editor/files.lisp', '../../editor/inspector.lisp', '../../editor/game.lisp', '../../editor/settings.lisp', '../../project/main.lisp'])
     assert.doesNotThrow(() => Compiler.read(readFileSync(new URL(file, import.meta.url), 'utf8')));
 });
 
 for (const trace of [true, false]) {
-  test(`focusing a wide row reveals it vertically without horizontal jumping (trace=${trace})`, t => {
-    const { call, prop, box, make } = harness(t, trace);
+  for (const kind of ['ui-bar', 'ui-menu', 'ui-taskbar']) {
+    test(`${kind} scrolls overflowing content with either wheel axis and preserves units (trace=${trace})`, async t => {
+      const { call, box, make, layout, input } = await harness(t, trace);
+      const items = [box(100, 20), box(100, 20), box(100, 20)];
+      const workspace = call('ui-dock');
+      const bar = kind === 'ui-taskbar' ? call(kind, workspace, ...items) : call(kind, ...items);
+      const ui = make(kind === 'ui-taskbar' ? call('ui-vbox', workspace, bar) : bar);
+      const send = fields => input(ui, 'wheel', { x: bar.bounds.x + 50, y: bar.bounds.y + 20, ...fields });
+      assert.ok(bar.state['max-scroll'] > 100);
+      const origin = items[0].bounds.x;
+      const event = send({ dx: -0.5, dy: 30 });
+      assert.equal(bar.state.scroll, 30);
+      assert.equal(event['prevent-default'], true);
+      layout(ui);
+      assert.equal(items[0].bounds.x, origin - 30);
+      send({ dx: 40, dy: -0.5 });
+      assert.equal(bar.state.scroll, 70);
+      send({ dx: 0.1, dy: -10 });
+      assert.equal(bar.state.scroll, 60);
+      send({ dx: 0.5, dy: -1, mode: 1 });
+      assert.equal(bar.state.scroll, 40);
+      send({ dx: 1, dy: 0.1, mode: 2 });
+      assert.equal(bar.state.scroll, 140);
+      send({ dx: 0, dy: 0.25 });
+      assert.equal(bar.state.scroll, 140.25);
+      send({ dy: 10000 });
+      assert.equal(bar.state.scroll, bar.state['max-scroll']);
+      send({ dx: -10000, dy: 0.1 });
+      assert.equal(bar.state.scroll, 0);
+    });
+  }
+
+  test(`theme dictionaries preserve local configuration, reach new nodes, and remain local to one UI (trace=${trace})`, async t => {
+    const { call, layout } = await harness(t, trace);
+    const label = call('ui-label', 'Themed');
+    const explicit = call('ui-label', 'Local', call('size', 29), call('font', 'serif'));
+    const popup = call('ui-dropdown', 'Menu', call('ui-button', 'Action'));
+    const button = call('ui-button', 'Button');
+    const root = call('ui-vbox', label, explicit, popup, button);
+    const ui = call('ui-new', root), other = call('ui-new', call('ui-label', 'Other UI'));
+    const color = Data.vector(4, [0.2, 0.3, 0.4, 1]);
+    const theme = Data.dict('text', Data.dict('font', 'monospace', 'color', color),
+      'components', Data.dict('label', Data.dict('size', 21), 'button', Data.dict('background', color),
+        'popup', Data.dict('background', color)));
+    assert.equal(call('ui-theme', ui, theme), ui);
+    assert.deepEqual([label.props.font, label.props.size, explicit.props.font, explicit.props.size],
+      ['monospace', 21, 'serif', 29]);
+    assert.equal(button.props.background, color);
+    assert.equal(popup.state['popup-node'].props.background, color);
+    assert.equal(other.root.props.size, 16);
+    const late = call('ui-label', 'Added after applying the theme');
+    root.children.push(late);
+    layout(ui);
+    assert.deepEqual([late.props.font, late.props.size], ['monospace', 21]);
+    call('ui-theme', ui, Data.dict());
+    assert.deepEqual([label.props.font, label.props.size, late.props.size, explicit.props.size],
+      ['sans-serif', 16, 16, 29]);
+    assert.notEqual(button.props.background, color);
+  });
+
+  test(`component and role theme rules also work for custom components (trace=${trace})`, async t => {
+    const { call, prop } = await harness(t, trace);
+    const node = call('ui-node', Data.dict('theme-key', 'custom'), Data.dict('padding', 1), prop('theme-key', 'special'));
+    const ui = call('ui-new', node);
+    const theme = Data.dict('components', Data.dict('custom', Data.dict('padding', 3, 'gap', 4),
+      'special', Data.dict('padding', 6)));
+    call('ui-theme', ui, theme);
+    assert.deepEqual([node.props.padding, node.props.gap], [6, 4]);
+    theme.components.special.padding = 8;
+    call('ui-theme', ui, theme);
+    assert.deepEqual([node.props.padding, node.props.gap], [8, 4]);
+  });
+
+  test(`focusing a wide row reveals it vertically without horizontal jumping (trace=${trace})`, async t => {
+    const { call, prop, box, make } = await harness(t, trace);
     const row = box(400, 24, prop('focusable', true));
     const node = call('ui-scroll', prop('scroll-x', true), box(400, 200), row);
     const ui = make(node);
@@ -60,8 +137,8 @@ for (const trace of [true, false]) {
     assert.ok(node.state.offset.y > 0);
   });
 
-  test(`scroll state survives reconstruction and temporarily empty content (trace=${trace})`, t => {
-    const { call, prop, box, make, layout } = harness(t, trace);
+  test(`scroll state survives reconstruction and temporarily empty content (trace=${trace})`, async t => {
+    const { call, prop, box, make, layout } = await harness(t, trace);
     const saved = Data.dict('x', 0, 'y', 120);
     const content = box(80, 0);
     const node = call('ui-scroll', prop('scroll-state', saved), content);
@@ -78,8 +155,8 @@ for (const trace of [true, false]) {
     assert.equal(restored.state.offset.y, 200);
   });
 
-  test(`scroll view preserves fractional wheel deltas, units, and both axes (trace=${trace})`, t => {
-    const { call, prop, box, make, input } = harness(t, trace);
+  test(`scroll view preserves fractional wheel deltas, units, and both axes (trace=${trace})`, async t => {
+    const { call, prop, box, make, input } = await harness(t, trace);
     const content = box(300, 600);
     const node = call('ui-scroll', prop('scroll-x', true), content);
     const ui = make(node);
@@ -102,8 +179,8 @@ for (const trace of [true, false]) {
     assert.deepEqual(values(other.state.offset), [0, 0]);
   });
 
-  test(`scroll view reclamps offsets on resize, content shrink, and axis changes (trace=${trace})`, t => {
-    const { call, prop, box, make, layout } = harness(t, trace);
+  test(`scroll view reclamps offsets on resize, content shrink, and axis changes (trace=${trace})`, async t => {
+    const { call, prop, box, make, layout } = await harness(t, trace);
     const content = box(300, 600);
     const node = call('ui-scroll', prop('scroll-x', true), content);
     const ui = make(node);
@@ -130,8 +207,8 @@ for (const trace of [true, false]) {
     assert.equal(node.state['max-offset'].y, 500);
   });
 
-  test(`nested scroll views consume wheel input until their edge, then pass it outward (trace=${trace})`, t => {
-    const { call, box, make, input } = harness(t, trace);
+  test(`nested scroll views consume wheel input until their edge, then pass it outward (trace=${trace})`, async t => {
+    const { call, box, make, input } = await harness(t, trace);
     const inner = call('ui-scroll', call('height', 80), box(80, 200));
     const outer = call('ui-scroll', inner, box(80, 400));
     const ui = make(outer);
@@ -147,8 +224,8 @@ for (const trace of [true, false]) {
     assert.equal(event['prevent-default'], false);
   });
 
-  test(`scrollbars support track clicks, captured dragging, and keyboard navigation (trace=${trace})`, t => {
-    const { call, prop, box, make, input } = harness(t, trace);
+  test(`scrollbars support track clicks, captured dragging, and keyboard navigation (trace=${trace})`, async t => {
+    const { call, prop, box, make, input } = await harness(t, trace);
     const node = call('ui-scroll', prop('scroll-x', true), box(300, 600));
     const ui = make(node);
     input(ui, 'pointerdown', { x: 96, y: 70 });
@@ -172,8 +249,8 @@ for (const trace of [true, false]) {
     assert.equal(node.state.offset.x, 0);
   });
 
-  test(`scroll view clips hits and reveals focused children without stealing their keys (trace=${trace})`, t => {
-    const { call, prop, box, make, input } = harness(t, trace);
+  test(`scroll view clips hits and reveals focused children without stealing their keys (trace=${trace})`, async t => {
+    const { call, prop, box, make, input } = await harness(t, trace);
     let clicks = 0;
     const button = box(80, 30, prop('focusable', true), call('ui-on', 'click', () => { clicks++; }));
     const node = call('ui-scroll', box(80, 250), button);

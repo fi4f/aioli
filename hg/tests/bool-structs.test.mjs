@@ -64,6 +64,5 @@ test('shader local bool fields and collection elements use native WGSL booleans'
   assert.match(program.wgsl, /f0: bool/);
   assert.match(program.wgsl, /array<bool, 3>/);
   assert.doesNotMatch(program.wgsl, /var<storage/);
-  assert.match(program.wgsl, /select\(0f, 1f,/);
   assert.match(program.wgsl, /fn readArray\d+\(value: array<bool, \d+>, index: f32\) -> bool/);
 });

@@ -2,7 +2,7 @@
 ; Text, highlighting, selection, caret, scrolling, and hit testing are Lisp.
 (let Ui (await (import "../hg/ui.lisp")))
 
-(let Theme (await (import "./theme.lisp")))
+(let Theme Ui.ui-theme-data)
 (let __palette__ Theme.palette)
 
 (let __source-image__ (sh (image:texture2d gutter-image:texture2d position:vec2 clip:vec4 gutter:f32 scroll:f32
@@ -34,9 +34,7 @@
 
 (let __viewport__ (fn (node)
   (let model node.props.model)
-  (let digits 1)
-  (let remaining (len node.state.document.lines))
-  (while (>= remaining 10) { (set remaining (i32 (/ remaining 10))) (set digits (+ digits 1)) })
+  (let digits (len (str (len node.state.document.lines))))
   (set node.state.digits digits)
   (set node.state.gutter (* (+ digits 2) node.state.cell))
   (set node.state.columns-width (max 0 (- node.bounds.z node.state.gutter)))
@@ -238,12 +236,9 @@
       (for index node.state.image-rows {
         (let row (+ first-row index))
         (if (>= row (len document.lines)) (break))
-        (let number (+ row 1))
-        (let number-digits 1)
-        (let rest number)
-        (while (>= rest 10) { (set rest (i32 (/ rest 10))) (set number-digits (+ number-digits 1)) })
-        (for pad (- digits number-digits) " ")
-        (span (str number))
+        (let number (str (+ row 1)))
+        (for pad (- digits (len number)) " ")
+        (span number)
         (line)
       })))
     (set node.state.gutter-key gutter-key)

@@ -2,21 +2,24 @@
 ; Library: hg/ui.lisp. Source control: editor/code-editor.lisp.
 (await (import "../hg/ui.lisp"))
 (let Editor (await (import "./code-editor.lisp")))
-(let Theme (await (import "./theme.lisp")))
+(let Theme ui-theme-data)
 (let Files (await (import "./files.lisp")))
+(let Game (await (import "./game.lisp")))
+(let Settings (await (import "./settings.lisp")))
 (let Inspector (await (import "./inspector.lisp")))
 (let ProjectModule (await (import "./project.lisp")))
 (let Project ProjectModule.Project)
+(let BufferModule (await (import "./buffer.lisp")))
+(let Buffer BufferModule.Buffer)
 (let state app.state)
 (let saved-entry (fs-stat "/editor/main.lisp"))
-(if (= state.editor nil) (set state.editor (dict
-  "source" (if saved-entry (await (fs-read-text "/editor/main.lisp")) app.source)
-  "path" (if saved-entry "/editor/main.lisp" "") "locked" (not saved-entry)
-  "anchor" 0 "head" 0 "scroll" 0 "scroll-x" 0 "version" 0
-  "composing" false "pending" false "elapsed" 0 "error" "" "auto" true)))
+(if (= state.editor nil) (set state.editor (Buffer.new
+  (if saved-entry "/editor/main.lisp" "")
+  (if saved-entry (await (fs-read-text "/editor/main.lisp")) app.source)
+  (if saved-entry saved-entry.revision 0))))
 (let model state.editor)
 ; Transient flags may be absent in saved buffers or the recovery fallback model.
-(for key (list "saving" "switching" "reloading" "need-reload")
+(for key (list "saving" "switching" "reloading" "need-reload" "need-game-reload")
   (if (= (get model.(get key)) nil) (put model key false)))
 (if (= model.path nil) (set model.path "/editor/main.lisp"))
 (if (= model.file-revision nil) (set model.file-revision (if saved-entry saved-entry.revision 0)))
@@ -49,14 +52,23 @@
 (if (= state.layout nil) (set state.layout (dict)))
 (if (= state.tools nil) (set state.tools (dict)))
 (if (= state.tools.bindings nil) (set state.tools.bindings (dict)))
+(if (= state.tools.game nil) (set state.tools.game (dict "auto" true "paused" false)))
 (for key (list "bindings-scroll" "diagnostics-scroll")
   (if (= (get state.tools.(get key)) nil) (put state.tools key (dict "x" 0 "y" 0))))
 (let desktop nil)
 (let workspace nil)
 (let diagnostics nil)
+(let copy-status nil)
 (let inspector nil)
 (let source-node nil)
 (let source-pane nil)
+(let files-pane nil)
+(let bindings-pane nil)
+(let diagnostics-pane nil)
+(let settings-pane nil)
+(let pane-toggles (list))
+(let game-node nil)
+(let game-pane nil)
 (let preview-node nil)
 (let preview-pane nil)
 (let preview-label nil)
@@ -79,23 +91,14 @@
   (set model.saving true) (set model.status "Saving...")
   (set model.save-promise (promise (fs-write-text path source model.file-revision)
     then (entry) {
-      (set model.file-revision entry.revision)
-      (set model.saved-source source)
-      (set model.saving false)
-      (set model.error "")
-      (if (= requested model.version) {
-        (set model.dirty false) (set model.pending false) (set model.status "Saved")
-      } else {
-        (set model.dirty (not (= model.source source)))
-        (set model.pending model.dirty)
-        (set model.status (if model.dirty "Unsaved" "Saved"))
-      })
-      (if (or (fs-contains "/editor" path) (fs-contains "/hg" path)) (set model.need-reload true))
+      (Buffer.saved model source entry.revision requested)
+      (if (or (fs-contains "/editor" path) (fs-contains "/hg" path)) (set model.need-reload true)
+        else (set model.need-game-reload true))
       true
     } catch (error) {
-      (set model.saving false) (set model.status "Save failed")
+      (set model.status "Save failed")
       (set model.pending false) (set model.error error.message) false
-    }))
+    } finally (set model.saving false)))
   model.save-promise))
 (let flush-file (async (fn ()
   (if model.saving (if (not (await model.save-promise)) (return false)))
@@ -104,45 +107,43 @@
 (let reload-editor (async (fn ()
   (if (or model.reloading model.switching model.files.busy) (return false))
   (set model.reloading true)
-  (if (not (await (flush-file))) { (set model.reloading false) (return false) })
-  (set model.need-reload false) (set model.error "")
-  (promise (App.reloadModules app (or state.editor-entry (fs-url "/editor/main.lisp")))
-    then () { (set model.reloading false) true }
-    catch (error) {
-      (set model.reloading false) (set model.error error.message)
-      (set model.status "Saved; reload failed") false
-    }))))
+  (promise {
+    (if (not (await (flush-file))) (return false))
+    (set model.need-reload false) (set model.error "")
+    (await (App.reloadModules app (or state.editor-entry (fs-url "/editor/main.lisp"))))
+    true
+  } catch (error) {
+    (set model.error error.message)
+    (set model.status "Saved; reload failed") false
+  } finally (set model.reloading false)))))
 (let __lock__ (fn (locked)
   (set model.locked locked)
-  (if source-node.state.proxy (TextProxy.readOnly source-node.state.proxy locked))))
+  (let proxy source-node.state.proxy)
+  (if (and proxy (not proxy.disposed)) (TextProxy.readOnly proxy locked))))
 (let update-editor-bundle (async (fn ()
   (if (or model.reloading model.switching model.files.busy) (return false))
   (let previous-lock (bool model.locked))
   (set model.reloading true) (__lock__ true)
   (promise {
-    (if (not (await (flush-file))) {
-      (set model.reloading false) (__lock__ previous-lock) (return false)
-    })
+    (if (not (await (flush-file))) (return false))
     (let report (await (Project.resetEditor app.filesystem (await (editor-default-files)))))
     (set state.bundle-backup report.backup)
     (if (in model.path report.updated) {
       (let entry (fs-stat model.path))
-      (set model.source (await (fs-read-text model.path)))
-      (set model.saved-source model.source) (set model.file-revision entry.revision)
-      (set model.version (+ model.version 1))
-      (set model.dirty false) (set model.pending false)
+      (Buffer.replace model (await (fs-read-text model.path)) entry.revision)
       (set model.anchor (min model.anchor (len model.source)))
       (set model.head (min model.head (len model.source)))
     })
-    (set model.reloading false) (__lock__ previous-lock)
     (set model.status "Saved")
     (await (editor-resume))
   } catch (error) {
-    (set model.reloading false) (__lock__ previous-lock)
     (set model.error error.message) false
+  } finally {
+    (set model.reloading false) (__lock__ previous-lock)
   }))))
 (let save-project (async (fn ()
   (if (or model.reloading model.switching model.files.busy) (return false))
+  (set model.error "")
   (promise {
     (if (not (await (flush-file))) (return false))
     (await (Project.saveState app.filesystem state))
@@ -151,28 +152,33 @@
   } catch (error) { (set model.error error.message) false }))))
 (let open-project (async (fn ()
   (if (or model.reloading model.switching model.files.busy) (return false))
+  (let previous-lock (bool model.locked))
   (set model.reloading true) (__lock__ true)
   (promise {
     (let selected (await (Resources.openText)))
-    (if (= selected nil) { (set model.reloading false) (__lock__ false) (return false) })
-    (if (not (await (flush-file))) { (set model.reloading false) (__lock__ false) (return false) })
+    (if (= selected nil) (return false))
+    (if (not (await (flush-file))) (return false))
     (await (Project.saveState app.filesystem state))
     (await (Project.open app.filesystem selected.text))
     (await (project-reload))
   } catch (error) {
-    (set model.reloading false) (__lock__ false) (set model.error error.message) false
+    (set model.error error.message) false
+  } finally {
+    (set model.reloading false) (__lock__ previous-lock)
   }))))
 (let new-project (async (fn ()
   (if (or model.reloading model.switching model.files.busy) (return false))
+  (let previous-lock (bool model.locked))
   (set model.reloading true) (__lock__ true)
   (promise {
-    (if (not (await (flush-file))) { (set model.reloading false) (__lock__ false) (return false) })
+    (if (not (await (flush-file))) (return false))
     (await (Project.saveState app.filesystem state))
-    (set app.filesystem.assetURL (project-base-url))
     (await (Project.create app.filesystem (await (project-default-files))))
     (await (project-reload))
   } catch (error) {
-    (set model.reloading false) (__lock__ false) (set model.error error.message) false
+    (set model.error error.message) false
+  } finally {
+    (set model.reloading false) (__lock__ previous-lock)
   }))))
 (let resume-editor (async (fn ()
   (promise {
@@ -193,14 +199,14 @@
     (set preview.path entry.path) (set preview.revision entry.revision)
     (set preview.image texture) (set preview.mime entry.mime) (set preview.size entry.size)
     (set preview-pane.props.title (if entry.image "Image preview" "File information"))
-    (set model.switching false) (set model.error "")
+    (set model.error "")
     (ui-pane-open desktop preview-pane)
     (ui-focus desktop (ui-path desktop.root preview-node))
     (ui-invalidate desktop)
     true
   } catch (error) {
-    (set model.switching false) (set model.error error.message) false
-  }))))
+    (set model.error error.message) false
+  } finally (set model.switching false)))))
 (let __load-file__ (async (fn (path)
   (if (or model.switching model.reloading) (return false))
   (__show-source__)
@@ -208,17 +214,14 @@
   (set model.switching true) (__lock__ true)
   (promise {
     (if (not (await (flush-file))) {
-      (set model.switching false) (__lock__ previous-lock) (return false)
+      (__lock__ previous-lock) (return false)
     })
     (let entry (fs-stat path))
-    (if (= entry nil) (await (fs-read-text path)))
     (let source (await (fs-read-text path)))
-    (set model.path path) (set model.file-revision entry.revision)
-    (set model.source source) (set model.saved-source source)
+    (set model.path path)
+    (Buffer.replace model source entry.revision)
     (set model.anchor 0) (set model.head 0) (set model.scroll 0) (set model.scroll-x 0)
-    (set model.version (+ model.version 1))
-    (set model.dirty false) (set model.pending false) (set model.error "")
-    (set model.status "Saved") (set model.switching false) (__lock__ false)
+    (__lock__ false)
     (TextProxy.sync source-node.state.proxy source 0 0)
     (set source-node.state.document (TextProxy.snapshot source-node.state.proxy))
     (set model.source source-node.state.document.content)
@@ -227,8 +230,8 @@
     (ui-invalidate desktop)
     true
   } catch (error) {
-    (set model.switching false) (__lock__ previous-lock) (set model.error error.message) false
-  }))))
+    (__lock__ previous-lock) (set model.error error.message) false
+  } finally (set model.switching false)))))
 (let open-file (fn (path)
   (if (or model.reloading model.switching) (return false))
   (let entry (fs-stat path))
@@ -267,20 +270,64 @@
     (__lock__ true)
   })))
 
+(let __title__ (fn (icon title)
+  (ui-hbox (gap 4) (v-align "center") (ui-icon icon) title)))
+
+(let copy-diagnostics (fn ()
+  (let content diagnostics.props.value)
+  (set copy-status.props.value "Copying...")
+  (ui-invalidate desktop)
+  (promise (Resources.copyText content)
+    then () {
+      (if (= diagnostics.props.value content) {
+        (set copy-status.props.value "Copied") (set copy-status.props.color Theme.green)
+      })
+      true
+    } catch (error) {
+      (set copy-status.props.value $"Copy failed: {error.message}")
+      (set copy-status.props.color Theme.pink)
+      false
+    } finally (ui-invalidate desktop))))
+
+(let __pane-toggle__ (fn (pane)
+  (let check (ui-label "" (width 16)))
+  (insert pane-toggles (dict "pane" pane "check" check))
+  (ui-button check pane.props.title (h-align "left")
+    (ui-prop "pane-toggle" pane.props.id)
+    (on click (event)
+      (if (= pane.props.visible false) (ui-pane-open event.ui pane) else (ui-pane-close event.ui pane))))))
+(let save-settings (async (fn (settings)
+  (Resources.require (not (or model.reloading model.switching model.files.busy))
+    "Wait for the current project operation to finish.")
+  (set model.reloading true)
+  (promise {
+    (Resources.require (await (flush-file)) "Save the source file before changing project settings.")
+    (await (Project.configure app.filesystem settings))
+    (set model.need-game-reload true)
+    true
+  } finally (set model.reloading false)))))
+(let __update-pane-toggles__ (fn ()
+  (for toggle pane-toggles {
+    (let value (if (= toggle.pane.props.visible false) "" "✓"))
+    (if (not (= toggle.check.props.value value)) {
+      (set toggle.check.props.value value) (ui-invalidate desktop)
+    })
+  })))
+
 (let build-editor (fn ()
+  (set pane-toggles (list))
   (set diagnostics (ui-label "" (font Theme.font)
     (size Theme.size) (v-align "top")))
+  (set copy-status (ui-label "" (size Theme.small-size)))
   (set inspector (Inspector.bindings-pane state.tools.bindings))
   (set source-node (Editor.code-editor model
-    (on change () {
-      (set model.dirty (not (= model.source model.saved-source)))
-      (set model.pending model.dirty) (set model.elapsed 0)
-      (set model.status (if model.dirty "Unsaved" "Saved"))
-    })))
+    (on change () (Buffer.changed model))))
+  (set game-node (Game.game-view state.tools.game flush-file))
+  (set game-pane (ui-pane (__title__ Theme.icons.play "Game") game-node))
   (set preview-node (Files.file-preview preview))
   (set preview-label (ui-label "" (size Theme.small-size)
     (ui-prop "marquee" true)))
-  (set preview-pane (ui-pane (ui-hbox (gap 4) (v-align "center") (ui-icon Theme.icons.image) "Image preview")
+  (set preview-pane (ui-pane (__title__ Theme.icons.image "Image preview")
     (ui-prop "id" "image-preview")
     (ui-prop "floating" true)
     (ui-prop "closed" (= preview.path ""))
@@ -309,73 +356,69 @@
     (ui-hbox
       (ui-button "Discard & reopen" (on click () (reopen-file)))
       (ui-button "Cancel" (on click () (set model.confirm-reopen false))))))
-  (set source-pane (ui-pane (ui-hbox (gap 4) (v-align "center") (ui-icon Theme.icons.code) "Source")
+  (set source-pane (ui-pane (__title__ Theme.icons.code "Source")
     (ui-hbox path-label status-label) reopen-prompt source-node))
-  (set workspace (ui-dock
-    (ui-prop "layout" state.layout)
-    (ui-pane (ui-hbox (gap 4) (v-align "center") (ui-icon Theme.icons.folder) "Files")
+  (set files-pane (ui-pane (__title__ Theme.icons.folder "Files")
       (Files.files-pane model flush-file
         (on open (event) (open-file event.path))
+        (on import (event) {
+          (set model.need-game-reload true)
+          (for path event.paths (if (fs-contains "/editor" path) (set model.need-reload true)))
+        })
         (on move (event) {
           (if (not (= model.path "")) (set model.path (fs-rebase model.path event.from event.to)))
           (if (not (= preview.path "")) (set preview.path (fs-rebase preview.path event.from event.to)))
         })
-        (on remove (event) (__removed__ event.path))))
-    source-pane
-    preview-pane
-    (ui-pane (ui-hbox (gap 4) (v-align "center") (ui-icon Theme.icons.generator) "Bindings")
-      (ui-scroll (ui-prop "scroll-x" true) (ui-prop "scroll-state" state.tools.bindings-scroll) inspector))
-    (ui-pane (ui-hbox (gap 4) (v-align "center") (ui-icon Theme.icons.command) "Diagnostics")
-      (ui-scroll (ui-prop "scroll-x" true) (ui-prop "scroll-state" state.tools.diagnostics-scroll) diagnostics))))
+        (on remove (event) (__removed__ event.path)))))
+  (set bindings-pane (ui-pane (__title__ Theme.icons.generator "Bindings") (ui-prop "closed" true)
+    (ui-scroll (ui-prop "scroll-x" true) (ui-prop "scroll-state" state.tools.bindings-scroll) inspector)))
+  (set diagnostics-pane (ui-pane (__title__ Theme.icons.command "Diagnostics")
+    (ui-bar (height 34) (padding 2) (ui-button "Copy" (on click () (copy-diagnostics))) copy-status)
+    (ui-scroll (ui-prop "scroll-x" true) (ui-prop "scroll-state" state.tools.diagnostics-scroll) diagnostics)))
+  (set settings-pane (ui-pane "Project Settings" (ui-prop "closed" true)
+    (ui-prop "floating" true) (ui-prop "float-w" 600) (ui-prop "float-h" 640)
+    (Settings.settings-view save-settings)))
+  (set workspace (ui-dock
+    (ui-prop "layout" state.layout)
+    (ui-prop "default-tree" (dict "kind" "split" "axis" "x" "ratio" 0.2
+      "first" (dict "kind" "pane" "id" "Files")
+      "second" (dict "kind" "split" "axis" "y" "ratio" 0.8
+        "first" (dict "kind" "split" "axis" "x" "ratio" 0.5
+          "first" (dict "kind" "pane" "id" "Source")
+          "second" (dict "kind" "pane" "id" "Game"))
+        "second" (dict "kind" "pane" "id" "Diagnostics"))))
+    files-pane source-pane game-pane preview-pane bindings-pane diagnostics-pane settings-pane))
   (ui-new (ui-vbox (gap 0)
     (ui-menu
       (ui-label "Mercury" (size Theme.heading-size)
         (padding Theme.text-padding))
       (ui-label "Recovery editor (F2)" (visible (= state.editor-mode "recovery"))
         (size Theme.small-size))
-      (ui-dropdown (ui-hbox (gap 4) (v-align "center") (ui-icon Theme.icons.file) "Project")
-        (ui-button "New project" (on click () (new-project)))
-        (ui-button "Open project" (on click () (open-project)))
-        (ui-button "Save project" (on click () (save-project)))
-        (ui-button "Save now" (on click () (save-file)))
-        (ui-button "Reload editor" (on click () (reload-editor)))
-        (ui-button "Resume project editor" (on click () (resume-editor)))
-        (ui-button "Restore default editor" (on click () (update-editor-bundle)))
-        (ui-button "Reopen saved file" (on click () {
-          (if (not (= model.path "")) { (__show-source__) (set model.confirm-reopen true) })
-        }))
-        (ui-button "Refresh files" (on click ()
-          (promise (fs-refresh) catch (error) (set model.error error.message))))
-        (ui-button "Reset draft" (on click () {
-          (if (or model.switching model.files.busy) (return))
-          (set model.source model.saved-source)
-          (set model.version (+ model.version 1))
-          (set model.anchor 0)
-          (set model.head 0)
-          (set model.scroll-x 0)
-          (set model.pending false)
-          (set model.dirty false) (set model.status "Saved")
-        })))
-      (ui-dropdown (ui-hbox (gap 4) (v-align "center") (ui-icon Theme.icons.main) "View")
+      (ui-dropdown (__title__ Theme.icons.file "Project")
+        (ui-button "New Project" (on click () (new-project)))
+        (ui-button "Open Project" (on click () (open-project)))
+        (ui-button "Save Project" (on click () (save-project)))
+        (ui-vbox (padding 4) (ui-prop "role" "separator")
+          (ui-box (height Theme.border-width) (background Theme.border)))
+        (ui-button "Settings" (on click (event) (ui-pane-open event.ui settings-pane)))
+        (ui-vbox (padding 4) (ui-prop "role" "separator")
+          (ui-box (height Theme.border-width) (background Theme.border)))
+        (if (= state.editor-mode "recovery")
+          (list
+            (ui-button "Restore project editor" (on click () (resume-editor)))
+            (ui-button "Keep default editor" (on click () (update-editor-bundle))))
+          (ui-button "Recovery editor (F2)" (on click () (editor-recover)))))
+      (ui-dropdown (__title__ Theme.icons.main "View")
+        (on click () (__update-pane-toggles__))
+        (__pane-toggle__ files-pane)
+        (__pane-toggle__ source-pane)
+        (__pane-toggle__ game-pane)
+        (__pane-toggle__ bindings-pane)
+        (__pane-toggle__ diagnostics-pane)
         (ui-button "Reset layout" (on click () {
           (set state.layout (dict))
           (reload-editor)
-        }))
-        (ui-button "Restore minimized panes" (on click (event) {
-          (for pane workspace.state.panes
-            (if pane.state.minimized (ui-pane-restore event.ui pane)))
         })))
-      (ui-dropdown "Assets"
-        (ui-label "Asset base URL (Enter to apply)")
-        (ui-textbox app.filesystem.assetURL (width 360)
-          (grow 0)
-          (on submit (event) {
-            (promise {
-              (set app.filesystem.assetURL (Resources.directoryURL event.value))
-              (await (Project.saveState app.filesystem state))
-              (set model.error "")
-            } catch (error) (set model.error error.message))
-          })))
       (ui-button (ui-icon Theme.icons.play) (ui-label (if model.auto "Live editor: on" "Live editor: off"))
         (on click (event) {
           (set model.auto (not model.auto))
@@ -391,7 +434,7 @@
 
 (on attach ()
   (set desktop (build-editor))
-  (Theme.apply desktop)
+  (ui-theme desktop Theme)
   (set diagnostics.props.color Theme.pink)
   (set desktop.observe false)
   (set inspect-elapsed 1)
@@ -403,13 +446,19 @@
 
 (on update (context)
   (ui-update desktop context)
+  (__update-pane-toggles__)
   (set inspect-elapsed (+ inspect-elapsed context.dt))
   (if (and model.pending (not model.saving) (not model.composing) (not model.switching)) {
     (set model.elapsed (+ model.elapsed context.dt))
     (if (>= model.elapsed Theme.save-delay) (save-file))
   })
   (if (and model.auto model.need-reload (not model.dirty) (not model.saving)
-    (not model.reloading) (not model.switching) (not model.files.busy)) (reload-editor)))
+    (not model.reloading) (not model.switching) (not model.files.busy)) (reload-editor))
+  (if (and state.tools.game.auto model.need-game-reload game-node.state.mounted
+    (not game-node.state.loading) (not model.dirty) (not model.saving) (not model.reloading)) {
+    (set model.need-game-reload false)
+    (Game.reload desktop game-node false)
+  }))
 
 (on render (context)
   (set desktop.scale (or state.pixel-ratio 1))
@@ -418,7 +467,9 @@
     model.path model.status model.confirm-reopen preview.path preview.mime preview.size app.filesystem.version))
   (if (not (= observed editor-observation)) {
     (set editor-observation observed)
-    (set diagnostics.props.value (if (= model.error "") "No errors." model.error))
+    (let message (if (= model.error "") "No errors." model.error))
+    (if (not (= diagnostics.props.value message)) (set copy-status.props.value ""))
+    (set diagnostics.props.value message)
     (set path-label.props.value (if (= model.path "") "(no file open)" model.path))
     (set status-label.props.value model.status)
     (set status-label.props.color (if (= model.status "Saved") Theme.green

@@ -17,9 +17,9 @@ no additional lowering or global current-instance dispatch is involved.
 All engine modules live directly in `hg/`. Modules normally export one domain
 namespace. `app.js` exports `App` and the internal `AppCore` orchestration namespace.
 `hg/tools/` contains code generators and profiling scripts; `hg/tests/` contains tests.
-`docs/` contains all documentation and supplied Markdown references. `examples/`
-contains Lisp examples and additional JavaScript/HTML hosts; `editor/` contains
-the editor's Lisp files. The repository root contains `index.html` and `index.js`
+`docs/` contains all documentation and supplied Markdown references. `project/main.lisp`
+is the default project: a single shader with a gradient that pulses over time.
+`editor/` contains the editor's Lisp files. The repository root contains `index.html` and `index.js`
 as the primary editor entry point and host.
 
 ## Module composition and Lisp exposure
@@ -76,6 +76,20 @@ are ordinary Lisp and can be edited or replaced through live module exports.
 `editor/main.lisp` composes the editor; `editor/code-editor.lisp` implements its
 native-input-backed source control. See [UI composition](./UI.md).
 
+`editor/buffer.lisp` owns buffer creation and the edit, save, and document-replacement
+transitions shared by the editor and project restoration. It performs no I/O or UI
+work. Dirty buffers contain edits; pending buffers request autosave. Those states
+stay separate so a failed save can retain edits without retrying every frame.
+Async editor commands release their operation flags in `finally` handlers.
+
+Themes are ordinary dictionaries. `editor/theme.lisp` contains the default theme.
+`hg/ui.lisp` (packaged as `/editor/ui.lisp`) selects it or a user module and exports
+`ui-theme-data`; every editor component reads that same selection.
+`ui-theme` applies shared text defaults and component property
+rules to one UI, preserves explicit node configuration, and styles new nodes
+during measurement. Reapplying restores properties omitted by the next theme
+and invalidates layout. Theme files contain no tree traversal or widget behavior.
+
 UI composition treats content as rectangles. Labels and icons provide intrinsic
 measurement; boxes and buttons arrange their children. Bare strings become label
 nodes. Pane/dropdown titles can themselves be composed elements. Local Lisp
@@ -118,6 +132,12 @@ hit testing, and text proxies can blur without disposal.
 
 App data owns its scheduler, loader, lexer, input, presentation, GPU resources,
 and text proxies. Browser services return records without instance methods.
+`App.embed` creates children through `embedded.js`: independent app services share
+the parent's GPU device, while `Graphics.publish` exposes the child's completed
+texture to the parent's renderer. `InnerCanvas.offscreen` reuses normal canvas
+geometry without creating another browser surface. `ui-app` supplies layout and
+input forwarding; `editor/game.lisp` owns project loading and child lifetime.
+Parent disposal releases children before destroying the shared GPU device.
 `Graphics.render(graphics, callback)` and `InnerCanvas.paint(display)` operate on
 explicit records. Internal `app.services` namespaces supply replaceable service
 implementations; orchestration reads their current functions at each operation.

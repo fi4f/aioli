@@ -1,5 +1,37 @@
 # Mercury performance measurements
 
+## Shared runtime and layout, October 15, 2026
+
+The editor uses the same Lisp components and rendering pipeline. This pass
+reduces work in the shared dependencies: vector construction and validation,
+collection snapshots, equality, field access, scalar math, and rectangle padding.
+It adds no editor mode, alternate renderer, or second editing implementation.
+Vector assertions still inspect every mutable component; collection loops still
+snapshot their inputs before executing the body. Insets avoid constructing a
+temporary padding vector while retaining padding validation and f32 conversion.
+
+The repaired profiler opens the requested file, focuses the source component's
+actual native proxy, and verifies the document length after typing. Large drafts
+are synchronized before yielding to browser selection events. CPU samples are
+grouped by function/source location rather than splitting identical runtime
+functions by call stack. Both documented profiler entry points now exist.
+
+Measured in isolated headless Chrome on the local AMD RDNA-2 adapter, at
+1100 x 800 CSS pixels, DPR 1.25, and a 1375 x 1000 bitmap, without CPU sampling:
+
+| Workload | Mean input to submission, before → after | p95, before → after | Mean CPU work per frame while typing, before → after |
+| --- | ---: | ---: | ---: |
+| Editor source, 51 characters at 35 ms intervals | 72.1 → 54.9 ms | 96.4 → 78.5 ms | 9.21 → 6.99 ms |
+| Source plus 20,000 comment lines, row 12,000, typing at 5 ms intervals and 30 backspaces | 72.0 → 53.5 ms | 104.3 → 75.6 ms | 24.52 → 17.38 ms |
+
+The workloads contain about 19,000 and 519,000 characters, with 51 and 81
+measured edits respectively. The comparison serves captured pre-change runtime
+modules through the same profiler; project files and workload remain identical.
+These individual local runs indicate roughly 24–26% lower mean typing latency;
+other runs varied substantially. Idle CPU work stayed below 1 ms on average.
+All recorded runs completed without console or GPU errors. Active editing still
+exceeds a 16.7 ms frame budget, so this pass does not establish smooth 60 Hz typing.
+
 ## Editor startup, October 15, 2026
 
 The HTML host paints a loading status before the JavaScript runtime arrives,
@@ -162,6 +194,7 @@ Profiling globals and GPU timestamp support are injected only into that session.
 No production window globals or profiling UI are added.
 
 - `MERCURY_EXTRA_LINES=20000`: append comment lines to the draft.
+- `MERCURY_FILE=/editor/main.lisp`: choose the edited file (this is the default).
 - `MERCURY_START_ROW=12000`: choose the document-relative caret row before typing.
 - `MERCURY_KEY_DELAY=5`: milliseconds between typed characters (default 35).
 - `MERCURY_BACKSPACE=1`: delete 30 characters after typing.
@@ -169,6 +202,10 @@ No production window globals or profiling UI are added.
 - `MERCURY_DPR=1.25`: emulated pixel ratio (default 1.25).
 - `MERCURY_CPU_PROFILE=1`: include sampled CPU hotspots; use a separate run from
   normal CPU timing because sampling adds overhead.
+- `MERCURY_CPU_OUTPUT`: save the raw sampled Chrome CPU profile for inspection.
+- `MERCURY_BASELINE`: optional directory containing captured runtime files at their
+  repository-relative paths; the local server serves these in place of workspace
+  files for a comparison. Omit `AIOLI_URL` when using this local-server option.
 - `MERCURY_GPU_PROFILE=1`: enable timestamp queries when supported; this also adds
   instrumentation, so compare CPU costs using a separate run without it.
 - `MERCURY_OUTPUT`: write the complete JSON report to this path.

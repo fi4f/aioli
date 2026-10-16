@@ -54,6 +54,44 @@ registered promises resolving to the app:
 | `App.load(app, url, options)` | URL string, fetched by the app | Fresh bindings |
 | `App.patch(app, url, options)` | URL string, fetched by the app | Preserve compatible top-level data |
 
+## Embedded apps
+
+`App.embed(parent, options = {})` creates a child app synchronously without a DOM
+canvas. It shares the parent's GPU device and filesystem adapter, with its own
+scene, module cache, clock, input state, and graphics resources. Options are `w`,
+`h`, `si`, `is`, `ups`, and `trace`, with the same meanings as `App.new`.
+Load operations await the child's `ready` promise normally.
+
+```lisp
+(let game (App.embed app))
+(await (App.load game (fs-url "/project/main.lisp")))
+(let view (ui-app game))
+```
+
+`ui-app` lays out the child, draws its output, and forwards input. The host
+operations it uses are:
+
+| Operation | Contract |
+| --- | --- |
+| `App.resize(child, w, h)` | Set the viewport to positive integer pixel dimensions; configured inner resolution remains independent. |
+| `App.focus(child, focused)` | Enable keyboard/gamepad input; losing focus clears held input. |
+| `App.setVisible(child, visible)` | Suspend a hidden child's scheduling without changing explicit pause state. |
+| `App.sendInput(child, name, event)` | Forward keyboard, pointer, or wheel data; positions are local viewport pixels. Returns the dispatched snapshot, including `prevent-default`. |
+
+The child's `output` is a stable texture handle usable only by its parent.
+`outputRevision` advances when an image is published. `view` describes the
+configured inner size, scale, and letterbox offset. `position` places its viewport
+in parent inner pixels for native text-proxy positioning. The output is borrowed:
+disposing the child invalidates it without destroying the parent's GPU device.
+Disposing or abandoning the parent also releases all children. A custom host can
+set `child.onError`; the default records formatted diagnostics in `child.error`.
+
+Children start with an independent `state` dictionary. The editor explicitly
+shares `editor.state.project` with its game, allowing existing project saves and
+session restoration to preserve game state.
+
+## Source origins
+
 Source operations accept `{ sourceURL: url }` for relative imports and located
 errors. Omitted origin retains the committed scene's origin; while
 a replacement initializes, it does not inherit that candidate's temporary origin.
@@ -177,6 +215,10 @@ smooth.is = false; // Applied at the next frame boundary.
 
 `(configure)` includes the requested `is` setting. Smoothing changes request a
 fresh presentation of the existing image without resizing the rendering buffer.
+
+The editor's Project Settings pane saves Game app options (`w`, `h`, `si`, `is`,
+`ups`, and optional `trace`) in the project's `app` dictionary. The Game pane uses
+them at creation, reload, and restart. They do not change the editor's own canvas.
 
 Loading checks compilation, initialization, attach, and initial rendering
 before discarding the working scene. Overlapping loads use the latest request.
@@ -462,8 +504,8 @@ context or global current-app state is introduced.
 
 `index.html` loads `index.js` for Mercury, the primary application. The host loads
 `editor/main.lisp` as an ordinary Lisp component editor, themed through
-`editor/theme.lisp`. It provides independent F2 recovery and native failure
-diagnostics. Additional example hosts live in `examples/`; browser runtime tests
+the dictionary in `editor/theme.lisp`, selected in `ui.lisp`. It provides independent F2 recovery and native failure
+diagnostics. New projects start from `project/main.lisp`; browser runtime tests
 use the inert canvas fixture in `hg/tests/browser.html`.
 `App.listenInput(app, callback)` registers a disposable input route; its Lisp
 shorthand is `(listen-input callback)`. The callback receives the input name and

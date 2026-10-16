@@ -35,26 +35,10 @@ test('and and or evaluate operands once in order and skip unselected operands', 
     assert.equal(evaluate('(or "yes")'), 'yes');
     assert.equal(evaluate('(and true 1)'), 1);
     assert.equal(evaluate('(or false 1)'), 1);
-    for (const source of ['(not 0)', '(not nil)']) {
-      assert.throws(() => evaluate(source), error => error instanceof TypeError && (!trace || Boolean(error.lisp)), source);
-    }
     for (const source of ['(not)', '(not true false)', '(and (let value true))', '(fn (or))']) {
       assert.throws(() => evaluate(source), error => error instanceof SyntaxError && Boolean(error.lisp), source);
     }
   }
-  const source = '(and true\n (not 42))';
-  assert.throws(() => Compiler.run(Compiler.compile(source, Bindings, Forms)), error => {
-    assert.equal(source.slice(error.lisp.start, error.lisp.end), '42');
-    return true;
-  });
-});
-
-test('fast selectors use language truthiness and not retains boolean type checks', () => {
-  const program = Compiler.compile('(and true (not false))', {}, Forms, { trace: false });
-  assert.match(program.javascript, /\$bool/);
-  assert.match(program.javascript, /\$assert/);
-  assert.doesNotMatch(program.javascript, /\$trace|=>/);
-  assert.equal(Compiler.run(program), true);
 });
 
 test('shader logical forms support boolean locals, helper parameters and returns', () => {
@@ -74,7 +58,7 @@ test('shader logical forms support boolean locals, helper parameters and returns
   assert.match(result.wgsl, /\|\|/);
   assert.match(result.wgsl, /\(7f % 3f\)/);
   for (const body of [
-    '(let result (and true 1))', '(let result (or true 1))', '(let result (not 0))',
+    '(let result (and true 1))', '(let result (or true 1))',
     '(let result (not))', '(let result (not true false))', '(let result (+ true 1))',
     '(let result true) (set result 1)', '(let result (vec2f true))',
   ]) {

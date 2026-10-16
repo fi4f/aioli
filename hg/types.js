@@ -126,11 +126,7 @@ function __assertType__(value, type, label = 'Value') {
     default: {
       const info = NumericTypes.vectorInfo(type);
       if (!info) throw new TypeError(`Unknown type: ${type}`);
-      const components = Data.dataKind(value) === type ? Data.values(value) : null;
-      matches =
-        components !== null &&
-        components.length === info.size &&
-        components.every((component) => NumericTypes.scalarMatches(component, info.scalar));
+      matches = Data.vectorMatches(value, type);
     }
   }
   if (!matches) {
@@ -247,16 +243,6 @@ function __setComputedAccess__(value, key, replacement) {
 }
 
 function __access__(value, key, quoted = false) {
-  if (Data.isHostData(value)) return Data.get(value, key);
-  if (__bindings__.has(value)) {
-    if (key === '__type__') return '__binding__';
-    if (key === 'name') return __bindings__.get(value);
-    throw new TypeError(`Unknown binding field: ${key}`);
-  }
-  if (__textures__.has(value)) {
-    if (key === '__type__') return '__texture2d__';
-    return Data.get(value, key);
-  }
   const kind = Data.dataKind(value);
   if (
     kind === 'dict' ||
@@ -282,6 +268,16 @@ function __access__(value, key, quoted = false) {
     if (quoted || !/^-?\d+$/.test(key))
       throw new TypeError('Matrix dot access requires an unquoted column index');
     return Data.matrixColumn(value, Number(key));
+  }
+  if (Data.isHostData(value)) return Data.get(value, key);
+  if (__bindings__.has(value)) {
+    if (key === '__type__') return '__binding__';
+    if (key === 'name') return __bindings__.get(value);
+    throw new TypeError(`Unknown binding field: ${key}`);
+  }
+  if (__textures__.has(value)) {
+    if (key === '__type__') return '__texture2d__';
+    return Data.get(value, key);
   }
   throw new TypeError('Dot access requires a collection, struct, or vector');
 }

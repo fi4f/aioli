@@ -28,28 +28,30 @@ function __apply__(name, operation, arity, values) {
     throw new TypeError(`${name} expects one or more numeric operands`);
   if (!variadic && values.length !== arity)
     throw new TypeError(`${name} expects exactly ${arity} numeric operands`);
-  const shapes = values.map((value) =>
-    typeof value === 'number' ? null : NumericTypes.vectorInfo(Data.dataKind(value)),
-  );
-  if (values.some((value, i) => typeof value !== 'number' && !shapes[i]))
-    throw new TypeError(`${name} expects numeric scalars or vectors`);
-  const shape = shapes.find(Boolean);
-  values.forEach((value, i) => Types.assertType(value, shapes[i] ? Data.dataKind(value) : 'num'));
+  let shape = null, type = null, mismatch = false;
+  for (const value of values) {
+    if (typeof value === 'number') continue;
+    const kind = Data.dataKind(value), info = NumericTypes.vectorInfo(kind);
+    if (!info) throw new TypeError(`${name} expects numeric scalars or vectors`);
+    if (shape && (info.size !== shape.size || info.scalar !== shape.scalar)) mismatch = true;
+    if (!shape) { shape = info; type = kind; }
+  }
+  for (const value of values) Types.assertType(value, typeof value === 'number' ? 'num' : Data.dataKind(value));
   if (!shape) return NumericTypes.assertFinite(operation(...values), `${name} result`);
-  if (shapes.some((info) => info && (info.size !== shape.size || info.scalar !== shape.scalar)))
+  if (mismatch)
     throw new TypeError(`${name} vector dimensions and scalar families must match`);
   if (Object.hasOwn(__unary__, name) && shape.scalar !== 'f32')
     throw new TypeError(`${name} requires float vectors`);
-  values.forEach((value, i) => {
-    if (!shapes[i] && shape.scalar === 'f32') values[i] = Math.fround(value);
-    if (!shapes[i] && !NumericTypes.scalarMatches(values[i], shape.scalar))
+  for (let i = 0; i < values.length; i++) {
+    if (typeof values[i] !== 'number') continue;
+    if (shape.scalar === 'f32') values[i] = Math.fround(values[i]);
+    if (!NumericTypes.scalarMatches(values[i], shape.scalar))
       throw new TypeError(`${name} scalar must match the vector family`);
-  });
-  const type = Data.dataKind(values[shapes.findIndex(Boolean)]);
+  }
   return Data.vector(
     shape.size,
     Array.from({ length: shape.size }, (_, i) => {
-      const operands = values.map((value, j) => (shapes[j] ? Data.component(value, i) : value));
+      const operands = values.map(value => typeof value === 'number' ? value : Data.component(value, i));
       // WGSL abs preserves the smallest i32, whose positive magnitude is out of range.
       if (name === 'abs' && shape.scalar === 'i32' && operands[0] === -2147483648)
         return operands[0];

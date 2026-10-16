@@ -1,6 +1,7 @@
 import { Data } from './data.js';
 import { Promises } from './promises.js';
 import { Contracts } from './contracts.js';
+import { zip } from './zip.js';
 
 const __promise__ = (work) => Promises.registerPromise(Promise.resolve().then(work));
 function __bytes__(resource) {
@@ -21,6 +22,35 @@ function __base64__(bytes) {
     result += String.fromCharCode(...bytes.subarray(i, i + 16384));
   return btoa(result);
 }
+function __pickFiles__({ directory = false, multiple = false, accept = '' } = {}) {
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input');
+    input.type = 'file'; input.multiple = multiple; input.accept = accept;
+    if (directory) input.setAttribute('webkitdirectory', '');
+    input.style.display = 'none';
+    document.body.append(input);
+    input.addEventListener('cancel', () => { input.remove(); resolve(null); }, { once: true });
+    input.addEventListener('change', () => {
+      const files = Array.from(input.files);
+      input.remove(); resolve(files.length ? files : null);
+    }, { once: true });
+    try { input.click(); } catch (error) { input.remove(); reject(error); }
+  });
+}
+async function __readFile__(file, path) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  return { path, kind: 'file', resource: { status: 200, ok: true,
+    mime: file.type || 'application/octet-stream', encoding: 'base64', data: __base64__(bytes), size: bytes.length } };
+}
+function __download__(name, blob) {
+  const url = URL.createObjectURL(blob), link = document.createElement('a');
+  link.href = url; link.download = name;
+  document.body.append(link);
+  try { link.click(); } finally {
+    link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  return null;
+}
 export function resourceResponse(resource) {
   if (resource instanceof Response) return resource;
   const status = resource.status ?? 200;
@@ -36,6 +66,14 @@ export const Resources = Data.registerHostData({
     return true;
   },
   now: () => Date.now(),
+  copyText(text) {
+    return Promises.registerPromise((async () => {
+      if (typeof text !== 'string') throw new TypeError('copyText expects a string');
+      if (!globalThis.navigator?.clipboard?.writeText) throw new Error('Clipboard access is unavailable.');
+      await navigator.clipboard.writeText(text);
+      return true;
+    })());
+  },
   resolve: (reference, base) => new URL(reference, base).href,
   path: (url) => decodeURIComponent(new URL(url).pathname),
   directoryURL(url) {
@@ -107,52 +145,44 @@ export const Resources = Data.registerHostData({
     return resource;
   },
   openText() {
-    return __promise__(
-      () =>
-        new Promise((resolve, reject) => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = '.json,application/json';
-          input.style.display = 'none';
-          document.body.append(input);
-          input.addEventListener(
-            'cancel',
-            () => {
-              input.remove();
-              resolve(null);
-            },
-            { once: true },
-          );
-          input.addEventListener(
-            'change',
-            async () => {
-              try {
-                resolve(
-                  input.files[0]
-                    ? { name: input.files[0].name, text: await input.files[0].text() }
-                    : null,
-                );
-              } catch (error) {
-                reject(error);
-              } finally {
-                input.remove();
-              }
-            },
-            { once: true },
-          );
-          input.click();
-        }),
-    );
+    return Promises.registerPromise((async () => {
+      const files = await __pickFiles__({ accept: '.json,application/json' });
+      return files ? { name: files[0].name, text: await files[0].text() } : null;
+    })());
+  },
+  openFiles(directory = false) {
+    return Promises.registerPromise((async () => {
+      try {
+        if (directory && globalThis.showDirectoryPicker) {
+          const root = await globalThis.showDirectoryPicker({ mode: 'read' }), entries = [];
+          const visit = async (handle, path) => {
+            if (handle.kind === 'file') entries.push(await __readFile__(await handle.getFile(), path));
+            else {
+              entries.push({ path, kind: 'directory' });
+              for await (const child of handle.values()) await visit(child, `${path}/${child.name}`);
+            }
+          };
+          await visit(root, root.name);
+          return entries;
+        }
+        const files = await __pickFiles__({ directory, multiple: true });
+        return files ? await Promise.all(files.map(file => __readFile__(file,
+          directory ? file.webkitRelativePath : file.name))) : null;
+      } catch (error) {
+        if (error.name === 'AbortError') return null;
+        throw error;
+      }
+    })());
   },
   download(name, text) {
-    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = name;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    return null;
+    return __download__(name, new Blob([text], { type: 'application/json' }));
+  },
+  downloadFile(name, resource) {
+    return __download__(name, new Blob([__bytes__(resource)], { type: resource.mime }));
+  },
+  downloadArchive(name, entries) {
+    return __download__(name, zip(entries.map(entry => ({ path: entry.path,
+      directory: entry.kind === 'directory', modified: entry.modified,
+      bytes: entry.kind === 'file' ? __bytes__(entry.resource) : undefined }))));
   },
 });

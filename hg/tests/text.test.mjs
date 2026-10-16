@@ -201,7 +201,7 @@ test('text captures outer values, executes ordinary statements, and snapshots im
   for (const trace of [true, false]) {
     const events = [], red = Bindings.vec3(1, 0, 0);
     const result = evaluate(`(let name "Ada") (let n 0)
-      (let label (text (font "seri$") (size 32) (span "Hello ")
+      (let label (text (font "serif") (size 32) (span "Hello ")
         (if true { (fill red) (set n 2) (print name) })
         (span name) (line) (span (str n))))
       (set name "Changed") (set red.x 0) label`, trace, { red, print: value => events.push(value) });
@@ -345,7 +345,7 @@ test('text layout and drawing use weight and italic and preserve shaping across 
   Object.defineProperty(globalThis, 'OffscreenCanvas', { configurable: true, value: class { getContext() { return context; } } });
   t.after(() => previous ? Object.defineProperty(globalThis, 'OffscreenCanvas', previous) : delete globalThis.OffscreenCanvas);
   let snapshot;
-  evaluate('(text (font "seri$") (size 20) (span "A") (weight bold) (italic true) (span "B") (fill (vec3 1 0 0)) (span "C"))', true, {}, {
+  evaluate('(text (font "serif") (size 20) (span "A") (weight bold) (italic true) (span "B") (fill (vec3 1 0 0)) (span "C"))', true, {}, {
     textRenderer: value => { snapshot = value; return null; },
   });
   const raster = Text.rasterizeText(snapshot);

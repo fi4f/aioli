@@ -1,6 +1,8 @@
 ; The portable project format and saved-state schema are editable Lisp.
 (let Fs (await (import "./vfs.lisp")))
 (let Vfs Fs.FileSystem)
+(let BufferModule (await (import "./buffer.lisp")))
+(let Buffer BufferModule.Buffer)
 (let capture (fn (state)
   (let buffer (dict))
   (if state.editor {
@@ -36,15 +38,18 @@
   })
   (let committed (if entry (await (Vfs.readText fs path)) ""))
   (let source (if (str? buffer.draft) buffer.draft committed))
-  (set state.editor (dict "path" (if entry path "") "source" source "saved-source" committed
-    "file-revision" (if entry entry.revision 0) "anchor" (min (or buffer.anchor 0) (len source))
-    "head" (min (or buffer.head 0) (len source)) "scroll" (or buffer.scroll 0)
-    "scroll-x" (or buffer.scroll-x 0) "version" 0 "composing" false "pending" (not (= source committed)) "dirty" (not (= source committed))
-    "elapsed" 0 "error" "" "auto" (if (= buffer.auto nil) true buffer.auto) "focused" (bool buffer.focused) "locked" (not entry)
-    "saving" false "switching" false "reloading" false "need-reload" false))
+  (set state.editor (Buffer.new (if entry path "") committed (if entry entry.revision 0)))
+  (set state.editor.source source)
+  (Buffer.changed state.editor)
+  (set state.editor.anchor (min (or buffer.anchor 0) (len source)))
+  (set state.editor.head (min (or buffer.head 0) (len source)))
+  (set state.editor.scroll (or buffer.scroll 0))
+  (set state.editor.scroll-x (or buffer.scroll-x 0))
+  (set state.editor.auto (if (= buffer.auto nil) true buffer.auto))
+  (set state.editor.focused (bool buffer.focused))
   (let files (or editor.files (dict)))
   (set state.editor.files (dict "selected" (or files.selected "/project") "scroll" (or files.scroll 0)
-    "expanded" (or files.expanded (dict "/editor" true "/project" true))
+    "expanded" (or files.expanded (dict))
     "mode" "" "busy" false "confirm-delete" "" "error" ""))
   (let preview (or editor.preview (dict)))
   (set state.editor.preview-view (dict "path" (or preview.path "") "image" nil "revision" 0
@@ -55,7 +60,7 @@
 ; Tab checkpoints are synchronous and independent of pending filesystem writes.
 ; Identity changes on project replacement, so an old tab cannot restore another project.
 (let __session-identity__ (fn (fs)
-  (list (or fs.project.generation 0) (get fs.entries."/").modified fs.project.entry fs.project.assetURL)))
+  (list (or fs.project.generation 0) (get fs.entries."/").modified)))
 (let newSession (fn (storage fs)
   (dict "storage" storage "fs" fs "identity" (__session-identity__ fs) "source" "")))
 (let checkpoint (fn (session saved)
@@ -70,14 +75,37 @@
     (let source (Storage.readSession storage "editor-state"))
     (if (= source nil) (return nil))
     (let saved (from-json source))
+    ; Older checkpoints also included entry/assetURL; settings are not project identity.
     (if (and (dict? saved) (= saved.format "mercury-session") (= saved.version 1)
-      (= saved.identity (__session-identity__ fs)) (dict? saved.state)) saved.state else nil)
+      (list? saved.identity) (in (len saved.identity) (list 2 4))
+      (= (list (get saved.identity.0) (get saved.identity.1)) (__session-identity__ fs))
+      (dict? saved.state)) saved.state else nil)
   } catch () nil)))
+(let appOptions (fn (options)
+  (if (= options nil) (set options (dict)))
+  (Resources.require (dict? options) "App configuration must be a dictionary.")
+  (for key (keys options)
+    (Resources.require (in key (list "w" "h" "si" "is" "ups" "trace")) $"Unknown app setting: {key}"))
+  (let result (dict "w" nil "h" nil "si" nil "is" false "ups" 60 "trace" nil))
+  (for key (keys options) (put result key (get options.(get key))))
+  (for key (list "w" "h") {
+    (let value (get result.(get key)))
+    (Resources.require (or (= value nil) (and (num? value) (> value 0)
+      (<= value 9007199254740991) (= (% value 1) 0)))
+      $"App {key} must be a positive integer, or blank for automatic sizing.")
+  })
+  (Resources.require (or (= result.si nil) (and (num? result.si) (>= result.si 0)))
+    "Scale increment must be nonnegative, or blank for continuous scaling.")
+  (Resources.require (= (type result.is) "__bool__") "Image smoothing must be a boolean.")
+  (Resources.require (or (= result.trace nil) (= (type result.trace) "__bool__")) "Execution tracing must be a boolean or unset.")
+  (Resources.require (and (num? result.ups) (> result.ups 0)) "Updates per second must be positive.")
+  ; Check finite JSON numbers and the scheduler's finite update interval.
+  (/ 1 result.ups)
+  (from-json (to-json result))))
 (let snapshot (async (fn (fs state)
   (await fs.__tail__)
   (let files (dict)) (let directories (list))
   (for path (Strings.sorted (keys fs.entries)) {
-    (Resources.require (or (= path "/") (Vfs.contains "/editor" path) (Vfs.contains "/project" path)) "Project files must be inside /editor or /project")
     (let entry (Vfs.stat fs path))
     (if (= entry.kind "directory") (insert directories path) else {
       (let resource (get fs.__contents__.(get path)))
@@ -86,13 +114,26 @@
   })
   ; Native JSON rejects unsupported live handles and non-finite numeric data.
   (to-json (dict "format" "mercury-project" "version" 1 "editor" "/editor/main.lisp"
-    "entry" (or fs.project.entry "/project/main.lisp") "assetURL" fs.assetURL
+    "entry" (or fs.project.entry "/project/main.lisp") "app" (appOptions fs.project.app)
     "directories" directories "files" files "state" (capture state))))))
 (let saveState (async (fn (fs state)
   (await fs.__tail__)
   (let metadata (copy fs.project))
   (set metadata.state (from-json (to-json (capture state))))
-  (set metadata.assetURL fs.assetURL)
+  (remove-key metadata "assetURL")
+  (await (Vfs.setProject fs metadata))
+  metadata)))
+(let configure (async (fn (fs settings)
+  (await fs.__tail__)
+  (let entry settings.entry)
+  (let file (if (str? entry) (Vfs.stat fs entry) nil))
+  (Resources.require (and (str? entry) (= entry (Vfs.normalize entry))
+    (Vfs.contains "/project" entry) file file.text)
+    "Entry file must be an existing text file inside /project.")
+  (let metadata (copy fs.project))
+  (set metadata.entry entry)
+  (remove-key metadata "assetURL")
+  (set metadata.app (appOptions settings.app))
   (await (Vfs.setProject fs metadata))
   metadata)))
 (let open (async (fn (fs source)
@@ -102,14 +143,12 @@
   (Resources.require (= document.editor "/editor/main.lisp") "Unsupported editor entry point")
   (let entries (dict)) (let contents (dict))
   (for path document.directories {
-    (Resources.require (and (= path (Vfs.normalize path))
-      (or (= path "/") (Vfs.contains "/editor" path) (Vfs.contains "/project" path))) "Invalid project directory")
+    (Resources.require (= path (Vfs.normalize path)) "Invalid project directory")
     (Resources.require (not (in path entries)) "Duplicate project directory")
     (put entries path (dict "path" path "name" (Vfs.name path) "kind" "directory" "revision" 1 "size" 0 "modified" (Resources.now)))
   })
   (for path (keys document.files) {
-    (Resources.require (and (= path (Vfs.normalize path)) (not (in path entries))
-      (or (Vfs.contains "/editor" path) (Vfs.contains "/project" path))) "Invalid project file")
+    (Resources.require (and (= path (Vfs.normalize path)) (not (= path "/")) (not (in path entries))) "Invalid project file")
     (let file (get document.files.(get path)))
     (Resources.require (and (dict? file) (= (type file.text) "__bool__") (str? file.mime)) "Invalid file metadata")
     (let resource (Resources.validate file))
@@ -127,10 +166,9 @@
     (if (= path "/") (continue))
     (Resources.require (= (get entries.(Vfs.parent path)).kind "directory") "Missing parent directory")
   })
-  (let asset-url (Resources.directoryURL (or document.assetURL fs.assetURL)))
-  (let metadata (dict "entry" entry "assetURL" asset-url "state" document.state))
+  (let metadata (dict "entry" entry "app" (appOptions document.app) "state" document.state))
   (await (Vfs.replace fs entries contents metadata))
-  (set fs.project metadata) (set fs.assetURL asset-url)
+  (set fs.project metadata)
   document.state)))
 (let create (async (fn (fs defaults)
   (let files (dict)) (let directories (list "/" "/editor" "/project"))
@@ -151,8 +189,10 @@
     (put files "/project/main.lisp" (dict "mime" resource.mime "encoding" resource.encoding "data" resource.data "text" true))
   })
   (await (open fs (to-json (dict "format" "mercury-project" "version" 1
-    "editor" "/editor/main.lisp" "entry" "/project/main.lisp" "assetURL" fs.assetURL
-    "directories" directories "files" files "state" (dict)))))
+    "editor" "/editor/main.lisp" "entry" "/project/main.lisp"
+    "directories" directories "files" files "state" (dict "editor"
+      (dict "buffer" (dict "path" "/project/main.lisp")
+        "files" (dict "selected" "/project/main.lisp" "expanded" (dict "/" true))))))))
   true)))
 
 (let migrate (async (fn (fs files defaults)
@@ -168,6 +208,6 @@
   (await (create fs converted)))))
 (let resetEditor (fn (fs files)
   (Vfs.install fs files $"/editor/backups/{(Resources.now)}")))
-(let Project (dict "capture" capture "restore" restore "snapshot" snapshot "saveState" saveState
+(let Project (dict "capture" capture "restore" restore "snapshot" snapshot "saveState" saveState "configure" configure "appOptions" appOptions
   "newSession" newSession "checkpoint" checkpoint "sessionState" sessionState
   "open" open "create" create "resetEditor" resetEditor "migrate" migrate))

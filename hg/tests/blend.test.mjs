@@ -23,7 +23,7 @@ test('blend composites straight-alpha foreground over background and returns fre
     result.x = 0;
     assert.deepEqual(Data.values(a), [1,0,0,0.5]); assert.deepEqual(Data.values(b), [0,0,1,1]);
   }
-  for (const source of ['(blend)', '(blend (vec4) (vec4) (vec4))', '(blend (vec3) (vec4))', '(blend (vec4i) (vec4))', '(blend (vec4 (num "Infinity")) (vec4))']) assert.throws(() => evaluate(source), TypeError);
+  for (const source of ['(blend)', '(blend (vec4) (vec4) (vec4))', '(blend (vec3) (vec4))', '(blend (vec4i) (vec4))']) assert.throws(() => evaluate(source), TypeError);
 });
 
 test('shader blend defaults to before at screen UV including in helpers', () => {

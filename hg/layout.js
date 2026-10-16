@@ -1,9 +1,10 @@
 import { Data } from './data.js';
 import { Types } from './types.js';
+import { NumericTypes } from './numeric-types.js';
 
 // Rectangle geometry shared by text rasterization and editable Lisp layout.
 // Flow, wrapping, component measurement, and interaction stay with their callers.
-function __padding__(value = 0) {
+function __paddingValues__(value) {
   const values =
     typeof value === 'number'
       ? [value, value]
@@ -12,17 +13,21 @@ function __padding__(value = 0) {
         : null;
   if (values?.length !== 2 || values.some((v) => !Number.isFinite(v) || v < 0))
     throw new TypeError('padding expects a finite nonnegative scalar or vec2');
-  return Data.vector(2, values);
+  for (let i = 0; i < 2; i++) values[i] = NumericTypes.convertComponent(values[i], 'f32');
+  return values;
+}
+function __padding__(value = 0) {
+  return Data.numericFromComponents('vec2f', __paddingValues__(value));
 }
 
 function __inset__(bounds, padding = 0) {
   Types.assertType(bounds, 'vec4f', 'rectangle bounds');
-  const pad = __padding__(padding);
+  const [x, y] = __paddingValues__(padding);
   return Data.vector(4, [
-    bounds.x + pad.x,
-    bounds.y + pad.y,
-    Math.max(0, bounds.z - 2 * pad.x),
-    Math.max(0, bounds.w - 2 * pad.y),
+    bounds.x + x,
+    bounds.y + y,
+    Math.max(0, bounds.z - 2 * x),
+    Math.max(0, bounds.w - 2 * y),
   ]);
 }
 

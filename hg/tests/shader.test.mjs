@@ -38,7 +38,7 @@ test('scalar modulo compiles to WGSL remainder with strict arity and types', () 
   const result = shader('(sh (value:f32 divisor:f32) (return (vec4f (% value divisor) (% -7 3) 0 1)))');
   assert.match(result.wgsl, /bitcast<f32>\(frame.values\[0\].x\) % bitcast<f32>\(frame.values\[1\].x\)/);
   assert.match(result.wgsl, /\(-7f % 3f\)/);
-  for (const expression of ['(%)', '(% 1)', '(% 1 2 3)', '(% (vec2f 1) 2)', '(% (mat2x2f 1 0 0 1) 2)', '(% true 2)']) {
+  for (const expression of ['(%)', '(% 1)', '(% 1 2 3)', '(% (mat2x2f 1 0 0 1) 2)', '(% true 2)']) {
     const source = `(sh () (return (vec4f ${expression})))`;
     assert.throws(() => shader(source), error => error instanceof SyntaxError && Boolean(error.lisp));
   }

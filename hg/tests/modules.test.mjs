@@ -64,7 +64,7 @@ test('module namespaces expose live writable top-level bindings and preserve cap
 test('imports resolve from their own script and share initialization, state and patches', async () => {
   for (const trace of [true, false]) {
     const files = {
-      'https://example.test/app/lib/math.lisp': '(record "math") (let value (await (async 3))) (let read (fn () (return value)))',
+      'https://example.test/app/lib/math.lisp': '(record "math") (let value (await (promise 3))) (let read (fn () (return value)))',
       'https://example.test/app/lib/nested.lisp': '(let math (await (import "./math.lisp"))) (let read (fn () (return (math.read)))) (let load-later (async (fn (path) (return (await (import path))))))',
     };
     const { runtime, requests, events } = harness(files, { trace });

@@ -16,6 +16,7 @@ import { Trace } from './trace.js';
 import { Tokenizer } from './tokenize.js';
 import { SceneMemory } from './scene-memory.js';
 import { Preview } from './preview.js';
+import { Embedded } from './embedded.js';
 
 const __owners__ = new WeakMap();
 
@@ -36,6 +37,7 @@ function __appData__({
   app.onError = onError;
   app.bindings = { ...Bindings, ...bindings };
   app.textProxies = new Set();
+  app.__children__ = new Set();
   app.__inputRoutes__ = new Set();
   app.__tokenizer__ = Tokenizer.new();
   app.outerCanvas = null;
@@ -119,46 +121,12 @@ export const AppCore = {
       app.graphics = graphics;
       app.input = app.services.input.new(outerCanvas, {
         coordinates: (x, y) => app.services.display.toInner(display, x, y),
-        emit: (name, event) => {
-          if (app.inputFailed || app.failed || app.attaching) return;
-          try {
-            for (const callback of [...app.__inputRoutes__].reverse()) {
-              Scheduler.invoke(app, (value) => callback(name, value), event);
-              if (event.handled) break;
-            }
-            if (!event.handled) Scheduler.invoke(app, app.scene?.[name], event);
-            Scheduler.requestRender(app);
-          } catch (error) {
-            app.inputFailed = true;
-            Scheduler.fail(app, error);
-          }
-        },
+        emit: (name, event) => AppCore.dispatchInput(app, name, event),
       });
       Object.assign(app.bindings, graphics.bindings);
       Object.assign(app.bindings, app.input.bindings);
       Object.assign(app.bindings, display.bindings);
-      app.bindings['text-proxy'] = (callback) => {
-        const proxy = TextProxy.new(
-          outerCanvas,
-          (edit) => {
-            if (app.destroyed || app.failed) return;
-            const result = callback(edit);
-            Scheduler.requestRender(app);
-            return result;
-          },
-          {
-            toOuter: (x, y) => app.services.display.toOuter(display, x, y),
-            onEdit: (edit) => Tokenizer.noteEdit(app.__tokenizer__, edit),
-            onError: (error) => {
-              app.inputFailed = true;
-              Scheduler.fail(app, error);
-            },
-          },
-        );
-        app.textProxies.add(proxy);
-        proxy.__onDispose__ = () => app.textProxies.delete(proxy);
-        return proxy;
-      };
+      AppCore.bindTextInput(app, outerCanvas, (x, y) => app.services.display.toOuter(display, x, y));
       return app;
     } catch (error) {
       if (__owners__.get(outerCanvas) === app) __owners__.delete(outerCanvas);
@@ -167,6 +135,41 @@ export const AppCore = {
       app.display = null;
       throw error;
     }
+  },
+
+  dispatchInput(app, name, event) {
+    if (app.inputFailed || app.failed || app.attaching) return;
+    try {
+      for (const callback of [...app.__inputRoutes__].reverse()) {
+        Scheduler.invoke(app, (value) => callback(name, value), event);
+        if (event.handled) break;
+      }
+      if (!event.handled) Scheduler.invoke(app, app.scene?.[name], event);
+      Scheduler.requestRender(app);
+    } catch (error) {
+      app.inputFailed = true;
+      Scheduler.fail(app, error);
+    }
+  },
+  bindTextInput(app, outerCanvas, toOuter) {
+    app.bindings['text-proxy'] = (callback) => {
+      const proxy = TextProxy.new(outerCanvas, (edit) => {
+        if (app.destroyed || app.failed) return;
+        const result = callback(edit);
+        Scheduler.requestRender(app);
+        return result;
+      }, {
+        toOuter,
+        onEdit: (edit) => Tokenizer.noteEdit(app.__tokenizer__, edit),
+        onError: (error) => {
+          app.inputFailed = true;
+          Scheduler.fail(app, error);
+        },
+      });
+      app.textProxies.add(proxy);
+      proxy.__onDispose__ = () => app.textProxies.delete(proxy);
+      return proxy;
+    };
   },
 
   compile(app, source, options) {
@@ -332,6 +335,8 @@ export const AppCore = {
   destroy(app, callbacks = true) {
     if (app.destroyed) return;
     app.destroyed = true;
+    for (const child of [...app.__children__]) AppCore.destroy(child, callbacks);
+    if (app.parent) Embedded.release(app);
     SceneMemory.clear(app.__reflection__);
     const preparation = app.reloadPreparation;
     app.reloadPreparation = null;
@@ -392,6 +397,11 @@ export const App = Data.registerHostData({
       app.__inputRoutes__.delete(callback);
     };
   },
+  embed: (parent, options = {}) => Embedded.create(parent, options),
+  resize: (app, w, h) => Embedded.resize(app, w, h),
+  focus: (app, focused) => Embedded.focus(app, focused),
+  setVisible: (app, visible) => Embedded.setVisible(app, visible),
+  sendInput: (app, name, event) => Embedded.sendInput(app, name, event),
   new(options = {}) {
     if (!options || typeof options !== 'object' || Array.isArray(options))
       throw new TypeError('App.new expects options');
@@ -571,29 +581,18 @@ function __innerOptions__(app, options) {
 }
 
 function __sourceRequest__(app, source, options, replace, operation) {
-  return Promises.registerPromise(
-    Promise.resolve().then(async () => {
-      if (!__isApp__(app)) throw new TypeError(`App.${operation} expects app data`);
-      if (typeof source !== 'string') throw new TypeError(`App.${operation} expects source text`);
-      if (!options || typeof options !== 'object' || Array.isArray(options))
-        throw new TypeError(`App.${operation} expects source options`);
-      for (const key of Object.keys(options))
-        if (key !== 'sourceURL') throw new TypeError(`Unknown ${operation} option: ${key}`);
-      const generation = (app.requestGeneration = (app.requestGeneration ?? 0) + 1);
-      await app.ready;
-      if (app.destroyed) throw new Error('Mercury app has been disposed');
-      if (generation !== app.requestGeneration) return app;
-      __prepareRequest__(app);
-      await replace(
+  return __request__(app, operation, () => {
+    if (typeof source !== 'string') throw new TypeError(`App.${operation} expects source text`);
+    __requestOptions__(options, operation, 'source');
+    return () =>
+      replace(
         app,
         source,
         options.sourceURL ??
           SceneMemory.sourceURL(app.__reflection__.scene) ??
           (app.sourceURL || undefined),
       );
-      return app;
-    }),
-  );
+  });
 }
 
 function __prepareRequest__(app) {
@@ -607,28 +606,41 @@ function __prepareRequest__(app) {
 }
 
 function __urlRequest__(app, path, options, replace, operation) {
+  return __request__(app, operation, () => {
+    if (typeof path !== 'string' || !path.length)
+      throw new TypeError(`App.${operation} expects a nonempty URL string`);
+    __requestOptions__(options, operation, 'URL');
+    const url = Modules.resolve(
+      app.modules,
+      path,
+      options.sourceURL ?? SceneMemory.sourceURL(app.__reflection__.scene) ?? app.modules.baseURL,
+    );
+    return async (current) => {
+      const source = await Modules.read(app.modules, url);
+      if (current()) await replace(app, source, url);
+    };
+  });
+}
+
+function __requestOptions__(options, operation, kind) {
+  if (!options || typeof options !== 'object' || Array.isArray(options))
+    throw new TypeError(`App.${operation} expects ${kind} options`);
+  for (const key of Object.keys(options))
+    if (key !== 'sourceURL') throw new TypeError(`Unknown ${operation} option: ${key}`);
+}
+
+// Resolve inputs before readiness; all replacements share readiness and supersession.
+function __request__(app, operation, prepare) {
   return Promises.registerPromise(
     Promise.resolve().then(async () => {
       if (!__isApp__(app)) throw new TypeError(`App.${operation} expects app data`);
-      if (typeof path !== 'string' || !path.length)
-        throw new TypeError(`App.${operation} expects a nonempty URL string`);
-      if (!options || typeof options !== 'object' || Array.isArray(options))
-        throw new TypeError(`App.${operation} expects URL options`);
-      for (const key of Object.keys(options))
-        if (key !== 'sourceURL') throw new TypeError(`Unknown ${operation} option: ${key}`);
-      const url = Modules.resolve(
-        app.modules,
-        path,
-        options.sourceURL ?? SceneMemory.sourceURL(app.__reflection__.scene) ?? app.modules.baseURL,
-      );
+      const replace = prepare();
       const request = (app.requestGeneration = (app.requestGeneration ?? 0) + 1);
       await app.ready;
       if (app.destroyed) throw new Error('Mercury app has been disposed');
       if (request !== app.requestGeneration) return app;
       const generation = __prepareRequest__(app);
-      const source = await Modules.read(app.modules, url);
-      if (request !== app.requestGeneration || generation !== app.loadGeneration) return app;
-      await replace(app, source, url);
+      await replace(() => request === app.requestGeneration && generation === app.loadGeneration);
       return app;
     }),
   );

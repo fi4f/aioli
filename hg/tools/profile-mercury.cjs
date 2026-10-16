@@ -12,7 +12,8 @@ async function main() {
       if (!file.startsWith(root + path.sep)) throw new Error('Invalid path');
       const mime = { '.html': 'text/html', '.js': 'text/javascript', '.lisp': 'text/plain' };
       response.setHeader('Content-Type', mime[path.extname(file)] || 'application/octet-stream');
-      response.end(await fs.readFile(file));
+      const baseline = process.env.MERCURY_BASELINE && path.resolve(process.env.MERCURY_BASELINE, `.${name}`);
+      response.end(await (baseline ? fs.readFile(baseline).catch(() => fs.readFile(file)) : fs.readFile(file)));
     } catch {
       response.writeHead(404).end();
     }
@@ -38,8 +39,8 @@ async function main() {
           `const app = hg.App.new({ trace: ${process.env.MERCURY_TRACE === '1'}, c: canvas });`,
         );
       source = source.replace(
-        "app.state['pixel-ratio'] = ratio;",
-        "window.profileApp = app;\napp.state['pixel-ratio'] = ratio;",
+        'host.app = app;',
+        'host.app = app; window.profileApp = app;',
       );
       await route.fulfill({ response, body: source });
     });
@@ -96,8 +97,8 @@ async function main() {
     try {
       await page.waitForFunction(
         () =>
-          window.profileApp?.scene &&
-          document.querySelector('[data-hg-text-proxy]')?.value.length > 0,
+          window.profileApp?.scene && !profileApp.attaching &&
+          profileApp.state.editor.source.length > 0,
       );
     } catch (error) {
       console.error(
@@ -111,15 +112,22 @@ async function main() {
       throw error;
     }
     await page.evaluate(
-      async (extraLines) => {
+      async ({ extraLines, file }) => {
         const { App } = await import('/hg/app.js');
+        const { TextProxy } = await import('/hg/text-proxy.js');
         const app = profileApp;
         // Chrome's emulated DPR does not emulate devicePixelContentBoxSize.
         app.outerCanvas.width = Math.round(innerWidth * devicePixelRatio);
         app.outerCanvas.height = Math.round(innerHeight * devicePixelRatio);
         app.state.editor.auto = false;
+        await App.exec(app, `(open-file ${JSON.stringify(file)})`);
         if (extraLines)
           app.state.editor.source += '\n' + '; larger document sample\n'.repeat(extraLines);
+        const sourceNode = App.exec(app, 'source-node');
+        TextProxy.sync(sourceNode.state.proxy, app.state.editor.source, 0, 0);
+        sourceNode.state.document = TextProxy.snapshot(sourceNode.state.proxy);
+        window.profileSourceLength = app.state.editor.source.length;
+        App.exec(app, 'ui-invalidate')(App.exec(app, 'desktop'));
         let depth = 0;
         const timed =
           (name, callback) =>
@@ -229,7 +237,7 @@ async function main() {
         };
         window.profileDesktop = App.read(app, App.inspect(app).desktop);
       },
-      Number(process.env.MERCURY_EXTRA_LINES || 0),
+      { extraLines: Number(process.env.MERCURY_EXTRA_LINES || 0), file: process.env.MERCURY_FILE || '/editor/main.lisp' },
     );
     await page.waitForTimeout(1500);
     const profiler =
@@ -259,20 +267,28 @@ async function main() {
             max: sorted.at(-1) ?? null,
           };
         };
-        return Object.fromEntries(
+        return { document: { length: profileApp.state.editor.source.length, path: profileApp.state.editor.path,
+            head: profileApp.state.editor.head }, ...Object.fromEntries(
           Object.entries(profileCosts).map(([name, values]) => [name, summary(values)]),
-        );
+        ) };
       });
     }
     await phase('idle', () => page.waitForTimeout(1500));
     await phase('hover', async () => {
       for (let i = 0; i < 60; i++) await page.mouse.move(60 + i * 10, 16);
     });
-    await page.mouse.click(70, 120);
+    await page.evaluate(async () => {
+      const { App } = await import('/hg/app.js');
+      const { TextProxy } = await import('/hg/text-proxy.js');
+      const source = App.exec(profileApp, 'source-node');
+      App.exec(profileApp, 'ui-focus')(profileDesktop, App.exec(profileApp, 'ui-path')(profileDesktop.root, source));
+      TextProxy.focus(source.state.proxy);
+    });
     if (process.env.MERCURY_START_ROW)
       await page.evaluate(async (row) => {
         const { TextProxy } = await import('/hg/text-proxy.js');
-        const proxy = [...profileApp.textProxies][0];
+        const { App } = await import('/hg/app.js');
+        const proxy = App.exec(profileApp, 'source-node').state.proxy;
         TextProxy.select(proxy, row, 0);
         TextProxy.focus(proxy);
       }, Number(process.env.MERCURY_START_ROW));
@@ -285,6 +301,10 @@ async function main() {
         for (let i = 0; i < 30; i++) await page.keyboard.press('Backspace');
       await page.waitForTimeout(100);
     });
+    const expectedLength = await page.evaluate(() => profileSourceLength) + 51 -
+      (process.env.MERCURY_BACKSPACE === '1' ? 30 : 0);
+    if (results.typing.document.length !== expectedLength)
+      throw new Error(`Typing changed the wrong document: ${JSON.stringify(results.typing.document)}, expected ${expectedLength} characters`);
     await phase('drag', async () => {
       await page.mouse.move(80, 53);
       await page.mouse.down();
@@ -425,15 +445,20 @@ async function main() {
     }
     if (profiler) {
       const { profile } = await profiler.send('Profiler.stop');
+      if (process.env.MERCURY_CPU_OUTPUT)
+        await fs.writeFile(process.env.MERCURY_CPU_OUTPUT, JSON.stringify(profile));
       const nodes = new Map(profile.nodes.map((node) => [node.id, node.callFrame])),
         durations = new Map();
-      profile.samples.forEach((id, index) =>
-        durations.set(id, (durations.get(id) || 0) + profile.timeDeltas[index]),
-      );
+      profile.samples.forEach((id, index) => {
+        const frame = nodes.get(id), key = JSON.stringify([frame.functionName, frame.url, frame.lineNumber]);
+        const entry = durations.get(key) || { ...frame, ms: 0 };
+        entry.ms += profile.timeDeltas[index] / 1000;
+        durations.set(key, entry);
+      });
       results.hot = [...durations]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 20)
-        .map(([id, time]) => ({ ...nodes.get(id), ms: time / 1000 }));
+        .map(([, entry]) => entry)
+        .sort((a, b) => b.ms - a.ms)
+        .slice(0, 30);
     }
     results.environment = await page.evaluate(() => ({
       trace: profileApp.trace,

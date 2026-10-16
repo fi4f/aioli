@@ -2,6 +2,9 @@
 ; interaction policy can all be edited here or replaced through its live exports.
 ; Component namespaces receive (ui node ...) explicitly; nodes are plain dicts.
 
+; Select the editor theme here. Theme files export a single theme dictionary.
+(let ui-theme-data (get (await (import "../editor/theme.lisp")).theme))
+
 (let ui-config (fn (&rest props)
   (dict "kind" "config" "props" (dict (if (= (len props) 1) (get props.0) props)))))
 ; Compatibility for saved projects. New construction uses individual configuration forms.
@@ -26,7 +29,7 @@
 (let ui-on (fn (name handler)
   (dict "kind" "handler" "name" (name : str) "handler" (handler : function))))
 
-(let __ui-input-names__ (list "pointerdown" "pointermove" "pointerup" "pointercancel"
+(let __ui-input-names__ (list "pointerdown" "pointermove" "pointerup" "pointercancel" "pointerenter"
   "pointerleave" "wheel" "keydown" "keyup"))
 
 (let __ui-options__ (fn (node items)
@@ -97,12 +100,15 @@
     (return color))
   (vec4)))
 
-(let __ui-image-shader__ (sh (image:texture2d bounds:vec4 clip:vec4)
+(let __ui-image-shader__ (sh (image:texture2d bounds:vec4 clip:vec4 smoothing:f32)
   (let p (- xy bounds.xy))
-  (if (and (>= p.x 0) (>= p.y 0) (< p.x image.w) (< p.y image.h)
+  (if (and (>= p.x 0) (>= p.y 0) (< p.x bounds.z) (< p.y bounds.w)
     (>= xy.x clip.x) (>= xy.y clip.y)
     (< xy.x (+ clip.x clip.z)) (< xy.y (+ clip.y clip.w)))
-    (return (sample image (/ p image.wh))))
+    {
+      (if (> smoothing 0) (return (sample image (/ p bounds.zw))))
+      (return (sample-nearest image (/ p bounds.zw)))
+    })
   (vec4)))
 
 (let __ui-border-shader__ (sh (bounds:vec4 clip:vec4 color:vec4 thickness:f32)
@@ -119,7 +125,7 @@
 (let __ui-rectangle__ (fn (context bounds clip color)
   (layer context (ui-intersect bounds clip) __ui-rectangle-shader__ bounds clip color)))
 (let __ui-image__ (fn (context image bounds clip)
-  (layer context (ui-intersect bounds clip) __ui-image-shader__ image bounds clip)))
+  (layer context (ui-intersect bounds clip) __ui-image-shader__ image bounds clip 1)))
 
 (let __ui-icon-shader__ (sh (image:texture2d bounds:vec4 clip:vec4 color:vec4)
   (if (and (>= xy.x bounds.x) (>= xy.y bounds.y)
@@ -217,7 +223,7 @@
   })
   (if (not (= previous node.state.marquee)) (ui-repaint ui))))
 
-(let ui-label-component (dict
+(let ui-label-component (dict "theme-key" "label"
   "measure" __ui-label-measure__ "paint" __ui-label-paint__ "tick" __ui-marquee-tick__))
 
 (let ui-label (fn (value &rest options)
@@ -264,7 +270,7 @@
     (let placed (Layout.align bounds (* natural factor) (or node.props.h-align "center") (or node.props.v-align "center")))
     (ui-icon-image context node.state.image placed node.clip node.props.color ui.scale)
   })))
-(let ui-icon-component (dict "mount" __ui-icon-load__ "unmount" __ui-icon-unmount__
+(let ui-icon-component (dict "theme-key" "icon" "mount" __ui-icon-load__ "unmount" __ui-icon-unmount__
   "measure" __ui-icon-measure__ "paint" __ui-icon-paint__))
 (let ui-icon (Resources.withOrigin (fn (origin source &rest options)
   (let reference (if (str? source) (Resources.resolve source origin) source))
@@ -284,7 +290,7 @@
     (or node.state.focused (not (= node.state.pressed-id nil))))
     (__ui-outline__ context node.bounds node.clip node.props.focus-color ui.scale node.props.border-width))))
 
-(let ui-button-component (dict
+(let ui-button-component (dict "theme-key" "button"
   "measure" (fn (ui node)
     (if node.state.value-label {
       (if (not (= node.props.value node.state.value))
@@ -412,7 +418,7 @@
     (TextProxy.caret node.state.proxy position (* clip.w ui.scale))
     (__ui-outline__ context node.bounds node.clip node.props.focus-color ui.scale node.props.border-width)
   })))
-(let ui-textbox-component (dict "mount" __ui-textbox-mount__ "unmount" __ui-textbox-unmount__
+(let ui-textbox-component (dict "theme-key" "textbox" "mount" __ui-textbox-mount__ "unmount" __ui-textbox-unmount__
   "measure" __ui-textbox-measure__ "event" __ui-textbox-event__ "paint" __ui-textbox-paint__))
 (let ui-textbox (fn (value &rest options)
   (ui-node ui-textbox-component (dict "value" (value : str) "font" "monospace" "size" 14
@@ -483,7 +489,7 @@
 (let __ui-container-paint__ (fn (ui node context)
   (if node.props.background (ui-rectangle context node node.props.background))))
 
-(let ui-container-component (dict "measure" __ui-container-measure__
+(let ui-container-component (dict "theme-key" "container" "measure" __ui-container-measure__
   "arrange" __ui-container-arrange__ "paint" __ui-container-paint__))
 
 (let ui-box (fn (&rest items)
@@ -494,6 +500,8 @@
   (ui-node ui-container-component (dict "padding" 0 "gap" 8 "axis" "x") items)))
 
 (let ui-measure (fn (ui node)
+  (if (and ui.mounted (not node.state.mounted)) (__ui-lifecycle__ ui node "mount"))
+  (__ui-theme-node__ ui node)
   (set node.state.scale ui.scale)
   (let props node.props)
   (let appearance (list ui.scale props.visible props.w props.h props.grow props.padding props.gap
@@ -702,9 +710,12 @@
   (let target (if path (get path.(- (len path) 1)) nil))
   (if (= name "pointermove") {
     (if (not (same? ui.hot target)) {
+      (if (and ui.hot ui.hot.props.hover-events)
+        (__ui-emit__ ui (ui-path ui.root ui.hot) "pointerleave" source))
       (if ui.hot (set ui.hot.state.hot false))
       (set ui.hot target)
       (if target (set target.state.hot true))
+      (if (and target target.props.hover-events) (__ui-emit__ ui path "pointerenter" source))
       (ui-repaint ui)
     })
   })
@@ -712,9 +723,10 @@
     (if ui.hot (set ui.hot.state.hot false))
     (set ui.hot nil)
   })
-  (if (and (= name "pointerdown") (= source.button 0)) {
-    (ui-focus ui (or path (list)))
+  (if (and (= name "pointerdown") (or (= source.button 0) (and target target.props.capture-pointer))) {
+    (if (not (same? target ui.focus)) (ui-focus ui (or path (list))))
     (if (and target target.props.focusable (not target.props.disabled)) {
+      (__ui-release-pointer__ ui source.id)
       (set target.state.pressed-id source.id)
       (insert ui.pressed (dict "id" source.id "path" path))
     })
@@ -729,15 +741,18 @@
   (if (or (= name "pointerup") (= name "pointercancel")) {
     (if captured {
       (let pressed (get captured.(- (len captured) 1)))
-      (let click (and (= name "pointerup") (= source.button 0) target
-        (= target.state.pressed-id source.id) (not pressed.props.disabled)))
-      (set pressed.state.pressed-id nil)
-      (for i (len ui.pressed) {
-        (if (= (get ui.pressed.(get i)).id source.id) { (remove ui.pressed i) (break) })
+      (let keep-capture (and (= name "pointerup") pressed.props.capture-pointer (> (or source.buttons 0) 0)))
+      (if (not keep-capture) {
+        (let click (and (= name "pointerup") (= source.button 0) target
+          (= target.state.pressed-id source.id) (not pressed.props.disabled)))
+        (set pressed.state.pressed-id nil)
+        (for i (len ui.pressed) {
+          (if (= (get ui.pressed.(get i)).id source.id) { (remove ui.pressed i) (break) })
+        })
+        (let clicked-popup (and ui.popup (same? (get captured.0) ui.popup.node)))
+        (if (and click (not event.prevent-default)) (__ui-emit__ ui captured "click" source))
+        (if (and clicked-popup click ui.popup ui.popup.close-on-click) (ui-close-popup ui))
       })
-      (let clicked-popup (and ui.popup (same? (get captured.0) ui.popup.node)))
-      (if (and click (not event.prevent-default)) (__ui-emit__ ui captured "click" source))
-      (if (and clicked-popup click ui.popup ui.popup.close-on-click) (ui-close-popup ui))
     })
   })
   (if (and (= name "keydown") (= source.code "Tab") (not (and event event.prevent-default))) {
@@ -778,6 +793,7 @@
   (let callback (get node.component.(get operation)))
   (if (= operation "mount") {
     (if (or node.state.mounted node.state.closed) (return))
+    (__ui-theme-node__ ui node)
     (set node.state.mounted true)
     (if callback (callback ui node))
   })
@@ -851,7 +867,8 @@
   (for overlay node.overlays (ui-paint ui overlay context))))
 (let __ui-strip-event__ (fn (ui node name event)
   (if (= name "wheel") {
-    (let delta (if (= event.dx 0) event.dy event.dx))
+    ; Trackpads can report small cross-axis deltas during a vertical gesture.
+    (let delta (if (> (abs event.dy) (abs event.dx)) event.dy event.dx))
     (if (= event.mode 1) (set delta (* delta 20)))
     (if (= event.mode 2) (set delta (* delta node.bounds.z)))
     (set node.state.scroll (clamp (+ (or node.state.scroll 0) delta) 0 node.state.max-scroll))
@@ -859,7 +876,7 @@
     (set event.stop true)
     (ui-invalidate ui)
   })))
-(let ui-strip-component (dict "measure" __ui-strip-measure__
+(let ui-strip-component (dict "theme-key" "strip" "measure" __ui-strip-measure__
   "arrange" __ui-strip-arrange__ "paint" __ui-container-paint__ "event" __ui-strip-event__
   "overlay" __ui-strip-overlay__))
 (let ui-bar (fn (&rest items)
@@ -1009,7 +1026,7 @@
     (set event.prevent-default true) (set event.stop true)
   })))
 
-(let ui-scroll-component (dict "measure" __ui-scroll-measure__ "arrange" __ui-scroll-arrange__
+(let ui-scroll-component (dict "theme-key" "scroll" "measure" __ui-scroll-measure__ "arrange" __ui-scroll-arrange__
   "event" __ui-scroll-event__ "paint" __ui-container-paint__ "overlay" __ui-strip-overlay__))
 (let ui-scroll (fn (&rest items)
   (let node (ui-node ui-scroll-component (dict "axis" "y" "padding" 0 "gap" 8 "grow" 1
@@ -1051,7 +1068,8 @@
   (collect items)
   (let popup (ui-vbox (padding 6)
     (gap 2)
-    (background (vec4 0.13 0.16 0.21 1)) children))
+    (ui-prop "theme-key" "popup") children))
+  (set popup.props.background (vec4 0.13 0.16 0.21 1))
   (let node (ui-button title options (ui-on "click" (fn (event)
     (ui-open-popup event.ui popup event.current-target)))))
   (set node.state.popup-node popup)
@@ -1202,6 +1220,8 @@
     })
     (set count (+ count 1))
   })
+  (if workspace.props.default-tree
+    (set workspace.state.tree (__ui-dock-tree-restore__ workspace workspace.props.default-tree)))
   (let layout workspace.props.layout)
   (if (and layout layout.panes) {
     (for pane workspace.state.panes {
@@ -1230,6 +1250,9 @@
       (set workspace.state.panes ordered)
     })
   })
+  (let open-panes (list))
+  (for pane workspace.children (if (not pane.state.closed) (insert open-panes pane)))
+  (set workspace.children open-panes)
   (ui-dock-save workspace)))
 
 (let __ui-dock-arrange__ (fn (ui workspace)
@@ -1316,7 +1339,7 @@
   (__ui-outline__ context preview.bounds workspace.clip
     (if ready workspace.props.preview-ready-outline workspace.props.preview-outline) ui.scale)))
 
-(let ui-dock-component (dict "mount" __ui-dock-mount__
+(let ui-dock-component (dict "theme-key" "dock" "mount" __ui-dock-mount__
   "measure" (fn (ui workspace) (vec2)) "arrange" __ui-dock-arrange__
   "paint" __ui-dock-paint__ "overlay" __ui-dock-overlay__))
 
@@ -1423,7 +1446,7 @@
   })
   (__ui-border__ context (* pane.bounds ui.scale) (* pane.clip ui.scale)
     color (* width ui.scale) (* edges ui.scale))))
-(let ui-pane-component (dict "measure" __ui-pane-measure__
+(let ui-pane-component (dict "theme-key" "pane" "measure" __ui-pane-measure__
   "arrange" __ui-pane-arrange__ "paint" __ui-container-paint__ "overlay" __ui-pane-overlay__))
 
 (let __ui-find-component__ (fn (node component)
@@ -1457,7 +1480,7 @@
     (padding 3)
     (gap 3)
     (ui-prop "cursor" "grab")
-    (background (vec4 0.14 0.17 0.22 1))
+    (ui-prop "theme-key" "pane-header")
     (ui-hbox (grow 1) (gap 4) (v-align "center") (padding 5)
       (ui-label "::") title-content)
     (ui-button "_" (ui-prop "chrome-button" true)
@@ -1473,6 +1496,7 @@
         (ui-dock-start event.ui pane event)
         (set event.stop true)
       })))))
+  (set header.props.background (vec4 0.14 0.17 0.22 1))
   (insert pane.children header)
   (insert pane.children body)
   (set pane.state.title-content (get header.children.0))
@@ -1930,7 +1954,7 @@
 
 (let __ui-taskbar-measure__ (fn (ui node)
   (let workspace node.props.workspace)
-  (let signature (list workspace.state.version))
+  (let signature (list workspace.state.version (re-copy node.props.item-style)))
   (for pane workspace.state.panes (insert signature
     (list pane.props.title pane.state.minimized pane.state.closed
       (if pane.state.title-icon pane.state.title-icon.props.source nil))))
@@ -1964,7 +1988,7 @@
     (ui-invalidate ui)
   })
   (__ui-strip-measure__ ui node)))
-(let ui-taskbar-component (dict "measure" __ui-taskbar-measure__
+(let ui-taskbar-component (dict "theme-key" "taskbar" "measure" __ui-taskbar-measure__
   "arrange" __ui-strip-arrange__ "paint" __ui-container-paint__ "event" __ui-taskbar-event__
   "overlay" __ui-strip-overlay__))
 (let ui-taskbar (fn (workspace &rest items)
@@ -1973,6 +1997,66 @@
     "padding" 6 "gap" 6 "h" 40 "background" (vec4 0.1 0.12 0.16 1)) items))
   (set node.state.items (copy node.children))
   (__ui-strip-indicators__ node)))
+
+; An embedded app publishes a texture; the parent UI owns layout and input focus.
+(let __ui-app-arrange__ (fn (ui node)
+  (let child node.props.app)
+  (if (or (= child nil) child.destroyed) (return))
+  (set node.state.path (ui-path ui.root node))
+  (set child.position (* node.bounds.xy ui.scale))
+  (App.resize child (max 1 (i32 (* node.bounds.z ui.scale))) (max 1 (i32 (* node.bounds.w ui.scale))))))
+(let __ui-app-tick__ (fn (ui node context)
+  (let child node.props.app)
+  (if (or (= child nil) child.destroyed) (return))
+  (let shown (and (> node.clip.z 0) (> node.clip.w 0)))
+  (for ancestor (or node.state.path (list))
+    (if (= ancestor.props.visible false) (set shown false)))
+  (App.setVisible child (bool shown))
+  (if child.input (App.focus child (bool (and shown node.state.focused))))
+  (let requested-cursor (or (if child.input child.input.__cursor__ nil) "default"))
+  (if (not (= node.props.cursor requested-cursor)) {
+    (set node.props.cursor requested-cursor) (ui-update-cursor ui)
+  })
+  (if (and shown (not (= node.state.output-revision child.outputRevision))) {
+    (set node.state.output-revision child.outputRevision)
+    (ui-repaint ui)
+  })))
+(let __ui-app-event__ (fn (ui node name event)
+  (let child node.props.app)
+  (if (or (= child nil) child.destroyed) (return))
+  (if (= name "blur") { (App.focus child false) (return) })
+  (if (= name "focus") { (App.focus child true) (return) })
+  (if (not (in name __ui-input-names__)) (return))
+  (let input (copy event))
+  (for key (list "ui" "name" "target" "current-target" "stop" "handled") (remove-key input key))
+  (if (not (= event.x nil)) {
+    (set input.x (* (- event.x node.bounds.x) ui.scale))
+    (set input.y (* (- event.y node.bounds.y) ui.scale))
+  })
+  (let result (App.sendInput child name input))
+  (if (and result result.prevent-default) (set event.prevent-default true))
+  (set event.stop true) (set event.handled true)))
+(let __ui-app-paint__ (fn (ui node context)
+  (ui-rectangle context node node.props.background)
+  (let child node.props.app)
+  (if (or (= child nil) child.destroyed (= child.output nil)) (return))
+  (let view child.view)
+  (let bounds (vec4 (+ node.bounds.xy (/ (vec2 view.x view.y) ui.scale))
+    (/ (* (vec2 view.w view.h) view.scale) ui.scale)))
+  (set bounds (* bounds ui.scale))
+  (let clip (* node.clip ui.scale))
+  (layer context (ui-intersect bounds clip) __ui-image-shader__ child.output bounds clip (if child.is 1 0))))
+(let ui-app-component (dict "theme-key" "app"
+  "measure" (fn (ui node) (vec2 240 180)) "arrange" __ui-app-arrange__
+  "paint" __ui-app-paint__ "tick" __ui-app-tick__ "event" __ui-app-event__
+  "unmount" (fn (ui node)
+    (if (and node.props.app (not node.props.app.destroyed)) {
+      (App.focus node.props.app false) (App.setVisible node.props.app false)
+    }))))
+(let ui-app (fn (child &rest options)
+  (ui-node ui-app-component (dict "app" child "grow" 1 "focusable" true
+    "capture-pointer" true "hover-events" true
+    "cursor" "default" "background" (vec4 0 0 0 1)) options)))
 
 (let ui-new (fn (root)
   (dict "root" (root : dict) "dirty" true "mounted" false "w" 0 "h" 0
@@ -2073,3 +2157,75 @@
   (ui-paint ui ui.root context)
   (if ui.popup (ui-paint ui ui.popup.node context))
   (set ui.dirty false)))
+
+; Theme files contain data; component behavior and application stay in the UI library.
+(let __ui-theme-icon__ (fn (ui previous source)
+  (if (= source nil) (return previous))
+  (if (same? previous.component ui-icon-component) {
+    (set previous.props.source source)
+    (return previous)
+  })
+  (if previous.state.mounted (__ui-lifecycle__ ui previous "unmount"))
+  (let icon (ui-icon source))
+  (if ui.mounted (__ui-lifecycle__ ui icon "mount"))
+  icon))
+(let __ui-theme-chrome__ (fn (ui node icons)
+  (if (= icons nil) (return))
+  (if (same? node.component ui-pane-component) {
+    (let title node.state.title-content)
+    (set title.children.0 (__ui-theme-icon__ ui (get title.children.0) icons.handle))
+    (let header (get node.children.0))
+    (for i 2 {
+      (let button (get header.children.(+ i 1)))
+      (set button.state.value-label nil)
+      (set button.children.0 (__ui-theme-icon__ ui (get button.children.0) (if (= i 0) (get icons."_") icons.x)))
+    })
+  })
+  (if (or (same? node.component ui-strip-component) (same? node.component ui-taskbar-component)) {
+    (set node.overlays.0 (__ui-theme-icon__ ui (get node.overlays.0) icons.chevron-l))
+    (set node.overlays.1 (__ui-theme-icon__ ui (get node.overlays.1) icons.chevron-r))
+  })
+  (if (and node.state.popup-node icons.chevron-d) {
+    (if node.state.dropdown-icon
+      (set node.state.dropdown-icon.props.source icons.chevron-d)
+      else {
+        (set node.state.dropdown-icon (ui-icon icons.chevron-d))
+        (insert node.children node.state.dropdown-icon)
+        (if node.state.mounted (__ui-lifecycle__ ui node.state.dropdown-icon "mount"))
+      })
+  })))
+(let __ui-theme-node__ (fn (ui node)
+  (if (= ui.theme nil) (return))
+  (if (and (same? node.state.theme-owner ui) (= node.state.theme-revision ui.theme-revision)) (return))
+  ; Restore defaults for keys omitted by the next theme without undoing explicit configuration.
+  (for key (keys (or node.state.theme-defaults (dict)))
+    (if (not (get node.state.configured.(get key)))
+      (put node.props key (get node.state.theme-defaults.(get key)))))
+  (set node.state.theme-defaults (dict))
+  (let style (fn (props)
+    (for key (keys (or props (dict))) {
+      (if (get node.state.configured.(get key)) (continue))
+      (if (not (in key node.state.theme-defaults))
+        (put node.state.theme-defaults key (get node.props.(get key))))
+      (put node.props key (get props.(get key)))
+    })))
+  (if node.props.font (style ui.theme.text))
+  (let components (or ui.theme.components (dict)))
+  (if node.component.theme-key (style (get components.(get node.component.theme-key))))
+  (if node.props.theme-key (style (get components.(get node.props.theme-key))))
+  (set node.state.theme-owner ui) (set node.state.theme-revision ui.theme-revision)
+  (__ui-theme-chrome__ ui node ui.theme.icons)))
+(let ui-theme (fn (ui theme)
+  (if (= ui.theme nil) (set ui.theme-background ui.background))
+  (set ui.theme (theme : dict))
+  (set ui.theme-revision (+ (or ui.theme-revision 0) 1))
+  (set ui.background (if (in "background" theme) theme.background ui.theme-background))
+  (let visit (fn (node)
+    (__ui-theme-node__ ui node)
+    (if node.state.popup-node (visit node.state.popup-node))
+    (for child node.children (visit child))
+    (for overlay node.overlays (visit overlay))))
+  (visit ui.root)
+  (if ui.popup (visit ui.popup.node))
+  (ui-invalidate ui)
+  ui))

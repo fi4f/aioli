@@ -33,6 +33,50 @@ const pendingAttach = `(on attach (async (fn ()
   (on render (c) (record "candidate render"))`;
 
 for (const trace of [true, false]) {
+  for (const operation of ['loadSource', 'patchSource']) {
+    test(`${operation} supersedes a pending URL patch without executing stale source (trace=${trace})`, async t => {
+      const { app, events } = harness(t, trace);
+      const reading = Promise.withResolvers(), response = Promise.withResolvers();
+      await App.loadSource(app, original, { sourceURL: 'https://example.test/editor/main.lisp' });
+      const reference = App.inspect(app).count;
+      app.modules.fetch = async url => {
+        assert.equal(url, 'https://example.test/editor/slow.lisp');
+        reading.resolve();
+        return { ok: true, text: () => response.promise };
+      };
+      const pending = App.patch(app, './slow.lisp');
+      await reading.promise;
+      await App[operation](app, '(let count 99) (on render (c))');
+      const replacement = app.scene;
+      const patch = operation === 'patchSource';
+      assert.equal(App.read(app, App.inspect(app).count), patch ? 7 : 99);
+      if (patch) assert.equal(App.inspect(app).count, reference);
+      else assert.throws(() => App.read(app, reference), /no longer valid/);
+      response.resolve('(record "stale source executed") (let count 0) (on render (c))');
+      assert.equal(await pending, app);
+      assert.equal(app.scene, replacement);
+      assert.equal(app.sourceURL, 'https://example.test/editor/main.lisp');
+      assert.equal(events.includes('stale source executed'), false);
+    });
+  }
+
+  test(`injected code shares struct definitions and mutable bindings across patches (trace=${trace})`, async t => {
+    const { app } = harness(t, trace);
+    await App.loadSource(app, '(struct Point x:f32) (let count 7) (on render (c))');
+    const references = App.inspect(app);
+    assert.equal(Data.get(App.exec(app, '(Point x count)'), 'x'), 7);
+    assert.throws(() => App.write(app, references.Point, () => null), /Cannot reassign/);
+    App.write(app, references.count, 12);
+    App.exec(app, '(let point (Point x count))');
+    const point = App.inspect(app).point;
+    assert.equal(Data.get(App.read(app, point), 'x'), 12);
+    await App.patchSource(app, '(struct Point x:f32) (let count 99) (let point (Point x 0)) (on render (c))');
+    assert.equal(App.inspect(app).point, point);
+    assert.equal(Data.get(App.read(app, point), 'x'), 12);
+    assert.equal(Data.get(App.exec(app, '(Point x count)'), 'x'), 12);
+    assert.throws(() => App.exec(app, '(set Point nil)'), /Cannot reassign struct/);
+  });
+
   test(`a newer syntax failure cancels pending attach and stale rejection cannot damage rollback (trace=${trace})`, async t => {
     const { app, events, errors, frames, entered, gate } = harness(t, trace);
     await App.loadSource(app, original);

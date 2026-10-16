@@ -15,7 +15,10 @@ function __loopCollection__(value) {
   if (!['list', 'array', 'many'].includes(kind))
     throw new TypeError('for expects a list, array or many');
   const length = kind === 'list' ? value.length : Structures.collectionInfo(value).length;
-  return { value: Array.from({ length }, (_, i) => Data.get(value, i)), length };
+  const snapshot = kind === 'list'
+    ? Array.from(Data.values(value), Data.normalizeNil)
+    : Array.from({ length }, (_, i) => Data.get(value, i));
+  return { value: snapshot, length };
 }
 const __loopRuntime__ = {
   integer: __loopInteger__,

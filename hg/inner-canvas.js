@@ -103,7 +103,25 @@ function __createInnerCanvas__(
   state.innerCanvas = state.createCanvas(state.initialLayout.w, state.initialLayout.h);
   state.outerContext = state.outerCanvas.getContext('2d');
   if (!state.outerContext) throw new Error('Canvas 2D is required for outer canvas presentation');
-  state.bindings = {
+  state.bindings = __bindings__(state);
+  Contracts.registerConfigureBinding(state.bindings.configure);
+  state.observer = state.Observer
+    ? new state.Observer(() => {
+        if (state.destroyed) return;
+        try {
+          const event = __sync__(state);
+          if (event) state.onResize(event);
+        } catch (error) {
+          state.onError(error);
+        }
+      })
+    : null;
+  state.observer?.observe(state.outerCanvas);
+  return state;
+}
+
+function __bindings__(state) {
+  return {
     configure: (...args) => {
       const options =
         args.length === 1 && Data.dataKind(args[0]) === 'dict' ? args[0] : Data.dict(...args);
@@ -129,19 +147,18 @@ function __createInnerCanvas__(
       return Data.dict('w', view.w, 'h', view.h, 'wh', Data.vector(2, [view.w, view.h]));
     },
   };
+}
+
+function __offscreen__(initial, updateRate, onConfigure) {
+  const requested = __validateInnerOptions__(initial);
+  const state = {
+    outerCanvas: { width: 320, height: 180 }, outerSize: __bitmapSize__,
+    requested, applied: { ...requested }, updateRate, onConfigure, limit: Infinity, destroyed: false,
+    requestedUps: updateRate?.requestedUps ?? 60,
+    innerCanvas: { width: requested.width ?? 320, height: requested.height ?? 180 },
+  };
+  state.bindings = __bindings__(state);
   Contracts.registerConfigureBinding(state.bindings.configure);
-  state.observer = state.Observer
-    ? new state.Observer(() => {
-        if (state.destroyed) return;
-        try {
-          const event = __sync__(state);
-          if (event) state.onResize(event);
-        } catch (error) {
-          state.onError(error);
-        }
-      })
-    : null;
-  state.observer?.observe(state.outerCanvas);
   return state;
 }
 
@@ -283,6 +300,7 @@ function __paint__(state) {
 
 export const InnerCanvas = {
   new: __createInnerCanvas__,
+  offscreen: __offscreen__,
   layout: __layout__,
   sync: __sync__,
   configure: __configure__,

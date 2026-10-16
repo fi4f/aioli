@@ -41,7 +41,7 @@ test('fresh startup creates only the current store and uses atomic Lisp transact
       let invalidError;
       try { await invoke(Project, 'open', fs, JSON.stringify(invalid)); } catch (error) { invalidError = error.message; }
       const invalidVersion = fs.version;
-      const stale = await invoke(api, 'new', fs.storage, fs.assetURL, fs.baseURL);
+      const stale = await invoke(api, 'new', fs.storage, fs.localURL, fs.baseURL);
       await invoke(api, 'writeText', fs, '/project/current.txt', 'current', 0);
       let conflict;
       try { await invoke(api, 'writeText', stale, '/project/stale.txt', 'stale', 0); } catch (error) { conflict = error.message; }

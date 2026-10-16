@@ -11,7 +11,7 @@ function __numbers__(name, values, minimum = 0, maximum = Infinity) {
     );
   }
   for (let i = 0; i < values.length; i++) {
-    Types.assertType(values[i], 'num', `${name}: operand ${i + 1}`);
+    if (!Number.isFinite(values[i])) Types.assertType(values[i], 'num', `${name}: operand ${i + 1}`);
   }
 }
 

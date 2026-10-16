@@ -2,7 +2,7 @@
 
 ### JavaScript
 
-- Keep the public library entry point `hg.js` at the repository root, engine/compiler/library implementation modules in `hg/`, automation in `hg/tools/`, tests in `hg/tests/`, documentation in `docs/`, examples and additional hosts in `examples/`, and editor Lisp files in `editor/`; keep the primary editor entry point `index.html` and host `index.js` at the repository root
+- Keep the public library entry point `hg.js` at the repository root, engine/compiler/library implementation modules in `hg/`, automation in `hg/tools/`, tests in `hg/tests/`, documentation in `docs/`, the single-file starter in `project/`, and editor Lisp files in `editor/`; keep the primary editor entry point `index.html` and host `index.js` at the repository root
 - Prefer `const` over `let`
 - Avoid `var` and unscoped declarations
 - Prefer dunder names to indicate private fields and methods; use both a double-underscore prefix and suffix, e.g. `__name__`

@@ -1,6 +1,6 @@
 ; Read live binding values only along expanded paths. Expansion state is plain data.
 (let Ui (await (import "../hg/ui.lisp")))
-(let Theme (await (import "./theme.lisp")))
+(let Theme Ui.ui-theme-data)
 (let __page-size__ 50)
 (let __row-limit__ 300)
 (let __depth-limit__ 16)
@@ -101,7 +101,6 @@
     (set row.state.label.props.value entry.text)
     (set row.state.marker.props.visible (bool entry.expandable))
     (set row.state.marker.props.source (if entry.expanded Theme.icons.chevron-d Theme.icons.chevron-r))
-    (set row.state.marker.state.image row.state.marker.props.source)
     (put nodes entry.key row) (insert children row)
   })
   (if (and ui.focus (Ui.ui-path node ui.focus)

@@ -52,7 +52,7 @@ hg/              engine and compiler implementation
 hg/tools/        code generators and profiling scripts
 hg/tests/        tests
 docs/            documentation and supplied Markdown references
-examples/        Lisp examples and JavaScript/HTML hosts
+project/         Single main.lisp starter with a pulsing gradient
 editor/          editor Lisp files
 ```
 
@@ -78,7 +78,7 @@ Import `hg/ui.lisp` for persistent, editable Lisp components. Titled panes suppo
 floating, minimize/close, dwell-confirmed split docking, all eight floating resize
 grips, and dock dividers. Menu strips and the minimized-pane tray scroll
 horizontally; dropdowns compose ordinary components. See [the UI API](./UI.md) and
-[the complete example](../examples/ui.lisp). The rewritten editor uses that library
+[the editor](../editor/main.lisp). The rewritten editor uses that library
 and `editor/code-editor.lisp`. Headless Chrome profiling covers startup, input,
 typing, and dragging; see [the measured costs and remaining limits](./PERFORMANCE.md).
 
@@ -293,7 +293,6 @@ Eviction preserves textures still referenced by labels or handles. Resources are
 released on runtime destruction, and evicted unreferenced textures can be collected.
 For custom web fonts, load the font before creating text. Rebuilding after a font
 becomes available uses its new metrics. Raster text has a fixed resolution.
-`examples/text.lisp` is a complete scene.
 
 Compiler-only callers without the browser graphics runtime receive an inspectable
 dictionary with `content` and styled `runs`, with no GPU allocation. The compiler's
@@ -333,7 +332,6 @@ text; using them produces a source-located compiler error. A local declared insi
 the text body may use one of those names. Outer mutations require recreating the
 shader value to rebuild its text; drawing that shader repeatedly does not rebuild
 the text. Existing persistent texture caching still applies to rebuilt definitions.
-The complete scene is `examples/shader-text.lisp`.
 
 ## Embedding
 
@@ -636,7 +634,7 @@ namespace functions:
 <script type="module">
   import hg from '../hg.js';
   const app = hg.App.new({ c: 'demo' });
-  const url = new URL('./examples/blue.lisp', location.href);
+  const url = new URL('./project/main.lisp', location.href);
   await hg.App.load(app, url.href);
 </script>
 ```
@@ -864,12 +862,12 @@ conflicting. An import used as a standalone statement merges its members into
 the current lexical scope:
 
 ```lisp
-(await (import "./examples/library.lisp"))
+(await (import "./library.lisp"))
 (test)
 ```
 
 When the import is used as a value, such as in `(let library (await (import
-"./examples/library.lisp")))`, it stays namespaced. Merged names remain live:
+"./library.lisp")))`, it stays namespaced. Merged names remain live:
 `(set test replacement)` patches the original module binding. A module can
 also expose bindings from its own standalone imports. Reimporting the same
 namespace is harmless; collisions with local declarations, builtins, reserved
@@ -1083,7 +1081,7 @@ Resource handles must come from the same runtime's current frame; stale handles 
 from other canvases are rejected. Scene `vec2f`, `vec3f`, and `vec4f` bindings construct
 numeric vectors for uniform arguments. Vectors retain their declared dimensions;
 GPU numeric inputs must be finite f32 values. Uniforms and textures follow the
-declared parameter order and reuse the shader pipeline. See `examples/composition.lisp`.
+declared parameter order and reuse the shader pipeline.
 
 Shader helpers use the same `let` and anonymous `fn` structure as scene code:
 
@@ -1133,7 +1131,6 @@ explicit shader inputs, and helpers still require a typed result on every path.
 Recursive cycles, argument type/arity mismatches, reassignment of helpers, and
 using function references as data are compile errors. Anonymous helper calls and
 function aliases are not implemented: bind each shader fn directly using let.
-See [shader captures](../examples/shader-captures.lisp) for a complete scene.
 
 Colon annotations allow whitespace on either side: `uv:vec2f`, `uv: vec2f`,
 `uv :vec2f`, and `uv : vec2f` are identical. Newlines and comments are allowed too.

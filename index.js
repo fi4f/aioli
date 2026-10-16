@@ -2,7 +2,6 @@ import hg from './hg.js';
 import { Modules } from './hg/modules.js';
 import { Data } from './hg/data.js';
 import { resourceResponse } from './hg/resources.js';
-import { VfsSeed } from './hg/vfs-seed.generated.js';
 import { Trace } from './hg/trace.js';
 
 const host = {
@@ -40,6 +39,7 @@ const store = hg.Storage.new('mercury-project');
 const baseURL = new URL('./', import.meta.url).href;
 const internalURL = 'vfs://mercury/';
 const repositoryURL = new URL('./editor/main.lisp', import.meta.url).href;
+const defaultsURL = new URL('./hg/vfs-seed.generated.json', import.meta.url);
 const member = (namespace, name) => Data.get(namespace, name);
 const call = (namespace, name, ...args) => member(namespace, name)(...args);
 function checkpointState(project) {
@@ -105,16 +105,20 @@ function watchDensity() {
 }
 watchDensity();
 async function defaultFiles() {
-  const base = new URL('./hg/vfs-seed.generated.js', import.meta.url);
+  const resource = await hg.Resources.fetch(defaultsURL.href);
+  hg.Resources.require(resource.ok, `Unable to fetch default file list: HTTP ${resource.status}`);
+  const manifest = JSON.parse(hg.Resources.text(resource));
+  hg.Resources.require(Array.isArray(manifest), 'Invalid default file list');
   return Promise.all(
-    VfsSeed.map(async (file) => {
-      const resource = await hg.Resources.fetch(new URL(file.source, base).href);
+    manifest.map(async (file) => {
+      const resource = await hg.Resources.fetch(new URL(file.source, defaultsURL).href);
       hg.Resources.require(
         resource.ok,
         `Unable to fetch default ${file.path}: HTTP ${resource.status}`,
       );
       return {
         path: file.path,
+        source: file.source,
         text: file.text,
         resource: {
           status: 200,
@@ -127,15 +131,6 @@ async function defaultFiles() {
       };
     }),
   );
-}
-async function fetchDefaults() {
-  try {
-    host.defaults = await defaultFiles();
-  } catch (error) {
-    if (!host.defaults) throw error;
-    console.error('Using cached defaults', error);
-  }
-  return host.defaults;
 }
 async function legacyFiles() {
   // Read the old format once. All filesystem policy and writes belong to Lisp.
@@ -179,6 +174,13 @@ function configure(app) {
   const alive = () => {
     if (host.app !== app || app.destroyed) throw new Error('Editor instance is no longer active');
   };
+  const fetchDefaults = async () => {
+    alive();
+    const files = await defaultFiles();
+    alive();
+    host.defaults = files;
+    return files;
+  };
   app.bindings['editor-resume'] = () => {
     alive();
     return boot(false);
@@ -208,7 +210,10 @@ function configure(app) {
   app.state['editor-entry'] = host.recovery
     ? repositoryURL
     : call(host.api, 'url', host.fs, '/editor/main.lisp');
-  if (host.error) app.state['boot-error'] = host.error;
+  if (host.error) {
+    app.state['boot-error'] = host.error;
+    host.error = '';
+  }
 }
 async function trusted(app) {
   const fsModule = await Modules.import(
@@ -224,13 +229,15 @@ async function trusted(app) {
     project: member(projectModule, 'Project'),
   };
 }
-function bundledResource(url) {
+function bundledResource(files, url) {
   const address = new URL(url);
   address.hash = '';
   address.search = '';
-  const base = new URL('./hg/vfs-seed.generated.js', import.meta.url);
-  const file = VfsSeed.find((file) => new URL(file.source, base).href === address.href);
-  return file ? host.defaults?.find((entry) => entry.path === file.path)?.resource : null;
+  return files?.find((file) => {
+    // Older cached bundles predate source URLs; retain their offline recovery support.
+    const source = file.source ?? (file.path === '/editor/ui.lisp' ? '../hg/ui.lisp' : `..${file.path}`);
+    return new URL(source, defaultsURL).href === address.href;
+  })?.resource;
 }
 async function boot(recovery, capture = true) {
   const request = ++host.request;
@@ -289,8 +296,9 @@ async function boot(recovery, capture = true) {
         { kind: 'put', key: 'defaults', value: host.defaults },
       ]);
     if (request !== host.request) return;
+    const defaults = host.defaults;
     app.modules.fetch = async (url) => {
-      const cached = bundledResource(url);
+      const cached = bundledResource(defaults, url);
       return cached ? resourceResponse(cached) : fetch(url, { cache: 'no-store' });
     };
     const tools = await trusted(app);
@@ -300,7 +308,7 @@ async function boot(recovery, capture = true) {
       tools.fs,
       'new',
       store,
-      recovery ? baseURL : records.project?.assetURL || baseURL,
+      baseURL,
       internalURL,
     );
     if (!records.index) {
@@ -315,7 +323,7 @@ async function boot(recovery, capture = true) {
     if (recovery) {
       const projectFetch = app.modules.fetch;
       app.modules.fetch = (url, options) => {
-        const resource = bundledResource(url);
+        const resource = bundledResource(defaults, url);
         return resource ? Promise.resolve(resourceResponse(resource)) : projectFetch(url, options);
       };
     }
@@ -325,7 +333,7 @@ async function boot(recovery, capture = true) {
         call(tools.fs, 'url', fs, '/editor/vfs.lisp'),
       );
       const api = member(fsModule, 'FileSystem');
-      const projectFs = await call(api, 'new', store, fs.project.assetURL || baseURL, internalURL);
+      const projectFs = await call(api, 'new', store, baseURL, internalURL);
       hg.App.setFilesystem(app, projectFs, api);
       host.fs = projectFs;
       host.api = api;

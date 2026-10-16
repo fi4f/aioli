@@ -8,7 +8,7 @@ import { Bindings } from "../bindings.js";
 import { Data } from "../data.js";
 import { Scheduler } from "../scheduler.js";
 
-function harness(onEvent = () => {}) {
+function harness(onEvent = () => {}, options = {}) {
   const document = new EventTarget(), window = new EventTarget(), canvas = new EventTarget();
   const attributes = new Map(), captures = new Set(), events = [];
   Object.assign(canvas, { ownerDocument: document, width: 200, height: 100, tabIndex: -1,
@@ -19,10 +19,46 @@ function harness(onEvent = () => {}) {
     setPointerCapture: id => captures.add(id), hasPointerCapture: id => captures.has(id), releasePointerCapture: id => captures.delete(id),
   });
   let pads = [];
-  const input = Input.new(canvas, { window, navigator: { getGamepads: () => pads }, emit: (name, value) => { events.push([name, value]); onEvent(name, value); } });
+  const input = Input.new(canvas, { window, navigator: { getGamepads: () => pads }, emit: (name, value) => { events.push([name, value]); onEvent(name, value); }, ...options });
   const send = (target, name, values = {}) => target.dispatchEvent(Object.assign(new Event(name), values));
   return { input, canvas, document, window, events, captures, send, pads: value => { pads = value; } };
 }
+
+test('forwarded input uses local pixels, focus, live coordinates, and host blur without taking canvas ownership', () => {
+  let scale = 2;
+  const h = harness((name, event) => { event['prevent-default'] = true; }, {
+    listen: false,
+    coordinates: (x, y) => ({ x: x / scale, y: y / scale, w: 100, h: 50, inside: x >= 0 && x < 200 && y >= 0 && y < 100 }),
+  });
+  assert.equal(h.canvas.tabIndex, -1);
+  h.send(h.canvas, 'keydown', { code: 'KeyW' });
+  assert.deepEqual(h.events, []);
+  assert.equal(Input.feed(h.input, 'keydown', Data.dict('code', 'KeyW')), undefined);
+  h.input.active = true;
+  assert.equal(Input.feed(h.input, 'keydown', Data.dict('code', 'KeyW'))['prevent-default'], true);
+  assert.equal(h.input.bindings['key?']('KeyW'), true);
+  const pointer = Data.dict('id', 7, 'type', 'mouse', 'primary', true, 'x', 80, 'y', 40, 'button', 2, 'buttons', 2);
+  Input.feed(h.input, 'pointerdown', pointer);
+  assert.deepEqual(Data.values(h.input.bindings.pointer().xy), [40, 20]);
+  assert.equal(h.input.bindings['pointer?'](2), true);
+  assert.equal(pointer.x, 80);
+  scale = 4;
+  assert.deepEqual(Data.values(h.input.bindings.pointer().xy), [20, 10]);
+  const wheel = Input.feed(h.input, 'wheel', Data.dict('x', 80, 'y', 40, 'dy', 30));
+  assert.deepEqual([wheel.x, wheel.y, wheel.dy], [20, 10, 30]);
+  h.send(h.window, 'blur');
+  assert.equal(h.input.bindings['key?']('KeyW'), false);
+  assert.equal(h.input.bindings.pointer(), null);
+  Input.feed(h.input, 'keydown', Data.dict('code', 'KeyW'));
+  h.document.hidden = true;
+  h.send(h.document, 'visibilitychange');
+  assert.equal(h.input.bindings['key?']('KeyW'), false);
+  Input.destroy(h.input);
+  assert.equal(h.canvas.tabIndex, -1);
+  const count = h.events.length;
+  Input.feed(h.input, 'keydown', Data.dict('code', 'KeyW'));
+  assert.equal(h.events.length, count);
+});
 
 test('keyboard is canvas scoped, repeats are preserved, blur resets state and teardown removes listeners', () => {
   const h = harness();

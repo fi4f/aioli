@@ -5,13 +5,16 @@ hit testing, event routing, focus, scrolling, docking, and resizing are ordinary
 Lisp. The engine supplies compilation, textures, canvas input, and invisible
 native text editing. It does not implement JavaScript widgets or visible DOM UI.
 
-The current implementation is a prototype. The headless Chrome profiler exercises
-startup, hovering, typing, and pane dragging, including a large document. The full
-editor test suite has not been run against this rewrite.
+The headless Chrome profiler exercises startup, hovering, typing, and pane dragging,
+including a large document. Browser regressions cover editing, project operations,
+session restoration, docking, and the embedded Game pane.
 
-The editor's colors, typography, docking settings, text cache settings, and icon
-assets live in [editor/theme.lisp](../editor/theme.lisp). It supplies a Monokai-style
-palette and styles ordinary Lisp components through `Theme.apply`. Icons load
+The default [editor/theme.lisp](../editor/theme.lisp) exports a single `theme`
+dictionary with its Monokai palette, typography, component defaults, and icon URLs.
+Select the editor's theme with the import at the start of [hg/ui.lisp](../hg/ui.lisp),
+packaged as `/editor/ui.lisp` in projects. Its `ui-theme-data` export supplies that
+same dictionary to every editor component.
+`(ui-theme desktop theme)` applies that data to any UI instance. Icons load
 through `(await (image url))`, which returns an app-owned persistent texture and
 resolves URLs against the defining Lisp module. `ui-icon` accepts these textures
 or a URL string, loading the latter asynchronously when mounted. Icon strings
@@ -21,6 +24,80 @@ is an absolute project path. The constructor retains this origin when mounted
 later. The supplied monochrome PNGs are
 tinted and painted by editable Lisp shaders. Bitmap decoding uses the native
 [image bitmap API](https://developer.mozilla.org/en-US/docs/Web/API/Window/createImageBitmap).
+
+## Theme files
+
+A theme module exports a `theme` dictionary. It contains UI background, shared
+text defaults, and property dictionaries keyed by component name:
+
+```lisp
+; my-theme.lisp
+(let theme (dict
+  "background" (vec4 0.08 0.09 0.12 1)
+  "text" (dict "font" "monospace" "color" (vec4 0.9 0.9 0.95 1))
+  "components" (dict
+    "label" (dict "size" 14)
+    "button" (dict "background" (vec4 0.2 0.25 0.35 1)))))
+```
+
+Import it with `(let Custom (await (import "./my-theme.lisp")))`, then call
+`(ui-theme desktop Custom.theme)`. Themes belong to individual UI instances.
+Reapply after editing a dictionary; omitted properties return to their original
+defaults. Newly added nodes and popup contents receive the active theme.
+Explicit node configuration takes precedence over theme defaults.
+
+Component keys are `label`, `icon`, `button`, `textbox`, `container`, `scroll`,
+`strip`, `taskbar`, `dock`, `pane`, and `app`. The `pane-header` and `popup` keys style
+those internal parts. A custom component can declare a `"theme-key"` in its
+component dictionary; `(ui-prop "theme-key" "special")` adds a more specific rule
+for a node. Optional `icons` entries configure pane controls and menu indicators.
+Use `(source-url "./icon.png")` for icon URLs stored in theme data so paths stay
+relative to the theme file when another module applies it.
+
+## Embedded Game pane
+
+The editor's Game pane runs the project's entry file (`/project/main.lisp` by
+default). Saving project source reloads the game and its imports. **Reload game**
+preserves `app.state`; **Restart game** resets project state and creates a fresh
+child. **Pause** stops the game clock. Game diagnostics appear within the pane;
+failed reloads retain the working scene. Use the **View → Game** toggle after closing it.
+
+The default workspace shows Files, Source, Game, and Diagnostics. Files spans the
+full height on the left, occupying one fifth of the width. Source and Game split
+the upper-right area equally; Diagnostics occupies the bottom fifth beneath
+those two panes. Bindings starts closed.
+The View menu has checked toggles for all five panes. Switching a pane off closes
+and unmounts it, just like its close button; switching it on opens it again.
+Minimized panes appear unchecked and can be restored with the same toggle.
+Saved layouts remain authoritative. **View → Reset layout** reapplies these defaults.
+
+Diagnostics has a **Copy** button that copies the complete message, including
+text outside its scroll viewport. Clipboard success or failure appears beside the
+button without replacing the original diagnostic. `Resources.copyText(text)` is
+the shared native operation: call it from a user action and await its registered
+promise. It resolves to `true` on success and rejects when clipboard access is
+unavailable or denied.
+
+`(ui-app child &rest options)` is the reusable viewport component for an
+[`App.embed`](./APP.md#embedded-apps) child. It supports ordinary docking, resizing,
+clipping, fixed inner resolution, letterboxing, and pixel or smooth scaling.
+Keyboard and gamepad input belong to the focused viewport; pointer events use
+game coordinates, including captured drags outside its bounds. Minimizing hides
+and suspends the child. Unmounting a bare `ui-app` hides it; its creator retains
+disposal responsibility. The editor's Game component disposes its child when
+closed or when the editor reloads, then recreates it from saved project state.
+
+For a custom **editor** theme, import `/editor/theme.lisp` in your own file,
+copy its `theme` dictionary with `re-copy`, and override the desired values.
+Select your module in `/editor/ui.lisp` by changing its `ui-theme-data` import:
+
+```lisp
+(let ui-theme-data (get (await (import "../project/my-theme.lisp")).theme))
+```
+
+All editor components use this selection, including source highlighting and file
+rows. The editor's extra palette, sizing, and tuning keys live alongside the
+general UI rules. Reload the editor after changing the selected file.
 
 ## Build a persistent tree
 
@@ -47,7 +124,7 @@ instance. Separate calls to `ui-new` create separate interaction state.
   (ui-taskbar workspace))))
 ```
 
-Use [examples/ui.lisp](../examples/ui.lisp) for a complete scene with render,
+Use [editor/main.lisp](../editor/main.lisp) for a complete scene with render,
 update, lifecycle, keyboard, pointer, and wheel hooks.
 
 | Constructor                                       | Purpose                                                         |
@@ -115,11 +192,11 @@ built. Nested components have their own configuration.
 | `(visible bool)` / `(disabled bool)`                   | Component visibility / interaction state                         |
 | `(ui-prop "name" value)`                               | Component-specific settings, such as pane IDs and docking limits |
 
-Every property is local and explicit, including font, size, and color. Configure
+Properties belong to their own component, including font, size, and color. Configure
 the label or icon itself for typography; configuring a containing button or box
 does not style its descendants. Bare strings use the ordinary label defaults.
-The editor theme explicitly styles each leaf, including dynamically created file
-rows and taskbar entries, while preserving explicit constructor configuration.
+Theme defaults style each leaf, including dynamically created nodes, while
+preserving explicit constructor configuration.
 `fill` accepts the same scalar/three/four-channel colors as text. Alignment strings
 are ordinary values; quote them or supply a bound string.
 
@@ -193,7 +270,9 @@ sets native editing state without implementing component policy in JavaScript.
 Overflowing bars and taskbars show a left/right chevron only where more content
 can be scrolled into view. Both ends reserve a stable gutter while overflowing;
 items clip to the remaining viewport, which keyboard focus also uses. Wheel
-scrolling retains its existing behavior. Indicators are configured through
+scrolling uses the dominant gesture axis, so small cross-axis trackpad deltas
+cannot suppress vertical scrolling. Fractional deltas and line/page units are
+preserved. Indicators are configured through
 `scroll-indicator-width` (20 UI pixels), `scroll-indicator-size` (16), and
 `scroll-indicator-color`. The two entries in a strip's ordinary `overlays` list
 are its left/right indicators. The editor composes `ui-icon` nodes there; stock
@@ -503,6 +582,11 @@ minimized/closed flags into that dictionary after committed interaction changes.
 It contains no functions, native resources, or component references and can use
 native JSON. This is explicit app data; it does not save to disk or browser storage.
 
+`(ui-prop "default-tree" tree)` supplies the initial split tree when no saved
+layout exists. Leaves are `(dict "kind" "pane" "id" pane-id)`; splits contain
+`"kind" "split"`, `"axis" "x"` or `"y"`, a `"ratio"`, and `"first"`/`"second"`
+branches. IDs refer to pane `id` properties. Saved layouts override this tree.
+
 Minimized tray buttons are draggable. Horizontal dragging reorders them, storing
 the order by pane ID in the saved layout. Moving more than eight UI pixels out of
 the tray vertically restores the pane as a floating drag; normal docking dwell
@@ -520,7 +604,7 @@ scrolls. This animation reuses text textures and only requests painting.
 ## Editor composition
 
 [editor/main.lisp](../editor/main.lisp) composes a scrollable top menu, Files,
-Source, Bindings, and Diagnostics panes, and the scrollable minimized-pane tray.
+Source, Game, Bindings, Diagnostics, and Project Settings panes, and the scrollable minimized-pane tray.
 [editor/code-editor.lisp](../editor/code-editor.lisp) implements syntax coloring,
 line numbers, selection, caret, pointer selection, scrolling, and native input.
 The host [index.js](../index.js) supplies the canvas and loads the Lisp entry point.
@@ -530,15 +614,22 @@ Document state includes the anchor/head selection, scroll row, horizontal
 `scroll-x` offset in UI pixels, and focus flag.
 Rebuilding the editor scene preserves those values and restores native text input focus after the
 new component's layout, so typing can continue at the same caret position.
-The Project menu offers New/Open/Save Project, Save now, Reload editor, Resume project editor,
-Restore default editor, Reopen saved file, Refresh files, Reset draft,
-Reset layout, and Restore minimized panes. The Live editor toggle controls rebuilding
-editor/library code after autosave; project files are only edited and saved.
+The Project menu offers New Project, Open Project, Save Project, and Settings, separated
+from the recovery actions. Regular mode offers Recover default editor; recovery mode
+offers Restore project editor and Keep default editor.
+The View menu offers pane toggles and Reset layout.
+The Live editor toggle controls rebuilding editor/library code after autosave;
+project saves also refresh the Game pane.
 Autosave uses a 400 ms delay and waits for IME composition to finish. One document
 buffer saves before switching files. The Files pane, filename prompts, deletion
 confirmation, and image previews are all ordinary Lisp. Right-click a file or
 folder to select it and open a context menu with Open or Expand/Collapse,
 New file, New folder, Rename, and Delete. Deletion uses the existing confirmation.
+The Files toolbar also offers Import (files or folder) and Export. Toolbar imports
+go to `/`; right-clicking a folder offers import into that folder. File exports
+download directly and folder exports download as ZIPs. Import batches preserve
+existing files and reject conflicts atomically. Both transfers finish saving the
+active Source draft before reading or committing files.
 Previews open in their
 own floating pane and leave the Source pane's code, selection, and scroll intact.
 Drag to pan, use the wheel for pointer-centered zoom, or select Fit / 1:1.
@@ -553,7 +644,12 @@ the horizontal viewport. Source textures keep a bounded horizontal raster window
 with spare space, reusing it between window changes. The native text snapshot's
 `max-columns` field supplies the longest line's UTF-16 length without materializing
 every lazy line record. Column positions retain the editor's monospace cell model.
-Assets > Asset base URL configures internal-first resource fallback. F2 enters
+Project > Settings opens [editor/settings.lisp](../editor/settings.lisp),
+with editable Game entry, width, height, scale increment, image smoothing, updates per
+second, and execution tracing. The pane starts closed.
+Save settings validates and persists both fields; Revert discards form
+edits. Missing files fall back to local server paths and are stored in the project.
+There is no configurable asset URL. F2 enters
 the default recovery editor without changing project files. Project save/open and
 backup/restore behavior are ordinary Lisp; see the filesystem reference above.
 Precise variable-width text geometry, local-folder mounts, tabs for multiple documents,

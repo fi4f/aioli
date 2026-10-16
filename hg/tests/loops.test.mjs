@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { Compiler } from "../compiler.js";
 import { Bindings } from "../bindings.js";
 import { Forms } from "../forms.js";
+import { Loops } from '../loops.js';
 
 const evaluate = (source, trace, extra = {}) => Compiler.run(Compiler.compile(source, { ...Bindings, ...extra }, Forms, { trace }));
 const shader = source => Compiler.compile(source, Bindings, Forms).shaders[0].wgsl;
@@ -63,6 +64,21 @@ test('for evaluates its collection once and iterates lists, arrays and many', ()
     assert.throws(() => evaluate('(for item (dict))', trace), /for expects/);
     for (const bound of ['1.5', '-1', 'nil', 'Infinity', 'NaN', '9007199254740992']) assert.throws(() => evaluate(`(for i ${bound})`, trace), Error);
   }
+});
+
+test('collection loops snapshot replacements and normalize deferred and sparse list entries', () => {
+  for (const trace of [true, false]) {
+    assert.deepEqual(Data.values(evaluate(`(let items (list 1 2)) (let out (list))
+      (for item items (set items.1 99) (insert out item)) out`, trace)), [1, 2]);
+  }
+  const built = [];
+  const deferred = Data.lazyList(3, index => { built.push(index); return index; });
+  const snapshot = Loops.loopCollection(deferred);
+  assert.deepEqual(built, [0, 1, 2]);
+  Data.put(deferred, 1, 99);
+  assert.deepEqual(snapshot.value, [0, 1, 2]);
+  assert.deepEqual(Loops.loopCollection([1, , undefined]).value, [1, null, null]);
+  assert.throws(() => Loops.loopCollection([1, NaN]), TypeError);
 });
 
 test('shader loops emit structured loops with bound checks, collection reads and control flow', () => {
